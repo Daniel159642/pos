@@ -1,0 +1,12 @@
+# No external dependencies required for basic SQLite usage
+# Python 3.6+ includes sqlite3 in the standard library
+
+# Optional dependencies for document scraping:
+pdfplumber>=0.9.0  # For PDF scraping
+pandas>=1.3.0      # For Excel/CSV scraping
+openpyxl>=3.0.0    # For Excel file support (required by pandas for .xlsx files)
+
+# Web viewer dependencies:
+Flask>=2.3.0
+flask-cors>=4.0.0
+

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: white;
+            color: #000;
+            font-size: 14px;
+        }
+
+        .tabs {
+            padding: 20px 20px 0;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .tab {
+            display: inline-block;
+            padding: 8px 16px;
+            cursor: pointer;
+            color: #666;
+            margin-right: 8px;
+        }
+
+        .tab.active {
+            color: #000;
+            border-bottom: 1px solid #000;
+        }
+
+        .container {
+            padding: 20px;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            padding: 8px 12px;
+            text-align: left;
+            font-weight: 500;
+            border-bottom: 1px solid #ddd;
+            color: #666;
+        }
+
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .loading, .empty {
+            padding: 40px;
+            text-align: center;
+            color: #999;
+        }
+
+        .number, .currency {
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+    <div class="tabs">
+        <span class="tab active" data-tab="inventory">Inventory</span>
+        <span class="tab" data-tab="vendors">Vendors</span>
+        <span class="tab" data-tab="shipments">Shipments</span>
+        <span class="tab" data-tab="sales">Sales</span>
+        <span class="tab" data-tab="pending_shipments">Pending</span>
+    </div>
+
+    <div class="container">
+        <div class="loading" id="loading">Loading...</div>
+        <table id="data-table" style="display: none;">
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+        </table>
+        <div class="empty" id="empty" style="display: none;">No data</div>
+    </div>
+
+    <script>
+        let currentTab = 'inventory';
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                currentTab = tab.dataset.tab;
+                loadData();
+            });
+        });
+
+        async function loadData() {
+            const loading = document.getElementById('loading');
+            const table = document.getElementById('data-table');
+            const empty = document.getElementById('empty');
+
+            loading.style.display = 'block';
+            table.style.display = 'none';
+            empty.style.display = 'none';
+
+            try {
+                const response = await fetch(`/api/${currentTab}`);
+                const result = await response.json();
+
+                loading.style.display = 'none';
+
+                if (!result.data || result.data.length === 0) {
+                    empty.style.display = 'block';
+                    return;
+                }
+
+                renderTable(result);
+            } catch (error) {
+                console.error('Error:', error);
+                loading.textContent = 'Error';
+            }
+        }
+
+        function renderTable(result) {
+            const { columns, data } = result;
+            const thead = document.getElementById('table-head');
+            const tbody = document.getElementById('table-body');
+            const table = document.getElementById('data-table');
+
+            thead.innerHTML = '';
+            tbody.innerHTML = '';
+
+            const headerRow = document.createElement('tr');
+            columns.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col.replace(/_/g, ' ');
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                columns.forEach(col => {
+                    const td = document.createElement('td');
+                    const value = row[col];
+                    td.textContent = formatValue(value);
+                    
+                    if (isNumeric(value) && (col.includes('price') || col.includes('cost') || col.includes('total'))) {
+                        td.classList.add('currency');
+                    } else if (isNumeric(value)) {
+                        td.classList.add('number');
+                    }
+                    
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+
+            table.style.display = 'table';
+        }
+
+        function formatValue(value) {
+            if (value === null || value === undefined) return '';
+            if (typeof value === 'number') {
+                return value % 1 !== 0 ? value.toFixed(2) : value.toString();
+            }
+            return String(value);
+        }
+
+        function isNumeric(value) {
+            return typeof value === 'number' || (typeof value === 'string' && !isNaN(value) && !isNaN(parseFloat(value)));
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
