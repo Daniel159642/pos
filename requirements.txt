@@ -10,3 +10,14 @@ openpyxl>=3.0.0    # For Excel file support (required by pandas for .xlsx files)
 Flask>=2.3.0
 flask-cors>=4.0.0
 
+# Image matching dependencies (Deep Learning):
+torch>=2.0.0        # PyTorch for deep learning
+torchvision>=0.15.0 # Pre-trained models and image transforms
+Pillow>=9.0.0       # Image processing
+numpy>=1.21.0       # Numerical operations
+scikit-learn>=1.0.0 # For cosine similarity (optional, we implement our own)
+
+# Barcode scanning dependencies:
+pyzbar>=0.1.9       # Barcode and QR code scanning
+opencv-python>=4.5.0 # Image processing for barcode detection
+

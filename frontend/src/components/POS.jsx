@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
+import { usePermissions, ProtectedComponent } from '../contexts/PermissionContext'
+import BarcodeScanner from './BarcodeScanner'
 
 function POS({ employeeId, employeeName }) {
+  const { hasPermission } = usePermissions()
   const [cart, setCart] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -11,6 +14,12 @@ function POS({ employeeId, employeeName }) {
   const [message, setMessage] = useState(null)
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [amountPaid, setAmountPaid] = useState('')
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
+  
+  // Check if user can process sales
+  const canProcessSale = hasPermission('process_sale')
+  const canApplyDiscount = hasPermission('apply_discount')
+  const canVoidTransaction = hasPermission('void_transaction')
 
   // Search products
   useEffect(() => {
@@ -66,6 +75,107 @@ function POS({ employeeId, employeeName }) {
     setSearchResults([])
   }
 
+  const handleBarcodeScan = async (barcode) => {
+    setLoading(true)
+    setMessage(null)
+    
+    try {
+      // First try to find product by barcode in local inventory
+      const response = await fetch(`/api/inventory`)
+      const data = await response.json()
+      
+      if (data.data) {
+        // Try to find by barcode first
+        let product = data.data.find(p => p.barcode === barcode)
+        
+        // If not found by barcode, try by SKU
+        if (!product) {
+          product = data.data.find(p => p.sku === barcode)
+        }
+        
+        if (product) {
+          addToCart(product)
+          setMessage({ type: 'success', text: `Added ${product.product_name} to cart` })
+          setShowBarcodeScanner(false)
+          // Auto-dismiss message after 2 seconds
+          setTimeout(() => setMessage(null), 2000)
+          return
+        }
+      }
+      
+      // If not found locally, show error
+      setMessage({ 
+        type: 'error', 
+        text: `Product with barcode "${barcode}" not found. Try taking a photo for image-based identification.` 
+      })
+      setTimeout(() => setMessage(null), 4000)
+      
+    } catch (err) {
+      console.error('Barcode scan error:', err)
+      setMessage({ type: 'error', text: 'Error looking up product. Please try again.' })
+      setTimeout(() => setMessage(null), 4000)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleImageScan = async (imageFile) => {
+    setLoading(true)
+    setMessage(null)
+    
+    try {
+      const formData = new FormData()
+      formData.append('image', imageFile)
+      formData.append('use_barcode', 'true')
+      formData.append('use_image_matching', 'true')
+      formData.append('top_k', '3')
+      formData.append('threshold', '0.7')
+      formData.append('identified_by', employeeName || 'unknown')
+      formData.append('context', 'manual_lookup')
+      
+      const response = await fetch('/api/identify_product', {
+        method: 'POST',
+        body: formData
+      })
+      
+      const data = await response.json()
+      
+      if (data.success && data.matches && data.matches.length > 0) {
+        const match = data.matches[0]
+        // Get full product details
+        const productResponse = await fetch(`/api/inventory`)
+        const productData = await productResponse.json()
+        
+        if (productData.data) {
+          const product = productData.data.find(p => p.product_id === match.product_id)
+          if (product) {
+            addToCart(product)
+            setMessage({ 
+              type: 'success', 
+              text: `Added ${product.product_name} to cart (${(match.confidence * 100).toFixed(0)}% confidence)` 
+            })
+            setShowBarcodeScanner(false)
+            setTimeout(() => setMessage(null), 3000)
+            return
+          }
+        }
+      }
+      
+      setMessage({ 
+        type: 'error', 
+        text: data.message || 'Product not identified. Please try again or search manually.' 
+      })
+      setTimeout(() => setMessage(null), 4000)
+      
+    } catch (err) {
+      console.error('Image scan error:', err)
+      setMessage({ type: 'error', text: 'Error identifying product. Please try again.' })
+      setTimeout(() => setMessage(null), 4000)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const updateQuantity = (productId, newQuantity) => {
     if (newQuantity <= 0) {
       removeFromCart(productId)
@@ -114,6 +224,12 @@ function POS({ employeeId, employeeName }) {
   }
 
   const processOrder = async () => {
+    // Check permission
+    if (!canProcessSale) {
+      setMessage({ type: 'error', text: 'You do not have permission to process sales' })
+      return
+    }
+    
     if (cart.length === 0) {
       setMessage({ type: 'error', text: 'Cart is empty' })
       return
@@ -314,23 +430,42 @@ function POS({ employeeId, employeeName }) {
           </div>
 
           {/* Pay Button */}
-          <button
-            onClick={() => setShowPaymentForm(true)}
-            disabled={cart.length === 0}
-            style={{
-              width: '100%',
-              padding: '16px',
-              backgroundColor: cart.length === 0 ? '#ccc' : '#000',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '18px',
-              fontWeight: 600,
-              cursor: cart.length === 0 ? 'not-allowed' : 'pointer'
-            }}
-          >
-            Pay
-          </button>
+          <ProtectedComponent permission="process_sale" fallback={
+            <button
+              disabled
+              style={{
+                width: '100%',
+                padding: '16px',
+                backgroundColor: '#ccc',
+                color: '#666',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '18px',
+                fontWeight: 600,
+                cursor: 'not-allowed'
+              }}
+            >
+              No Permission to Process Sales
+            </button>
+          }>
+            <button
+              onClick={() => setShowPaymentForm(true)}
+              disabled={cart.length === 0}
+              style={{
+                width: '100%',
+                padding: '16px',
+                backgroundColor: cart.length === 0 ? '#ccc' : '#000',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '18px',
+                fontWeight: 600,
+                cursor: cart.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              Pay
+            </button>
+          </ProtectedComponent>
         </div>
       </div>
 
@@ -579,12 +714,33 @@ function POS({ employeeId, employeeName }) {
           </>
         ) : (
           <>
-            <h2 style={{ marginTop: 0, marginBottom: '20px' }}>Search Products</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ marginTop: 0, marginBottom: 0 }}>Search Products</h2>
+              <button
+                onClick={() => setShowBarcodeScanner(true)}
+                style={{
+                  padding: '10px 16px',
+                  backgroundColor: '#000',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+              >
+                <span>📷</span>
+                <span>Scan Barcode</span>
+              </button>
+            </div>
             
             {/* Search Bar */}
             <input
               type="text"
-              placeholder="Search by name or SKU..."
+              placeholder="Search by name, SKU, or scan barcode..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
@@ -659,9 +815,41 @@ function POS({ employeeId, employeeName }) {
           </>
         )}
       </div>
+
+      {/* Barcode Scanner Modal */}
+      {showBarcodeScanner && (
+        <BarcodeScanner
+          onScan={handleBarcodeScan}
+          onImageScan={handleImageScan}
+          onClose={() => setShowBarcodeScanner(false)}
+        />
+      )}
+
+      {/* Message Display */}
+      {message && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '20px',
+            right: '20px',
+            padding: '16px 24px',
+            backgroundColor: message.type === 'success' ? '#4caf50' : '#f44336',
+            color: '#fff',
+            borderRadius: '4px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            zIndex: 2000,
+            maxWidth: '400px',
+            animation: 'slideIn 0.3s ease-out'
+          }}
+          onClick={() => setMessage(null)}
+        >
+          {message.text}
+        </div>
+      )}
     </div>
   )
 }
 
 export default POS
+
 

@@ -1,4 +1,4 @@
-function Table({ columns, data }) {
+function Table({ columns, data, onEdit }) {
   const formatValue = (value, column) => {
     if (value === null || value === undefined) return ''
     
@@ -72,8 +72,15 @@ function Table({ columns, data }) {
   }
 
   return (
-    <div style={{ backgroundColor: '#fff', borderRadius: '4px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div style={{ 
+      backgroundColor: '#fff', 
+      borderRadius: '4px', 
+      overflowX: 'auto',
+      overflowY: 'visible',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+      width: '100%'
+    }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
         <thead>
           <tr style={{ backgroundColor: '#f8f9fa' }}>
             {columns.map(col => (
@@ -93,6 +100,23 @@ function Table({ columns, data }) {
                 {col.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
               </th>
             ))}
+            {onEdit && (
+              <th
+                style={{
+                  padding: '12px',
+                  textAlign: 'center',
+                  fontWeight: 600,
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  width: '100px'
+                }}
+              >
+                Actions
+              </th>
+            )}
           </tr>
         </thead>
       <tbody>
@@ -103,6 +127,32 @@ function Table({ columns, data }) {
                 {formatValue(row[col], col)}
               </td>
             ))}
+            {onEdit && (
+              <td style={{ 
+                padding: '8px 12px', 
+                borderBottom: '1px solid #eee',
+                textAlign: 'center'
+              }}>
+                <button
+                  onClick={() => onEdit(row)}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#4a90e2',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    transition: 'background-color 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#357abd'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = '#4a90e2'}
+                >
+                  Edit
+                </button>
+              </td>
+            )}
           </tr>
         ))}
       </tbody>

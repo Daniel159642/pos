@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     product_id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_name TEXT NOT NULL,
     sku TEXT UNIQUE NOT NULL,
+    barcode TEXT,  -- Barcode/UPC/EAN for scanning
     product_price REAL NOT NULL CHECK(product_price >= 0),
     product_cost REAL NOT NULL CHECK(product_cost >= 0),
     vendor TEXT,
@@ -112,6 +113,7 @@ CREATE TABLE IF NOT EXISTS pending_shipment_items (
 
 -- Create indexes for faster lookups
 CREATE INDEX IF NOT EXISTS idx_sku ON inventory(sku);
+CREATE INDEX IF NOT EXISTS idx_barcode ON inventory(barcode);
 CREATE INDEX IF NOT EXISTS idx_category ON inventory(category);
 CREATE INDEX IF NOT EXISTS idx_vendor ON inventory(vendor);
 CREATE INDEX IF NOT EXISTS idx_vendor_id ON inventory(vendor_id);
@@ -255,6 +257,23 @@ CREATE TABLE IF NOT EXISTS employee_schedule (
     overtime_hours REAL DEFAULT 0,
     notes TEXT,
     status TEXT DEFAULT 'scheduled' CHECK(status IN ('scheduled', 'clocked_in', 'clocked_out', 'no_show', 'cancelled')),
+    confirmed INTEGER DEFAULT 0 CHECK(confirmed IN (0, 1)),  -- Whether employee has confirmed the schedule
+    confirmed_at TIMESTAMP,  -- When the schedule was confirmed
+    FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
+);
+
+-- Employee Availability Table (for storing employee availability preferences)
+CREATE TABLE IF NOT EXISTS employee_availability (
+    availability_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL UNIQUE,
+    monday TEXT,  -- JSON string: {"available": true, "start": "09:00", "end": "17:00"}
+    tuesday TEXT,
+    wednesday TEXT,
+    thursday TEXT,
+    friday TEXT,
+    saturday TEXT,
+    sunday TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
 );
 
@@ -466,4 +485,103 @@ BEGIN
         updated_at = CURRENT_TIMESTAMP
     WHERE product_id = NEW.product_id;
 END;
+
+-- ============================================================================
+-- IMAGE MATCHING SYSTEM TABLES
+-- ============================================================================
+
+-- Add image embedding columns to inventory table
+-- Note: SQLite doesn't support ALTER TABLE ADD COLUMN with BLOB easily in older versions
+-- These will be added via migration script for existing databases
+
+-- Image Identifications Table (Track image-based product identifications)
+CREATE TABLE IF NOT EXISTS image_identifications (
+    identification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL,
+    query_image_path TEXT NOT NULL,
+    confidence_score REAL NOT NULL CHECK(confidence_score >= 0 AND confidence_score <= 1),
+    identified_by TEXT,  -- Employee name or ID
+    identified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    context TEXT DEFAULT 'manual_lookup' CHECK(context IN ('inventory_check', 'shipment_receiving', 'manual_lookup')),
+    FOREIGN KEY (product_id) REFERENCES inventory(product_id)
+);
+
+-- Create indexes for image identifications
+CREATE INDEX IF NOT EXISTS idx_image_identifications_product ON image_identifications(product_id);
+CREATE INDEX IF NOT EXISTS idx_image_identifications_date ON image_identifications(identified_at);
+CREATE INDEX IF NOT EXISTS idx_image_identifications_context ON image_identifications(context);
+
+-- ============================================================================
+-- ROLE-BASED ACCESS CONTROL (RBAC) TABLES
+-- ============================================================================
+
+-- Roles Table
+CREATE TABLE IF NOT EXISTS roles (
+    role_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    is_system_role INTEGER DEFAULT 0 CHECK(is_system_role IN (0, 1)),  -- Prevents deletion of admin/core roles
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Permissions Table (defines all possible actions)
+CREATE TABLE IF NOT EXISTS permissions (
+    permission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    permission_name TEXT UNIQUE NOT NULL,
+    permission_category TEXT,  -- e.g., 'sales', 'inventory', 'reports', 'settings'
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Role-Permission mapping (what each role can do)
+CREATE TABLE IF NOT EXISTS role_permissions (
+    role_permission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_id INTEGER NOT NULL,
+    permission_id INTEGER NOT NULL,
+    granted INTEGER DEFAULT 1 CHECK(granted IN (0, 1)),
+    FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE,
+    FOREIGN KEY (permission_id) REFERENCES permissions(permission_id) ON DELETE CASCADE,
+    UNIQUE(role_id, permission_id)
+);
+
+-- Employee-specific permission overrides (custom per employee)
+CREATE TABLE IF NOT EXISTS employee_permission_overrides (
+    override_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    permission_id INTEGER NOT NULL,
+    granted INTEGER CHECK(granted IN (0, 1)),  -- 1 = grant, 0 = revoke
+    reason TEXT,
+    created_by INTEGER,  -- Which admin made this change
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE,
+    FOREIGN KEY (permission_id) REFERENCES permissions(permission_id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES employees(employee_id),
+    UNIQUE(employee_id, permission_id)
+);
+
+-- Activity Log Table (audit trail for RBAC actions)
+CREATE TABLE IF NOT EXISTS activity_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER,
+    action TEXT NOT NULL,
+    resource_type TEXT,  -- e.g., 'product', 'sale', 'employee'
+    resource_id INTEGER,
+    details TEXT,
+    ip_address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(employee_id)
+);
+
+-- Add role_id to employees table (if not exists, will be added via migration)
+-- Note: SQLite doesn't support ALTER TABLE ADD COLUMN with foreign key easily
+-- This will be handled in migration script
+
+-- Create indexes for RBAC tables
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_permission ON role_permissions(permission_id);
+CREATE INDEX IF NOT EXISTS idx_employee_overrides_employee ON employee_permission_overrides(employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_overrides_permission ON employee_permission_overrides(permission_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_employee ON activity_log(employee_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_activity_log_action ON activity_log(action);
 

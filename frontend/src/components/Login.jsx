@@ -16,6 +16,7 @@ function Login({ onLogin }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          username: employeeCode,  // Support both username and employee_code
           employee_code: employeeCode,
           password: password
         })
@@ -71,7 +72,7 @@ function Login({ onLogin }) {
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>
-              Employee Code
+              Username / Employee Code
             </label>
             <input
               type="text"

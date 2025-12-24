@@ -136,3 +136,4 @@ The backend runs on http://localhost:5001
 - All API calls include session token in headers
 - Table data is automatically formatted based on column names
 
+

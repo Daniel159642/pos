@@ -13,10 +13,18 @@ from typing import Optional, List, Dict, Any
 DB_NAME = 'inventory.db'
 
 def get_connection():
-    """Get database connection"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row  # Enable column access by name
-    return conn
+    """Get database connection with timeout to handle locks"""
+    try:
+        conn = sqlite3.connect(DB_NAME, timeout=10.0)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
+        # Enable WAL mode for better concurrency (if not already enabled)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except:
+            pass
+        return conn
+    except sqlite3.Error as e:
+        raise ConnectionError(f"Database connection failed: {str(e)}") from e
 
 def add_product(
     product_name: str,
@@ -27,7 +35,8 @@ def add_product(
     vendor_id: Optional[int] = None,
     photo: Optional[str] = None,
     current_quantity: int = 0,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    barcode: Optional[str] = None
 ) -> int:
     """Add a new product to inventory"""
     conn = get_connection()
@@ -36,9 +45,9 @@ def add_product(
     try:
         cursor.execute("""
             INSERT INTO inventory 
-            (product_name, sku, product_price, product_cost, vendor, vendor_id, photo, current_quantity, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (product_name, sku, product_price, product_cost, vendor, vendor_id, photo, current_quantity, category))
+            (product_name, sku, product_price, product_cost, vendor, vendor_id, photo, current_quantity, category, barcode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (product_name, sku, product_price, product_cost, vendor, vendor_id, photo, current_quantity, category, barcode))
         
         conn.commit()
         product_id = cursor.lastrowid
@@ -71,22 +80,41 @@ def get_product_by_sku(sku: str) -> Optional[Dict[str, Any]]:
     
     return dict(row) if row else None
 
-def update_product(product_id: int, **kwargs) -> bool:
-    """Update product information"""
+def get_product_by_barcode(barcode: str) -> Optional[Dict[str, Any]]:
+    """Get a product by barcode"""
     conn = get_connection()
     cursor = conn.cursor()
     
+    cursor.execute("SELECT * FROM inventory WHERE barcode = ?", (barcode,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+def update_product(product_id: int, employee_id: Optional[int] = None, **kwargs) -> bool:
+    """Update product information with optional audit logging"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Get old values for audit log
+    old_product = get_product(product_id)
+    if not old_product:
+        conn.close()
+        return False
+    
     # Build update query dynamically
     allowed_fields = ['product_name', 'sku', 'product_price', 'product_cost', 
-                     'vendor', 'vendor_id', 'photo', 'current_quantity', 'category']
+                     'vendor', 'vendor_id', 'photo', 'current_quantity', 'category', 'barcode']
     
     updates = []
     values = []
+    new_values = {}
     
     for field, value in kwargs.items():
         if field in allowed_fields:
             updates.append(f"{field} = ?")
             values.append(value)
+            new_values[field] = value
     
     if not updates:
         conn.close()
@@ -103,6 +131,30 @@ def update_product(product_id: int, **kwargs) -> bool:
         cursor.execute(query, values)
         conn.commit()
         success = cursor.rowcount > 0
+        
+        # Log to audit log if employee_id is provided
+        if success and employee_id:
+            # Get new values for audit log using the same connection
+            cursor.execute("SELECT * FROM inventory WHERE product_id = ?", (product_id,))
+            updated_row = cursor.fetchone()
+            if updated_row:
+                updated_product = {col: updated_row[col] for col in updated_row.keys()}
+                # Only log fields that changed
+                old_values_filtered = {k: old_product.get(k) for k in new_values.keys()}
+                new_values_filtered = {k: updated_product.get(k) for k in new_values.keys()}
+                
+                # Only log if there are actual changes
+                if old_values_filtered != new_values_filtered:
+                    log_audit_action(
+                        table_name='inventory',
+                        record_id=product_id,
+                        action_type='UPDATE',
+                        employee_id=employee_id,
+                        old_values=old_values_filtered,
+                        new_values=new_values_filtered,
+                        notes=f"Product updated: {old_product.get('product_name', 'Unknown')}"
+                    )
+        
         conn.close()
         return success
     except sqlite3.IntegrityError as e:
@@ -745,7 +797,9 @@ def add_pending_shipment_item(
     quantity_expected: int = 0,
     unit_cost: float = 0.0,
     lot_number: Optional[str] = None,
-    expiration_date: Optional[str] = None
+    expiration_date: Optional[str] = None,
+    barcode: Optional[str] = None,
+    line_number: Optional[int] = None
 ) -> int:
     """Add an item to a pending shipment"""
     conn = get_connection()
@@ -756,13 +810,44 @@ def add_pending_shipment_item(
     product_row = cursor.fetchone()
     product_id = product_row['product_id'] if product_row else None
     
-    cursor.execute("""
-        INSERT INTO pending_shipment_items 
-        (pending_shipment_id, product_sku, product_name, quantity_expected, 
-         unit_cost, lot_number, expiration_date, product_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (pending_shipment_id, product_sku, product_name, quantity_expected,
-          unit_cost, lot_number, expiration_date, product_id))
+    # Check if barcode and line_number columns exist
+    cursor.execute("PRAGMA table_info(pending_shipment_items)")
+    columns = [col[1] for col in cursor.fetchall()]
+    has_barcode = 'barcode' in columns
+    has_line_number = 'line_number' in columns
+    
+    if has_barcode and has_line_number:
+        cursor.execute("""
+            INSERT INTO pending_shipment_items 
+            (pending_shipment_id, product_sku, product_name, quantity_expected, 
+             unit_cost, lot_number, expiration_date, product_id, barcode, line_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
+              unit_cost, lot_number, expiration_date, product_id, barcode, line_number))
+    elif has_barcode:
+        cursor.execute("""
+            INSERT INTO pending_shipment_items 
+            (pending_shipment_id, product_sku, product_name, quantity_expected, 
+             unit_cost, lot_number, expiration_date, product_id, barcode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
+              unit_cost, lot_number, expiration_date, product_id, barcode))
+    elif has_line_number:
+        cursor.execute("""
+            INSERT INTO pending_shipment_items 
+            (pending_shipment_id, product_sku, product_name, quantity_expected, 
+             unit_cost, lot_number, expiration_date, product_id, line_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
+              unit_cost, lot_number, expiration_date, product_id, line_number))
+    else:
+        cursor.execute("""
+            INSERT INTO pending_shipment_items 
+            (pending_shipment_id, product_sku, product_name, quantity_expected, 
+             unit_cost, lot_number, expiration_date, product_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
+              unit_cost, lot_number, expiration_date, product_id))
     
     conn.commit()
     pending_item_id = cursor.lastrowid
@@ -1068,11 +1153,12 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def add_employee(
-    employee_code: str,
-    first_name: str,
-    last_name: str,
-    position: str,
-    date_started: str,
+    employee_code: Optional[str] = None,
+    username: Optional[str] = None,
+    first_name: str = None,
+    last_name: str = None,
+    position: str = None,
+    date_started: str = None,
     password: Optional[str] = None,
     email: Optional[str] = None,
     phone: Optional[str] = None,
@@ -1083,7 +1169,9 @@ def add_employee(
     address: Optional[str] = None,
     emergency_contact_name: Optional[str] = None,
     emergency_contact_phone: Optional[str] = None,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    role_id: Optional[int] = None,
+    pin_code: Optional[str] = None
 ) -> int:
     """Add a new employee"""
     conn = get_connection()
@@ -1091,16 +1179,53 @@ def add_employee(
     
     password_hash = hash_password(password) if password else None
     
+    # Use username if provided, otherwise fall back to employee_code
+    login_identifier = username if username else employee_code
+    if not login_identifier:
+        conn.close()
+        raise ValueError("Either username or employee_code must be provided")
+    
     try:
-        cursor.execute("""
-            INSERT INTO employees (
-                employee_code, first_name, last_name, email, phone, position, department,
-                date_started, password_hash, hourly_rate, salary, employment_type, address,
-                emergency_contact_name, emergency_contact_phone, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (employee_code, first_name, last_name, email, phone, position, department,
-              date_started, password_hash, hourly_rate, salary, employment_type, address,
-              emergency_contact_name, emergency_contact_phone, notes))
+        # Check if table has username column (RBAC migration)
+        cursor.execute("PRAGMA table_info(employees)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_username = 'username' in columns
+        has_role_id = 'role_id' in columns
+        has_pin_code = 'pin_code' in columns
+        
+        if has_username:
+            # Use username column
+            if has_role_id and has_pin_code:
+                cursor.execute("""
+                    INSERT INTO employees (
+                        username, first_name, last_name, email, phone, position, department,
+                        date_started, password_hash, hourly_rate, salary, employment_type, address,
+                        emergency_contact_name, emergency_contact_phone, notes, role_id, pin_code
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (login_identifier, first_name, last_name, email, phone, position, department,
+                      date_started, password_hash, hourly_rate, salary, employment_type, address,
+                      emergency_contact_name, emergency_contact_phone, notes, role_id, pin_code))
+            else:
+                cursor.execute("""
+                    INSERT INTO employees (
+                        username, first_name, last_name, email, phone, position, department,
+                        date_started, password_hash, hourly_rate, salary, employment_type, address,
+                        emergency_contact_name, emergency_contact_phone, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (login_identifier, first_name, last_name, email, phone, position, department,
+                      date_started, password_hash, hourly_rate, salary, employment_type, address,
+                      emergency_contact_name, emergency_contact_phone, notes))
+        else:
+            # Fall back to employee_code
+            cursor.execute("""
+                INSERT INTO employees (
+                    employee_code, first_name, last_name, email, phone, position, department,
+                    date_started, password_hash, hourly_rate, salary, employment_type, address,
+                    emergency_contact_name, emergency_contact_phone, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (login_identifier, first_name, last_name, email, phone, position, department,
+                  date_started, password_hash, hourly_rate, salary, employment_type, address,
+                  emergency_contact_name, emergency_contact_phone, notes))
         
         conn.commit()
         employee_id = cursor.lastrowid
@@ -1109,7 +1234,7 @@ def add_employee(
     except sqlite3.IntegrityError as e:
         conn.rollback()
         conn.close()
-        raise ValueError(f"Employee code '{employee_code}' already exists") from e
+        raise ValueError(f"Employee identifier '{login_identifier}' already exists") from e
 
 def get_employee(employee_id: int) -> Optional[Dict[str, Any]]:
     """Get employee by ID"""
@@ -1149,12 +1274,30 @@ def update_employee(employee_id: int, **kwargs) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Check if table has RBAC columns
+    cursor.execute("PRAGMA table_info(employees)")
+    columns = [col[1] for col in cursor.fetchall()]
+    has_role_id = 'role_id' in columns
+    has_pin_code = 'pin_code' in columns
+    has_username = 'username' in columns
+    
     allowed_fields = [
         'first_name', 'last_name', 'email', 'phone', 'position', 'department',
         'hourly_rate', 'salary', 'employment_type', 'address',
         'emergency_contact_name', 'emergency_contact_phone', 'notes', 'active',
         'date_terminated'
     ]
+    
+    # Add RBAC fields if they exist
+    if has_role_id:
+        allowed_fields.append('role_id')
+    if has_pin_code:
+        allowed_fields.append('pin_code')
+    if has_username:
+        allowed_fields.append('username')
+    
+    # Handle password update separately
+    password = kwargs.pop('password', None)
     
     updates = []
     values = []
@@ -1163,6 +1306,12 @@ def update_employee(employee_id: int, **kwargs) -> bool:
         if field in allowed_fields:
             updates.append(f"{field} = ?")
             values.append(value)
+    
+    # Handle password update
+    if password:
+        password_hash = hash_password(password)
+        updates.append("password_hash = ?")
+        values.append(password_hash)
     
     if not updates:
         conn.close()
@@ -1174,6 +1323,26 @@ def update_employee(employee_id: int, **kwargs) -> bool:
     query = f"UPDATE employees SET {', '.join(updates)} WHERE employee_id = ?"
     
     cursor.execute(query, values)
+    conn.commit()
+    success = cursor.rowcount > 0
+    conn.close()
+    
+    return success
+
+def delete_employee(employee_id: int) -> bool:
+    """Delete (deactivate) an employee"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Soft delete - set active to 0
+    cursor.execute("""
+        UPDATE employees
+        SET active = 0,
+            date_terminated = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE employee_id = ?
+    """, (employee_id,))
+    
     conn.commit()
     success = cursor.rowcount > 0
     conn.close()
@@ -1624,6 +1793,408 @@ def process_return(
         conn.rollback()
         conn.close()
         return {'success': False, 'message': str(e)}
+
+# ============================================================================
+# PENDING RETURNS FUNCTIONS
+# ============================================================================
+
+def create_pending_return(
+    order_id: int,
+    items_to_return: List[Dict[str, Any]],
+    employee_id: int,
+    customer_id: Optional[int] = None,
+    reason: Optional[str] = None,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a pending return (items not yet returned to inventory)
+    items_to_return: List of dicts with keys: order_item_id, quantity, condition, notes
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Verify order exists
+        cursor.execute("SELECT order_id, order_number FROM orders WHERE order_id = ?", (order_id,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return {'success': False, 'message': 'Order not found'}
+        
+        order = dict(order)
+        
+        # Generate unique return number
+        # Check how many returns already exist for this order on this date
+        date_str = datetime.now().strftime('%Y%m%d')
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM pending_returns
+            WHERE order_id = ? AND return_number LIKE ?
+        """, (order_id, f"RET-{date_str}-{order_id}%"))
+        
+        existing_count = cursor.fetchone()['count']
+        
+        # Add sequence number if there are existing returns
+        if existing_count > 0:
+            return_number = f"RET-{date_str}-{order_id}-{existing_count + 1}"
+        else:
+            return_number = f"RET-{date_str}-{order_id}"
+        
+        total_refund = 0.0
+        return_items = []
+        
+        for item in items_to_return:
+            order_item_id = item['order_item_id']
+            return_qty = item['quantity']
+            condition = item.get('condition', 'new')
+            item_notes = item.get('notes', '')
+            
+            # Get original item details
+            cursor.execute("""
+                SELECT oi.product_id, oi.quantity, oi.unit_price, oi.discount, oi.subtotal,
+                       i.product_name, i.sku
+                FROM order_items oi
+                JOIN inventory i ON oi.product_id = i.product_id
+                WHERE oi.order_item_id = ?
+            """, (order_item_id,))
+            
+            original = cursor.fetchone()
+            if not original:
+                raise ValueError(f"Order item {order_item_id} not found")
+            
+            original = dict(original)
+            
+            if return_qty > original['quantity']:
+                raise ValueError(f"Return quantity ({return_qty}) exceeds original quantity ({original['quantity']})")
+            
+            # Calculate refund amount
+            item_refund = (original['unit_price'] * return_qty) - \
+                         (original['discount'] * return_qty / original['quantity'])
+            total_refund += item_refund
+            
+            return_items.append({
+                'order_item_id': order_item_id,
+                'product_id': original['product_id'],
+                'quantity': return_qty,
+                'unit_price': original['unit_price'],
+                'discount': original['discount'] * return_qty / original['quantity'],
+                'refund_amount': item_refund,
+                'condition': condition,
+                'notes': item_notes
+            })
+        
+        # Create pending return
+        cursor.execute("""
+            INSERT INTO pending_returns (
+                return_number, order_id, employee_id, customer_id,
+                total_refund_amount, reason, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (return_number, order_id, employee_id, customer_id, total_refund, reason, notes))
+        
+        return_id = cursor.lastrowid
+        
+        # Create return items
+        for item in return_items:
+            cursor.execute("""
+                INSERT INTO pending_return_items (
+                    return_id, order_item_id, product_id, quantity,
+                    unit_price, discount, refund_amount, condition, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                return_id, item['order_item_id'], item['product_id'],
+                item['quantity'], item['unit_price'], item['discount'],
+                item['refund_amount'], item['condition'], item['notes']
+            ))
+        
+        conn.commit()
+        conn.close()
+        
+        # Log audit after committing the main transaction
+        try:
+            log_audit_action(
+                table_name='pending_returns',
+                record_id=return_id,
+                action_type='INSERT',
+                employee_id=employee_id,
+                new_values={'return_number': return_number, 'order_id': order_id, 'status': 'pending'}
+            )
+        except Exception as audit_error:
+            # Don't fail the return if audit logging fails
+            print(f"Warning: Audit logging failed: {audit_error}")
+        
+        return {
+            'success': True,
+            'return_id': return_id,
+            'return_number': return_number,
+            'total_refund_amount': total_refund,
+            'message': 'Pending return created successfully'
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'success': False, 'message': str(e)}
+
+def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Approve a pending return - returns items to inventory and creates accounting entries
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Get return details
+        cursor.execute("""
+            SELECT pr.*, o.order_number
+            FROM pending_returns pr
+            JOIN orders o ON pr.order_id = o.order_id
+            WHERE pr.return_id = ?
+        """, (return_id,))
+        
+        return_record = cursor.fetchone()
+        if not return_record:
+            conn.close()
+            return {'success': False, 'message': 'Return not found'}
+        
+        return_record = dict(return_record)
+        
+        if return_record['status'] != 'pending':
+            conn.close()
+            return {'success': False, 'message': f"Return is already {return_record['status']}"}
+        
+        # Get return items
+        cursor.execute("""
+            SELECT pri.*, i.product_name, i.sku
+            FROM pending_return_items pri
+            JOIN inventory i ON pri.product_id = i.product_id
+            WHERE pri.return_id = ?
+        """, (return_id,))
+        
+        return_items = [dict(row) for row in cursor.fetchall()]
+        
+        if not return_items:
+            conn.close()
+            return {'success': False, 'message': 'No items found for return'}
+        
+        # Return items to inventory
+        for item in return_items:
+            cursor.execute("""
+                UPDATE inventory
+                SET current_quantity = current_quantity + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE product_id = ?
+            """, (item['quantity'], item['product_id']))
+        
+        # Update order items (reduce quantities or delete)
+        order_id = return_record['order_id']
+        for item in return_items:
+            # Get current order item quantity
+            cursor.execute("""
+                SELECT quantity FROM order_items WHERE order_item_id = ?
+            """, (item['order_item_id'],))
+            
+            current = cursor.fetchone()
+            if current:
+                current_qty = current['quantity']
+                new_qty = current_qty - item['quantity']
+                
+                if new_qty <= 0:
+                    # Delete item if fully returned
+                    cursor.execute("DELETE FROM order_items WHERE order_item_id = ?", (item['order_item_id'],))
+                else:
+                    # Update quantity
+                    cursor.execute("""
+                        UPDATE order_items
+                        SET quantity = ?,
+                            subtotal = (unit_price * ?) - discount
+                        WHERE order_item_id = ?
+                    """, (new_qty, new_qty, item['order_item_id']))
+        
+        # Update order totals
+        total_refund = return_record['total_refund_amount']
+        notes_text = f"\nReturn approved by employee_id {approved_by} on {datetime.now().isoformat()}"
+        if notes:
+            notes_text += f". Notes: {notes}"
+        notes_text += f". Refund: ${total_refund:.2f}"
+        
+        cursor.execute("""
+            UPDATE orders
+            SET total = total - ?,
+                subtotal = subtotal - ?,
+                order_status = CASE 
+                    WHEN (SELECT COUNT(*) FROM order_items WHERE order_id = ?) = 0 
+                    THEN 'returned' 
+                    ELSE order_status 
+                END,
+                notes = COALESCE(notes, '') || ?
+            WHERE order_id = ?
+        """, (total_refund, total_refund, order_id, notes_text, order_id))
+        
+        # Record refund transaction
+        cursor.execute("""
+            INSERT INTO payment_transactions (
+                order_id, payment_method, amount, status
+            ) VALUES (?, 'refund', ?, 'refunded')
+        """, (order_id, -total_refund))
+        
+        # Update return status
+        cursor.execute("""
+            UPDATE pending_returns
+            SET status = 'approved',
+                approved_by = ?,
+                approved_date = CURRENT_TIMESTAMP,
+                notes = COALESCE(notes, '') || ?
+            WHERE return_id = ?
+        """, (approved_by, notes, return_id))
+        
+        conn.commit()
+        conn.close()
+        
+        # Create journal entry for return (after committing main transaction)
+        try:
+            journalize_return(order_id, total_refund, approved_by)
+        except Exception as journal_error:
+            print(f"Warning: Journal entry creation failed: {journal_error}")
+        
+        # Log audit after committing the main transaction
+        try:
+            log_audit_action(
+                table_name='pending_returns',
+                record_id=return_id,
+                action_type='APPROVE',
+                employee_id=approved_by,
+                notes=f'Return approved. Refund: ${total_refund:.2f}'
+            )
+        except Exception as audit_error:
+            print(f"Warning: Audit logging failed: {audit_error}")
+        
+        return {
+            'success': True,
+            'message': 'Return approved and processed successfully',
+            'refund_amount': total_refund
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': str(e)}
+
+def reject_pending_return(return_id: int, rejected_by: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    """Reject a pending return"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE pending_returns
+            SET status = 'rejected',
+                approved_by = ?,
+                approved_date = CURRENT_TIMESTAMP,
+                notes = COALESCE(notes, '') || ?
+            WHERE return_id = ? AND status = 'pending'
+        """, (rejected_by, f"\nRejected: {reason or 'No reason provided'}", return_id))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            return {'success': False, 'message': 'Return not found or not in pending status'}
+        
+        conn.commit()
+        conn.close()
+        
+        # Log audit after committing the main transaction
+        try:
+            log_audit_action(
+                table_name='pending_returns',
+                record_id=return_id,
+                action_type='RETURN',
+                employee_id=rejected_by,
+                notes=f'Return rejected. Reason: {reason}'
+            )
+        except Exception as audit_error:
+            print(f"Warning: Audit logging failed: {audit_error}")
+        
+        return {'success': True, 'message': 'Return rejected successfully'}
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'success': False, 'message': str(e)}
+
+def get_pending_return(return_id: int) -> Optional[Dict[str, Any]]:
+    """Get a pending return with items"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT pr.*, 
+               o.order_number,
+               e.first_name || ' ' || e.last_name as employee_name,
+               c.customer_name
+        FROM pending_returns pr
+        JOIN orders o ON pr.order_id = o.order_id
+        JOIN employees e ON pr.employee_id = e.employee_id
+        LEFT JOIN customers c ON pr.customer_id = c.customer_id
+        WHERE pr.return_id = ?
+    """, (return_id,))
+    
+    return_record = cursor.fetchone()
+    if not return_record:
+        conn.close()
+        return None
+    
+    return_record = dict(return_record)
+    
+    # Get items
+    cursor.execute("""
+        SELECT pri.*, i.product_name, i.sku
+        FROM pending_return_items pri
+        JOIN inventory i ON pri.product_id = i.product_id
+        WHERE pri.return_id = ?
+    """, (return_id,))
+    
+    return_record['items'] = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return return_record
+
+def list_pending_returns(
+    status: Optional[str] = None,
+    order_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """List pending returns"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT pr.*,
+               o.order_number,
+               e.first_name || ' ' || e.last_name as employee_name,
+               c.customer_name
+        FROM pending_returns pr
+        JOIN orders o ON pr.order_id = o.order_id
+        JOIN employees e ON pr.employee_id = e.employee_id
+        LEFT JOIN customers c ON pr.customer_id = c.customer_id
+        WHERE 1=1
+    """
+    params = []
+    
+    if status:
+        query += " AND pr.status = ?"
+        params.append(status)
+    
+    if order_id:
+        query += " AND pr.order_id = ?"
+        params.append(order_id)
+    
+    query += " ORDER BY pr.return_date DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
 
 # ============================================================================
 # SALES REPORTING FUNCTIONS
@@ -2130,8 +2701,9 @@ def get_calendar_view(start_date: str, end_date: str) -> Dict[str, Any]:
 # ============================================================================
 
 def employee_login(
-    employee_code: str,
-    password: str,
+    employee_code: Optional[str] = None,
+    username: Optional[str] = None,
+    password: str = None,
     ip_address: Optional[str] = None,
     device_info: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -2139,14 +2711,36 @@ def employee_login(
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Support both username and employee_code for backward compatibility
+    login_identifier = username if username else employee_code
+    if not login_identifier:
+        conn.close()
+        return {'success': False, 'message': 'Username or employee code required'}
+    
+    if not password:
+        conn.close()
+        return {'success': False, 'message': 'Password is required'}
+    
     password_hash = hash_password(password)
     
-    # Verify credentials
-    cursor.execute("""
-        SELECT employee_id, first_name, last_name, position, active, password_hash
-        FROM employees
-        WHERE employee_code = ?
-    """, (employee_code,))
+    # Check if table has username column (RBAC migration)
+    cursor.execute("PRAGMA table_info(employees)")
+    columns = [col[1] for col in cursor.fetchall()]
+    has_username = 'username' in columns
+    
+    # Verify credentials - try username first if available, then employee_code
+    if has_username:
+        cursor.execute("""
+            SELECT employee_id, first_name, last_name, position, active, password_hash, username, employee_code
+            FROM employees
+            WHERE username = ? OR employee_code = ?
+        """, (login_identifier, login_identifier))
+    else:
+        cursor.execute("""
+            SELECT employee_id, first_name, last_name, position, active, password_hash, employee_code
+            FROM employees
+            WHERE employee_code = ?
+        """, (login_identifier,))
     
     employee = cursor.fetchone()
     
@@ -2155,6 +2749,11 @@ def employee_login(
         return {'success': False, 'message': 'Invalid credentials'}
     
     employee = dict(employee)
+    
+    # Check if employee has a password set
+    if not employee.get('password_hash'):
+        conn.close()
+        return {'success': False, 'message': 'Account has no password set. Please contact administrator.'}
     
     # Check password
     if employee['password_hash'] != password_hash:
@@ -2183,18 +2782,21 @@ def employee_login(
     """, (employee['employee_id'],))
     
     conn.commit()
-    
-    # Log login action
-    log_audit_action(
-        table_name='employees',
-        record_id=employee['employee_id'],
-        action_type='LOGIN',
-        employee_id=employee['employee_id'],
-        ip_address=ip_address,
-        notes=f'Employee {employee_code} logged in'
-    )
-    
     conn.close()
+    
+    # Log login action (don't fail login if audit logging fails)
+    try:
+        log_audit_action(
+            table_name='employees',
+            record_id=employee['employee_id'],
+            action_type='LOGIN',
+            employee_id=employee['employee_id'],
+            ip_address=ip_address,
+            notes=f'Employee {login_identifier} logged in'
+        )
+    except Exception as audit_error:
+        # Log error but don't fail the login
+        print(f"Warning: Failed to log audit action for login: {audit_error}")
     
     return {
         'success': True,
@@ -2204,8 +2806,48 @@ def employee_login(
         'session_token': session_token
     }
 
+def get_employee_role(employee_id: int) -> Optional[Dict[str, Any]]:
+    """Get employee's role information"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT e.employee_id, e.role_id, r.role_name, r.description
+        FROM employees e
+        LEFT JOIN roles r ON e.role_id = r.role_id
+        WHERE e.employee_id = ? AND e.active = 1
+    """, (employee_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+def assign_role_to_employee(employee_id: int, role_id: int) -> bool:
+    """Assign a role to an employee"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE employees
+            SET role_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE employee_id = ?
+        """, (role_id, employee_id))
+        
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        conn.rollback()
+        raise ValueError(f"Error assigning role: {e}") from e
+    finally:
+        conn.close()
+
 def verify_session(session_token: str) -> Dict[str, Any]:
     """Verify if session is valid"""
+    if not session_token:
+        return {'valid': False, 'message': 'Session token is required'}
+    
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -2234,6 +2876,9 @@ def verify_session(session_token: str) -> Dict[str, Any]:
 
 def employee_logout(session_token: str) -> Dict[str, Any]:
     """End employee session"""
+    if not session_token:
+        return {'success': False, 'message': 'Session token is required'}
+    
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -2252,17 +2897,20 @@ def employee_logout(session_token: str) -> Dict[str, Any]:
         """, (session_token,))
         
         conn.commit()
-        
-        # Log logout action
-        log_audit_action(
-            table_name='employee_sessions',
-            record_id=employee_id,
-            action_type='LOGOUT',
-            employee_id=employee_id,
-            notes='Employee logged out'
-        )
-        
         conn.close()
+        
+        # Log logout action (don't fail logout if audit logging fails)
+        try:
+            log_audit_action(
+                table_name='employee_sessions',
+                record_id=employee_id,
+                action_type='LOGOUT',
+                employee_id=employee_id,
+                notes='Employee logged out'
+            )
+        except Exception as audit_error:
+            # Log error but don't fail the logout
+            print(f"Warning: Failed to log audit action for logout: {audit_error}")
         return {'success': True, 'message': 'Logged out successfully'}
     
     conn.close()
@@ -3529,5 +4177,535 @@ def calculate_retained_earnings(
         'net_income': net_income,
         'dividends': dividends,
         'ending_balance': ending_balance
+    }
+
+# ============================================================================
+# SHIPMENT VERIFICATION SYSTEM
+# ============================================================================
+
+def start_verification_session(pending_shipment_id: int, employee_id: int, device_id: Optional[str] = None) -> Dict[str, Any]:
+    """Start a new verification session"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Update shipment status
+    cursor.execute("""
+        UPDATE pending_shipments 
+        SET status = 'in_progress',
+            started_by = ?,
+            started_at = CURRENT_TIMESTAMP
+        WHERE pending_shipment_id = ? AND status = 'pending_review'
+    """, (employee_id, pending_shipment_id))
+    
+    # Create session
+    cursor.execute("""
+        INSERT INTO verification_sessions 
+        (pending_shipment_id, employee_id, device_id)
+        VALUES (?, ?, ?)
+    """, (pending_shipment_id, employee_id, device_id))
+    
+    session_id = cursor.lastrowid
+    
+    # Get shipment details
+    cursor.execute("""
+        SELECT ps.*, v.vendor_name,
+               (SELECT COUNT(*) FROM pending_shipment_items WHERE pending_shipment_id = ps.pending_shipment_id) as total_items
+        FROM pending_shipments ps
+        JOIN vendors v ON ps.vendor_id = v.vendor_id
+        WHERE ps.pending_shipment_id = ?
+    """, (pending_shipment_id,))
+    
+    shipment = cursor.fetchone()
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        'session_id': session_id,
+        'shipment': dict(shipment) if shipment else None
+    }
+
+def scan_item(pending_shipment_id: int, barcode: str, employee_id: int, 
+              device_id: Optional[str] = None, session_id: Optional[int] = None, 
+              location: Optional[str] = None) -> Dict[str, Any]:
+    """Process a scanned barcode during verification"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Find matching item in pending shipment
+    cursor.execute("""
+        SELECT psi.*, i.product_id, i.product_name as inventory_name
+        FROM pending_shipment_items psi
+        LEFT JOIN inventory i ON (psi.product_sku = i.sku OR psi.barcode = i.barcode OR i.barcode = ?)
+        WHERE psi.pending_shipment_id = ? 
+        AND (psi.barcode = ? OR psi.product_sku = ? OR i.barcode = ?)
+        AND psi.status != 'verified'
+    """, (barcode, pending_shipment_id, barcode, barcode, barcode))
+    
+    item = cursor.fetchone()
+    
+    scan_result = 'unknown'
+    response = {}
+    pending_item_id = None
+    
+    if item:
+        item = dict(item)
+        pending_item_id = item['pending_item_id']
+        
+        # Check if already fully verified
+        if item.get('quantity_verified', 0) >= item.get('quantity_expected', 0):
+            scan_result = 'duplicate'
+            response = {
+                'status': 'duplicate',
+                'message': f"Item already fully verified ({item.get('quantity_expected', 0)} units)",
+                'item': item
+            }
+        else:
+            # Increment verified quantity
+            new_quantity = item.get('quantity_verified', 0) + 1
+            scan_result = 'match'
+            
+            # Determine new status
+            new_status = 'verified' if new_quantity >= item.get('quantity_expected', 0) else 'pending'
+            
+            cursor.execute("""
+                UPDATE pending_shipment_items
+                SET quantity_verified = ?,
+                    verified_by = ?,
+                    verified_at = CURRENT_TIMESTAMP,
+                    status = ?
+                WHERE pending_item_id = ?
+            """, (new_quantity, employee_id, new_status, item['pending_item_id']))
+            
+            response = {
+                'status': 'success',
+                'item': item,
+                'quantity_verified': new_quantity,
+                'quantity_expected': item.get('quantity_expected', 0),
+                'remaining': item.get('quantity_expected', 0) - new_quantity,
+                'fully_verified': new_quantity >= item.get('quantity_expected', 0)
+            }
+            
+            # Update session stats if session_id provided
+            if session_id:
+                cursor.execute("""
+                    UPDATE verification_sessions
+                    SET total_scans = total_scans + 1,
+                        items_verified = items_verified + 1
+                    WHERE session_id = ?
+                """, (session_id,))
+    else:
+        # Unknown item scanned
+        scan_result = 'mismatch'
+        response = {
+            'status': 'unknown',
+            'message': 'Item not found in this shipment',
+            'barcode': barcode,
+            'suggest_issue': True
+        }
+    
+    # Log the scan
+    cursor.execute("""
+        INSERT INTO shipment_scan_log
+        (pending_shipment_id, pending_item_id, scanned_barcode, 
+         scanned_by, scan_result, device_id, location)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (pending_shipment_id, pending_item_id, barcode, employee_id, scan_result, device_id, location))
+    
+    conn.commit()
+    conn.close()
+    
+    return response
+
+def report_shipment_issue(pending_shipment_id: int, pending_item_id: Optional[int], 
+                         issue_type: str, description: str, quantity_affected: int,
+                         employee_id: int, severity: str = 'minor', 
+                         photo_path: Optional[str] = None) -> int:
+    """Report an issue with a shipment item"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Create issue record
+    cursor.execute("""
+        INSERT INTO shipment_issues
+        (pending_shipment_id, pending_item_id, issue_type, severity,
+         quantity_affected, reported_by, description, photo_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (pending_shipment_id, pending_item_id, issue_type, severity,
+          quantity_affected, employee_id, description, photo_path))
+    
+    issue_id = cursor.lastrowid
+    
+    # Mark item as having issue if pending_item_id provided
+    if pending_item_id:
+        cursor.execute("""
+            UPDATE pending_shipment_items
+            SET status = 'issue',
+                discrepancy_notes = COALESCE(discrepancy_notes || '\n', '') || 'Issue reported: ' || ?
+            WHERE pending_item_id = ?
+        """, (description, pending_item_id))
+    
+    # Update session stats
+    cursor.execute("""
+        UPDATE verification_sessions
+        SET issues_reported = issues_reported + 1
+        WHERE pending_shipment_id = ? 
+        AND employee_id = ?
+        AND ended_at IS NULL
+        ORDER BY started_at DESC
+        LIMIT 1
+    """, (pending_shipment_id, employee_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return issue_id
+
+def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
+    """Get current verification progress"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Overall stats
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_items,
+            COALESCE(SUM(quantity_expected), 0) as total_expected_quantity,
+            COALESCE(SUM(quantity_verified), 0) as total_verified_quantity,
+            SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as items_fully_verified,
+            SUM(CASE WHEN status = 'issue' THEN 1 ELSE 0 END) as items_with_issues
+        FROM pending_shipment_items
+        WHERE pending_shipment_id = ?
+    """, (pending_shipment_id,))
+    
+    progress = dict(cursor.fetchone())
+    
+    # Items still pending
+    cursor.execute("""
+        SELECT pending_item_id, product_sku, product_name, 
+               quantity_expected, COALESCE(quantity_verified, 0) as quantity_verified,
+               (quantity_expected - COALESCE(quantity_verified, 0)) as remaining
+        FROM pending_shipment_items
+        WHERE pending_shipment_id = ? AND status = 'pending'
+        ORDER BY COALESCE(line_number, pending_item_id)
+    """, (pending_shipment_id,))
+    
+    pending_items = [dict(row) for row in cursor.fetchall()]
+    
+    # Issues
+    cursor.execute("""
+        SELECT si.*, psi.product_name, psi.product_sku,
+               e.first_name || ' ' || e.last_name as reported_by_name
+        FROM shipment_issues si
+        LEFT JOIN pending_shipment_items psi ON si.pending_item_id = psi.pending_item_id
+        JOIN employees e ON si.reported_by = e.employee_id
+        WHERE si.pending_shipment_id = ?
+        ORDER BY si.reported_at DESC
+    """, (pending_shipment_id,))
+    
+    issues = [dict(row) for row in cursor.fetchall()]
+    
+    conn.close()
+    
+    # Calculate completion percentage
+    if progress['total_expected_quantity']:
+        completion_pct = (progress['total_verified_quantity'] / 
+                        progress['total_expected_quantity'] * 100)
+    else:
+        completion_pct = 0
+    
+    return {
+        'progress': progress,
+        'completion_percentage': round(completion_pct, 2),
+        'pending_items': pending_items,
+        'issues': issues,
+        'is_complete': (progress['total_verified_quantity'] >= 
+                      progress['total_expected_quantity'])
+    }
+
+def complete_verification(pending_shipment_id: int, employee_id: int, notes: Optional[str] = None) -> Dict[str, Any]:
+    """Complete verification and move to approved shipments"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Check if all items are verified or have issues
+    cursor.execute("""
+        SELECT COUNT(*) as unverified_count
+        FROM pending_shipment_items
+        WHERE pending_shipment_id = ? 
+        AND status = 'pending'
+        AND COALESCE(quantity_verified, 0) < quantity_expected
+    """, (pending_shipment_id,))
+    
+    result = dict(cursor.fetchone())
+    
+    if result['unverified_count'] > 0:
+        conn.close()
+        return {
+            'success': False,
+            'message': f"{result['unverified_count']} items still need verification"
+        }
+    
+    # Get shipment info
+    cursor.execute("""
+        SELECT ps.*, 
+               (SELECT COUNT(*) FROM shipment_issues WHERE pending_shipment_id = ps.pending_shipment_id) as issue_count,
+               COALESCE(SUM(psi.quantity_verified), 0) as total_received,
+               COALESCE(SUM(psi.quantity_verified * psi.unit_cost), 0) as total_cost
+        FROM pending_shipments ps
+        LEFT JOIN pending_shipment_items psi ON ps.pending_shipment_id = psi.pending_shipment_id
+        WHERE ps.pending_shipment_id = ?
+        GROUP BY ps.pending_shipment_id
+    """, (pending_shipment_id,))
+    
+    shipment = dict(cursor.fetchone())
+    
+    # Create approved shipment
+    cursor.execute("""
+        INSERT INTO approved_shipments
+        (pending_shipment_id, vendor_id, purchase_order_number, 
+         received_date, approved_by, total_items_received, total_cost,
+         has_issues, issue_count)
+        VALUES (?, ?, ?, DATE('now'), ?, ?, ?, ?, ?)
+    """, (pending_shipment_id, shipment['vendor_id'], 
+          shipment.get('purchase_order_number'), employee_id,
+          shipment['total_received'], shipment['total_cost'],
+          1 if shipment['issue_count'] > 0 else 0, shipment['issue_count']))
+    
+    approved_shipment_id = cursor.lastrowid
+    
+    # Transfer verified items to approved shipment items
+    cursor.execute("""
+        INSERT INTO approved_shipment_items
+        (shipment_id, product_id, quantity_received, unit_cost, 
+         lot_number, expiration_date, received_by)
+        SELECT 
+            ?,
+            i.product_id,
+            psi.quantity_verified,
+            psi.unit_cost,
+            psi.lot_number,
+            psi.expiration_date,
+            ?
+        FROM pending_shipment_items psi
+        JOIN inventory i ON (psi.product_sku = i.sku OR psi.barcode = i.barcode)
+        WHERE psi.pending_shipment_id = ?
+        AND psi.quantity_verified > 0
+    """, (approved_shipment_id, employee_id, pending_shipment_id))
+    
+    # Update inventory quantities
+    cursor.execute("""
+        UPDATE inventory i
+        SET current_quantity = current_quantity + (
+            SELECT COALESCE(SUM(psi.quantity_verified), 0)
+            FROM pending_shipment_items psi
+            WHERE (psi.product_sku = i.sku OR psi.barcode = i.barcode)
+            AND psi.pending_shipment_id = ?
+            AND psi.quantity_verified > 0
+        ),
+        last_restocked = CURRENT_TIMESTAMP
+        WHERE EXISTS (
+            SELECT 1 FROM pending_shipment_items psi
+            WHERE (psi.product_sku = i.sku OR psi.barcode = i.barcode)
+            AND psi.pending_shipment_id = ?
+            AND psi.quantity_verified > 0
+        )
+    """, (pending_shipment_id, pending_shipment_id))
+    
+    # Update pending shipment status
+    status = 'completed_with_issues' if shipment['issue_count'] > 0 else 'approved'
+    cursor.execute("""
+        UPDATE pending_shipments
+        SET status = ?,
+            completed_by = ?,
+            completed_at = CURRENT_TIMESTAMP,
+            notes = COALESCE(notes || '\n', '') || COALESCE(?, '')
+        WHERE pending_shipment_id = ?
+    """, (status, employee_id, notes, pending_shipment_id))
+    
+    # End any open verification sessions
+    cursor.execute("""
+        UPDATE verification_sessions
+        SET ended_at = CURRENT_TIMESTAMP
+        WHERE pending_shipment_id = ? AND ended_at IS NULL
+    """, (pending_shipment_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        'success': True,
+        'approved_shipment_id': approved_shipment_id,
+        'total_items': shipment['total_received'],
+        'total_cost': float(shipment['total_cost']),
+        'has_issues': shipment['issue_count'] > 0,
+        'issue_count': shipment['issue_count']
+    }
+
+def get_pending_shipments_with_progress(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get list of pending shipments with verification progress"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT 
+            ps.*, 
+            v.vendor_name,
+            e1.first_name || ' ' || e1.last_name as uploaded_by_name,
+            e2.first_name || ' ' || e2.last_name as started_by_name,
+            COUNT(DISTINCT psi.pending_item_id) as total_items,
+            COALESCE(SUM(psi.quantity_expected), 0) as total_expected,
+            COALESCE(SUM(psi.quantity_verified), 0) as total_verified,
+            COUNT(DISTINCT si.issue_id) as issue_count,
+            CASE 
+                WHEN COALESCE(SUM(psi.quantity_expected), 0) > 0 
+                THEN ROUND((COALESCE(SUM(psi.quantity_verified), 0) * 100.0 / SUM(psi.quantity_expected)), 2)
+                ELSE 0
+            END as progress_percentage
+        FROM pending_shipments ps
+        JOIN vendors v ON ps.vendor_id = v.vendor_id
+        LEFT JOIN employees e1 ON ps.uploaded_by = e1.employee_id
+        LEFT JOIN employees e2 ON ps.started_by = e2.employee_id
+        LEFT JOIN pending_shipment_items psi 
+            ON ps.pending_shipment_id = psi.pending_shipment_id
+        LEFT JOIN shipment_issues si 
+            ON ps.pending_shipment_id = si.pending_shipment_id
+    """
+    
+    if status:
+        query += " WHERE ps.status = ?"
+        cursor.execute(query + " GROUP BY ps.pending_shipment_id ORDER BY ps.upload_timestamp DESC", 
+                     (status,))
+    else:
+        cursor.execute(query + " GROUP BY ps.pending_shipment_id ORDER BY ps.upload_timestamp DESC")
+    
+    shipments = [dict(row) for row in cursor.fetchall()]
+    
+    conn.close()
+    
+    return shipments
+
+def get_shipment_items(pending_shipment_id: int) -> List[Dict[str, Any]]:
+    """Get all items in a shipment with verification status"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT psi.*,
+               (psi.quantity_expected - COALESCE(psi.quantity_verified, 0)) as remaining,
+               CASE 
+                   WHEN COALESCE(psi.quantity_verified, 0) >= psi.quantity_expected THEN 'complete'
+                   WHEN COALESCE(psi.quantity_verified, 0) > 0 THEN 'partial'
+                   ELSE 'not_started'
+               END as verification_status
+        FROM pending_shipment_items psi
+        WHERE psi.pending_shipment_id = ?
+        ORDER BY COALESCE(psi.line_number, psi.pending_item_id)
+    """, (pending_shipment_id,))
+    
+    items = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return items
+
+def create_shipment_from_document(
+    file_path: str,
+    vendor_id: int,
+    purchase_order_number: Optional[str] = None,
+    expected_delivery_date: Optional[str] = None,
+    uploaded_by: Optional[int] = None,
+    column_mapping: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Create a pending shipment from a scraped vendor document
+    
+    Args:
+        file_path: Path to the uploaded document
+        vendor_id: Vendor ID
+        purchase_order_number: Optional PO number
+        expected_delivery_date: Optional expected delivery date
+        uploaded_by: Employee ID who uploaded
+        column_mapping: Optional column mapping for document scraping
+    
+    Returns:
+        Dictionary with pending_shipment_id and items created
+    """
+    from document_scraper import scrape_document
+    
+    # Scrape the document
+    try:
+        items = scrape_document(file_path, column_mapping)
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'Error scraping document: {str(e)}'
+        }
+    
+    if not items:
+        return {
+            'success': False,
+            'message': 'No items found in document'
+        }
+    
+    # Create pending shipment
+    try:
+        pending_shipment_id = create_pending_shipment(
+            vendor_id=vendor_id,
+            file_path=file_path,
+            expected_date=expected_delivery_date,
+            purchase_order_number=purchase_order_number,
+            uploaded_by=uploaded_by
+        )
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'Error creating pending shipment: {str(e)}'
+        }
+    
+    # Add items to pending shipment
+    items_added = 0
+    total_expected = 0
+    total_cost = 0.0
+    
+    for idx, item in enumerate(items):
+        try:
+            add_pending_shipment_item(
+                pending_shipment_id=pending_shipment_id,
+                product_sku=item.get('product_sku', ''),
+                product_name=item.get('product_name'),
+                quantity_expected=item.get('quantity_expected', 0),
+                unit_cost=item.get('unit_cost', 0.0),
+                lot_number=item.get('lot_number'),
+                expiration_date=item.get('expiration_date'),
+                barcode=item.get('barcode'),
+                line_number=idx + 1
+            )
+            items_added += 1
+            total_expected += item.get('quantity_expected', 0)
+            total_cost += item.get('quantity_expected', 0) * item.get('unit_cost', 0.0)
+        except Exception as e:
+            print(f"Error adding item {idx}: {e}")
+            continue
+    
+    # Update shipment totals
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE pending_shipments
+        SET total_expected_items = ?,
+            total_expected_cost = ?,
+            document_path = ?,
+            status = 'pending_review'
+        WHERE pending_shipment_id = ?
+    """, (items_added, total_cost, file_path, pending_shipment_id))
+    conn.commit()
+    conn.close()
+    
+    return {
+        'success': True,
+        'pending_shipment_id': pending_shipment_id,
+        'items_added': items_added,
+        'total_expected': total_expected,
+        'total_cost': float(total_cost)
     }
 
