@@ -109,9 +109,9 @@ function AdminDashboard() {
   }
 
   return (
-    <div className="admin-dashboard">
-      <div className="admin-header">
-        <h1>Admin Dashboard</h1>
+    <div className="admin-dashboard" style={{ padding: '0', maxWidth: '100%' }}>
+      <div className="admin-header" style={{ marginBottom: '20px' }}>
+        <h1 style={{ fontSize: '24px', margin: 0 }}>Admin Dashboard</h1>
         {hasPermission('add_employee') && (
           <button className="btn btn-primary" onClick={handleAddEmployee}>
             Add Employee

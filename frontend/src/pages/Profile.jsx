@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
+import { usePermissions } from '../contexts/PermissionContext'
+import AdminDashboard from '../components/AdminDashboard'
 
 function Profile({ employeeId, employeeName }) {
+  const { hasPermission } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [schedules, setSchedules] = useState([])
   const [hoursStats, setHoursStats] = useState({ total: 0, thisWeek: 0, thisMonth: 0 })
@@ -152,7 +155,13 @@ function Profile({ employeeId, employeeName }) {
   }
 
   return (
-    <div style={{ padding: '24px', backgroundColor: '#f5f5f5', minHeight: 'calc(100vh - 200px)' }}>
+    <div style={{ 
+      padding: '24px', 
+      backgroundColor: '#f5f5f5', 
+      minHeight: 'calc(100vh - 200px)',
+      maxWidth: '100%',
+      overflowX: 'hidden'
+    }}>
       <h1 style={{ marginBottom: '24px', fontSize: '28px', fontWeight: 600 }}>
         My Profile
       </h1>
@@ -160,12 +169,15 @@ function Profile({ employeeId, employeeName }) {
       {/* Bento Box Grid */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(12, 1fr)',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))',
         gap: '16px',
-        gridAutoRows: 'minmax(200px, auto)'
+        gridAutoRows: 'minmax(200px, auto)',
+        width: '100%',
+        maxWidth: '100%',
+        boxSizing: 'border-box'
       }}>
         {/* Hours Summary - Large Card */}
-        <BentoCard span={4} style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
+        <BentoCard style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' }}>
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>
             <div>
               <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 500, opacity: 0.9 }}>Total Hours</h3>
@@ -187,10 +199,10 @@ function Profile({ employeeId, employeeName }) {
         </BentoCard>
 
         {/* Pending Confirmations - Medium Card */}
-        <BentoCard span={4}>
+        <BentoCard>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600 }}>Pending Confirmations</h3>
           {pendingConfirmations.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '100%', overflowY: 'auto' }}>
               {pendingConfirmations.slice(0, 3).map((schedule) => (
                 <div key={schedule.schedule_id} style={{
                   padding: '12px',
@@ -235,10 +247,10 @@ function Profile({ employeeId, employeeName }) {
         </BentoCard>
 
         {/* Upcoming Schedule - Medium Card */}
-        <BentoCard span={4}>
+        <BentoCard>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600 }}>Upcoming Schedule</h3>
           {upcomingSchedules.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '100%', overflowY: 'auto' }}>
               {upcomingSchedules.map((schedule) => (
                 <div key={schedule.schedule_id} style={{
                   padding: '10px',
@@ -263,7 +275,7 @@ function Profile({ employeeId, employeeName }) {
         </BentoCard>
 
         {/* Availability Input - Large Card */}
-        <BentoCard span={8}>
+        <BentoCard style={{ gridColumn: '1 / -1' }}>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600 }}>My Availability</h3>
           <AvailabilityInput 
             availability={availability} 
@@ -272,9 +284,9 @@ function Profile({ employeeId, employeeName }) {
         </BentoCard>
 
         {/* Recent Hours - Medium Card */}
-        <BentoCard span={4}>
+        <BentoCard>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600 }}>Recent Hours</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '100%', overflowY: 'auto' }}>
             {schedules
               .filter(s => s.hours_worked)
               .sort((a, b) => new Date(b.schedule_date) - new Date(a.schedule_date))
@@ -307,6 +319,13 @@ function Profile({ employeeId, employeeName }) {
           </div>
         </BentoCard>
       </div>
+
+      {/* Admin Dashboard Section - Only shown if user has admin permissions */}
+      {(hasPermission('manage_permissions') || hasPermission('add_employee')) && (
+        <div style={{ marginTop: '32px' }}>
+          <AdminDashboard />
+        </div>
+      )}
     </div>
   )
 }
@@ -314,12 +333,15 @@ function Profile({ employeeId, employeeName }) {
 function BentoCard({ children, span = 4, style = {} }) {
   return (
     <div style={{
-      gridColumn: `span ${span}`,
       backgroundColor: '#fff',
       borderRadius: '12px',
       padding: '20px',
       boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
       border: '1px solid #e9ecef',
+      minWidth: 0,
+      maxWidth: '100%',
+      overflow: 'hidden',
+      boxSizing: 'border-box',
       ...style
     }}>
       {children}
@@ -369,8 +391,8 @@ function AvailabilityInput({ availability, onSave }) {
   ]
 
   return (
-    <div>
-      <div style={{ display: 'grid', gap: '12px' }}>
+    <div style={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+      <div style={{ display: 'grid', gap: '12px', width: '100%' }}>
         {days.map((day) => (
           <div key={day.key} style={{
             display: 'flex',
@@ -378,12 +400,15 @@ function AvailabilityInput({ availability, onSave }) {
             gap: '12px',
             padding: '12px',
             backgroundColor: '#f8f9fa',
-            borderRadius: '6px'
+            borderRadius: '6px',
+            flexWrap: 'wrap',
+            width: '100%',
+            boxSizing: 'border-box'
           }}>
-            <div style={{ width: '100px', fontSize: '14px', fontWeight: 500 }}>
+            <div style={{ minWidth: '80px', fontSize: '14px', fontWeight: 500, flexShrink: 0 }}>
               {day.label}
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', flexShrink: 0 }}>
               <input
                 type="checkbox"
                 checked={formData[day.key].available}
@@ -402,10 +427,11 @@ function AvailabilityInput({ availability, onSave }) {
                     padding: '6px 8px',
                     border: '1px solid #ddd',
                     borderRadius: '4px',
-                    fontSize: '13px'
+                    fontSize: '13px',
+                    flexShrink: 0
                   }}
                 />
-                <span style={{ fontSize: '13px', color: '#666' }}>to</span>
+                <span style={{ fontSize: '13px', color: '#666', flexShrink: 0 }}>to</span>
                 <input
                   type="time"
                   value={formData[day.key].end}
@@ -414,7 +440,8 @@ function AvailabilityInput({ availability, onSave }) {
                     padding: '6px 8px',
                     border: '1px solid #ddd',
                     borderRadius: '4px',
-                    fontSize: '13px'
+                    fontSize: '13px',
+                    flexShrink: 0
                   }}
                 />
               </>

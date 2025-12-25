@@ -47,17 +47,17 @@ function Statistics() {
 
     const maxRevenue = Math.max(...stats.weekly_revenue.map(d => d.revenue), 1)
     const chartHeight = 200
-    const chartWidth = 450
-    const barWidth = 45
-    const spacing = (chartWidth - (barWidth * 7)) / 8
+    const svgWidth = 400
+    const barWidth = 40
+    const spacing = 20
 
     return (
-      <div style={{ padding: '20px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '100%', flexShrink: 0 }}>
-        <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: 500 }}>
+      <div style={{ padding: '8px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '100%', flexShrink: 0, boxSizing: 'border-box' }}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 500 }}>
           Weekly Revenue
         </h3>
-        <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
-          <svg width={chartWidth} height={chartHeight + 40} style={{ overflow: 'visible' }}>
+        <div style={{ overflow: 'hidden', width: '100%', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg width="100%" height="100%" viewBox={`0 0 ${svgWidth} ${chartHeight + 25}`} preserveAspectRatio="xMidYMid meet" style={{ overflow: 'visible', maxWidth: '100%', minHeight: '200px' }}>
             {/* Bars */}
             {stats.weekly_revenue.map((day, index) => {
               const barHeight = maxRevenue > 0 ? (day.revenue / maxRevenue) * chartHeight : 0
@@ -71,23 +71,23 @@ function Statistics() {
                   y={y}
                   width={barWidth}
                   height={barHeight}
-                  fill="#4a90e2"
+                  fill="rgba(220, 180, 255, 0.5)"
                   rx="4"
                 />
                 <text
                   x={x + barWidth / 2}
                   y={chartHeight + 20}
                   textAnchor="middle"
-                  fontSize="12"
+                  fontSize="9"
                   fill="#666"
                 >
                   {day.day}
                 </text>
                 <text
                   x={x + barWidth / 2}
-                  y={y - 5}
+                  y={y - 2}
                   textAnchor="middle"
-                  fontSize="11"
+                  fontSize="8"
                   fill="#333"
                   fontWeight="500"
                 >
@@ -111,7 +111,7 @@ function Statistics() {
           <line
             x1={0}
             y1={chartHeight}
-            x2={chartWidth}
+            x2={svgWidth}
             y2={chartHeight}
             stroke="#ddd"
             strokeWidth="1"
@@ -157,31 +157,32 @@ function Statistics() {
   const renderOverview = () => {
     return (
       <div style={{
-        padding: '30px',
+        padding: '8px',
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
         minWidth: '100%',
-        flexShrink: 0
+        flexShrink: 0,
+        boxSizing: 'border-box'
       }}>
-        <h3 style={{ margin: '0 0 30px 0', fontSize: '18px', fontWeight: 500 }}>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '12px', fontWeight: 500 }}>
           Overview
         </h3>
-        <div style={{ display: 'flex', gap: '40px', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', gap: '20px', justifyContent: 'center' }}>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>
+            <div style={{ fontSize: '24px', fontWeight: 600, color: '#333', marginBottom: '4px' }}>
               {stats.total_orders || 0}
             </div>
-            <div style={{ fontSize: '16px', color: '#666' }}>
+            <div style={{ fontSize: '11px', color: '#666' }}>
               Total Orders
             </div>
           </div>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>
+            <div style={{ fontSize: '24px', fontWeight: 600, color: '#333', marginBottom: '4px' }}>
               {stats.total_returns || 0}
             </div>
-            <div style={{ fontSize: '16px', color: '#666' }}>
+            <div style={{ fontSize: '11px', color: '#666' }}>
               Total Returns
             </div>
           </div>
