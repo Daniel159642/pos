@@ -163,3 +163,4 @@ To add a new scanning method:
 - HTTPS required for camera access in production
 
 
+

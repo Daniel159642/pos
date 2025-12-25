@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 function EventCard({ event, formatTime, getEventColor }) {
   const getSessionToken = () => {
@@ -115,6 +116,7 @@ function EventCard({ event, formatTime, getEventColor }) {
 }
 
 function Calendar() {
+  const navigate = useNavigate()
   const [currentDate, setCurrentDate] = useState(new Date())
   const [events, setEvents] = useState([])
   const [schedules, setSchedules] = useState([])
@@ -487,7 +489,7 @@ function Calendar() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <h3 style={{ margin: 0, fontSize: '16px' }}>Upcoming Events</h3>
           <button
-            onClick={() => window.location.href = '/calendar-subscription'}
+            onClick={() => navigate('/calendar-subscription')}
             style={{
               padding: '6px 12px',
               backgroundColor: '#f0f0f0',

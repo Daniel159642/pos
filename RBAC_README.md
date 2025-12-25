@@ -342,3 +342,4 @@ import PermissionManager from './components/PermissionManager'
 5. Add permission checks to frontend components
 
 
+
