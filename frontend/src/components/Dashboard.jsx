@@ -1,12 +1,15 @@
 import { useNavigate } from 'react-router-dom'
 import { usePermissions } from '../contexts/PermissionContext'
 import Statistics from './Statistics'
+import { ParticleCard } from './MagicBento'
+import './MagicBento.css'
 
 function Dashboard() {
   const navigate = useNavigate()
   const { hasPermission } = usePermissions()
 
-  const boxes = [
+  // Left column boxes
+  const leftBoxes = [
     {
       id: 'statistics',
       title: 'Statistics',
@@ -16,25 +19,36 @@ function Dashboard() {
       isComponent: true
     },
     {
+      id: 'shipment-verification',
+      title: 'Shipment',
+      description: 'Verify incoming shipments and scan items',
+      size: 'large',
+      onClick: () => navigate('/shipment-verification')
+    },
+    {
+      id: 'inventory',
+      title: 'Inventory',
+      description: 'Manage inventory',
+      size: 'medium',
+      onClick: () => navigate('/inventory')
+    }
+  ]
+
+  // Right column boxes
+  const rightBoxes = [
+    {
+      id: 'calendar',
+      title: 'Calendar',
+      description: 'View calendar and schedules',
+      size: 'medium',
+      onClick: () => navigate('/calendar')
+    },
+    {
       id: 'pos',
       title: 'POS',
       description: 'Point of Sale',
       size: 'large',
       onClick: () => navigate('/pos')
-    },
-    {
-      id: 'tables',
-      title: 'Tables',
-      description: 'View all tables',
-      size: 'medium',
-      onClick: () => navigate('/tables')
-    },
-    {
-      id: 'returns',
-      title: 'Returns',
-      description: 'Process returns',
-      size: 'medium',
-      onClick: () => navigate('/returns')
     },
     {
       id: 'recent-orders',
@@ -44,127 +58,152 @@ function Dashboard() {
       onClick: () => navigate('/recent-orders')
     },
     {
-      id: 'inventory',
-      title: 'Inventory',
-      description: 'Manage inventory',
+      id: 'returns',
+      title: 'Returns',
+      description: 'Process returns',
       size: 'medium',
-      onClick: () => navigate('/inventory')
-    },
-    {
-      id: 'calendar',
-      title: 'Calendar',
-      description: 'View calendar and schedules',
-      size: 'medium',
-      onClick: () => navigate('/calendar')
-    },
-    {
-      id: 'shipment-verification',
-      title: 'Shipment Verification',
-      description: 'Verify incoming shipments and scan items',
-      size: 'large',
-      onClick: () => navigate('/shipment-verification')
+      onClick: () => navigate('/returns')
     },
     // Admin-only boxes
     ...(hasPermission('manage_permissions') || hasPermission('add_employee') ? [{
       id: 'employee-management',
-      title: 'Employee Management',
+      title: 'Management',
       description: 'Manage employees and schedules',
       size: 'large',
       onClick: () => navigate('/employee-management')
-    }] : [])
+    }] : []),
+    {
+      id: 'tables',
+      title: 'Tables',
+      description: 'View all tables',
+      size: 'medium',
+      onClick: () => navigate('/tables')
+    }
   ]
 
+  const renderBox = (box, isLeftColumn = false) => {
+    const Component = box.component
+    const isComponentBox = box.isComponent
+    const isStatistics = box.id === 'statistics'
+    const isPOS = box.id === 'pos'
+    
+    const boxContent = (
+      <div
+        className={`magic-bento-card magic-bento-card--border-glow ${!isComponentBox ? 'magic-bento-card--text-autohide' : ''}`}
+        style={{
+          cursor: isComponentBox ? 'default' : 'pointer',
+          minHeight: 0,
+          height: '100%',
+          gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
+          gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
+          '--glow-color': '132, 0, 255',
+          backgroundColor: isPOS ? 'rgba(132, 0, 255, 0.1)' : undefined
+        }}
+      >
+        {isComponentBox && Component ? (
+          <>
+            <div className="magic-bento-card__header" style={{ flexShrink: 0 }}>
+              <div className="magic-bento-card__label">{box.title}</div>
+            </div>
+            <div className="magic-bento-card__content" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              <Component />
+            </div>
+          </>
+        ) : (
+          <div className="magic-bento-card__content" style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            justifyContent: 'flex-end',
+            alignItems: 'flex-end',
+            height: '100%',
+            padding: '1.25em'
+          }}>
+            <div 
+              className="magic-bento-card__label"
+              style={
+                (box.id === 'employee-management' || box.id === 'shipment-verification' || box.id === 'calendar' || box.id === 'returns')
+                  ? {
+                      fontStyle: 'italic',
+                      fontFamily: 'Georgia, "Times New Roman", serif',
+                      fontSize: '18px'
+                    }
+                  : {}
+              }
+            >
+              {box.title}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+
+    return (
+      <ParticleCard
+        key={box.id}
+        onClick={!isComponentBox ? box.onClick : undefined}
+        enableStars={false}
+        enableTilt={false}
+        enableMagnetism={false}
+        clickEffect={!isComponentBox}
+        particleCount={12}
+        glowColor="132, 0, 255"
+        disableAnimations={false}
+        style={{
+          minHeight: 0,
+          height: '100%',
+          gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
+          gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
+          cursor: isComponentBox ? 'default' : 'pointer'
+        }}
+      >
+        {boxContent}
+      </ParticleCard>
+    )
+  }
+
   return (
-    <div style={{ padding: '40px', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ 
+      padding: '12px', 
+      maxWidth: '100%', 
+      margin: '0 auto',
+      boxSizing: 'border-box',
+      height: 'calc(100vh - 80px)',
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column',
+      backgroundColor: 'white'
+    }}>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: '20px',
-        gridAutoRows: 'minmax(150px, auto)'
+        gridTemplateColumns: '1fr 1fr',
+        gap: '10px',
+        height: '100%',
+        flex: 1,
+        minHeight: 0
       }}>
-        {boxes.map(box => {
-          const Component = box.component
-          const isComponentBox = box.isComponent
-          
-          return (
-            <div
-              key={box.id}
-              onClick={!isComponentBox ? box.onClick : undefined}
-              style={{
-                gridColumn: box.size === 'large' ? 'span 2' : 'span 1',
-                gridRow: box.size === 'large' ? 'span 2' : 'span 1',
-                backgroundColor: '#fff',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                padding: '0',
-                cursor: isComponentBox ? 'default' : 'pointer',
-                transition: 'all 0.2s',
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden'
-              }}
-              onMouseEnter={!isComponentBox ? (e) => {
-                e.currentTarget.style.borderColor = '#000'
-                e.currentTarget.style.transform = 'translateY(-2px)'
-                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'
-              } : undefined}
-              onMouseLeave={!isComponentBox ? (e) => {
-                e.currentTarget.style.borderColor = '#ddd'
-                e.currentTarget.style.transform = 'translateY(0)'
-                e.currentTarget.style.boxShadow = 'none'
-              } : undefined}
-            >
-              {isComponentBox && Component ? (
-                <>
-                  <div style={{
-                    padding: '20px 30px',
-                    borderBottom: '1px solid #eee',
-                    backgroundColor: '#fafafa'
-                  }}>
-                    <h2 style={{
-                      margin: '0 0 5px 0',
-                      fontSize: box.size === 'large' ? '24px' : '20px',
-                      fontWeight: 500
-                    }}>
-                      {box.title}
-                    </h2>
-                    <p style={{
-                      margin: 0,
-                      color: '#666',
-                      fontSize: '13px'
-                    }}>
-                      {box.description}
-                    </p>
-                  </div>
-                  <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-                    <Component />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <h2 style={{
-                    margin: '0 0 10px 0',
-                    fontSize: box.size === 'large' ? '32px' : '24px',
-                    fontWeight: 500,
-                    padding: '30px 30px 0 30px',
-                    textAlign: 'center'
-                  }}>
-                    {box.title}
-                  </h2>
-                  <p style={{
-                    margin: '0 0 30px 0',
-                    color: '#666',
-                    fontSize: '14px',
-                    padding: '0 30px',
-                    textAlign: 'center'
-                  }}>
-                    {box.description}
-                  </p>
-                </>
-              )}
-            </div>
-          )
-        })}
+        {/* Left Column */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: '10px',
+          height: '100%',
+          gridTemplateRows: 'repeat(3, 1fr)',
+          minHeight: 0
+        }}>
+          {leftBoxes.map(box => renderBox(box, true))}
+        </div>
+
+        {/* Right Column */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: '10px',
+          height: '100%',
+          gridTemplateRows: 'repeat(3, 1fr)',
+          minHeight: 0
+        }}>
+          {rightBoxes.map(box => renderBox(box))}
+        </div>
       </div>
     </div>
   )

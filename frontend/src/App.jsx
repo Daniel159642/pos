@@ -10,7 +10,6 @@ import RecentOrders from './pages/RecentOrders'
 import Inventory from './pages/Inventory'
 import Calendar from './components/Calendar'
 import CalendarSubscription from './components/CalendarSubscription'
-import AdminDashboard from './components/AdminDashboard'
 import EmployeeManagement from './components/EmployeeManagement'
 import Profile from './pages/Profile'
 import ShipmentVerification from './pages/ShipmentVerification'
@@ -106,9 +105,7 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       } />
       <Route path="/admin" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
-          <Layout employee={employee} onLogout={onLogout}>
-            <AdminDashboard />
-          </Layout>
+          <Navigate to="/profile" replace />
         </ProtectedRoute>
       } />
       <Route path="/employee-management" element={
@@ -149,14 +146,16 @@ function Layout({ children, employee, onLogout }) {
   const { hasPermission } = usePermissions()
   
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: 'white' }}>
       <div style={{ 
-        backgroundColor: '#fff', 
-        borderBottom: '1px solid #ddd',
+        backgroundColor: 'rgba(200, 200, 200, 0.3)', 
         padding: '10px 20px',
+        margin: '0 12px 12px 12px',
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
+        borderBottomLeftRadius: '20px',
+        borderBottomRightRadius: '20px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <button
@@ -166,28 +165,16 @@ function Layout({ children, employee, onLogout }) {
               backgroundColor: 'transparent',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 500
+              fontSize: '18px',
+              fontWeight: 500,
+              borderRadius: '8px',
+              fontStyle: 'italic',
+              fontFamily: 'Georgia, "Times New Roman", serif'
             }}
           >
-            Dashboard
+            Swift
           </button>
-          {(hasPermission('manage_permissions') || hasPermission('add_employee')) && (
-            <button
-              onClick={() => navigate('/admin')}
-              style={{
-                padding: '6px 12px',
-                backgroundColor: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '16px',
-                fontWeight: 500,
-                color: '#d32f2f'
-              }}
-            >
-              Admin
-            </button>
-          )}
+          <span style={{ color: '#666' }}>Welcome, {employee?.employee_name}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <button
@@ -199,19 +186,19 @@ function Layout({ children, employee, onLogout }) {
               cursor: 'pointer',
               fontSize: '16px',
               fontWeight: 500,
-              color: '#666'
+              color: '#666',
+              borderRadius: '8px'
             }}
           >
             Profile
           </button>
-          <span style={{ color: '#666' }}>Welcome, {employee?.employee_name}</span>
           <button 
             onClick={onLogout}
             style={{
               padding: '6px 12px',
               backgroundColor: '#f0f0f0',
               border: '1px solid #ddd',
-              borderRadius: '4px',
+              borderRadius: '8px',
               cursor: 'pointer'
             }}
           >
