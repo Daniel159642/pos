@@ -189,7 +189,8 @@ function Layout({ children, employee, onLogout }) {
               fontWeight: 500,
               borderRadius: '8px',
               fontStyle: 'italic',
-              fontFamily: 'Georgia, "Times New Roman", serif'
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              color: 'yellow'
             }}
           >
             Swift
