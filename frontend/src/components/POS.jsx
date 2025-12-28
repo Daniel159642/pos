@@ -1,10 +1,20 @@
 import { useState, useEffect } from 'react'
 import { usePermissions, ProtectedComponent } from '../contexts/PermissionContext'
+import { useTheme } from '../contexts/ThemeContext'
 import BarcodeScanner from './BarcodeScanner'
 import CustomerDisplayPopup from './CustomerDisplayPopup'
 
 function POS({ employeeId, employeeName }) {
   const { hasPermission } = usePermissions()
+  const { themeColor } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
   const [cart, setCart] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -726,7 +736,7 @@ function POS({ employeeId, employeeName }) {
                     style={{
                       width: '100%',
                       padding: '12px',
-                      backgroundColor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'rgba(128, 0, 128, 0.4)' : 'rgba(128, 0, 128, 0.7)',
+                      backgroundColor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
                       backdropFilter: 'blur(10px)',
                       WebkitBackdropFilter: 'blur(10px)',
                       color: '#fff',
@@ -735,7 +745,7 @@ function POS({ employeeId, employeeName }) {
                       fontSize: '16px',
                       fontWeight: 600,
                       cursor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'not-allowed' : 'pointer',
-                      boxShadow: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      boxShadow: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                       transition: 'all 0.3s ease',
                       opacity: 1
                     }}
@@ -1014,7 +1024,7 @@ function POS({ employeeId, employeeName }) {
                 style={{
                   flex: 1,
                   padding: '16px',
-                  backgroundColor: cart.length === 0 ? 'rgba(128, 0, 128, 0.4)' : 'rgba(128, 0, 128, 0.7)',
+                  backgroundColor: cart.length === 0 ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
                   backdropFilter: 'blur(10px)',
                   WebkitBackdropFilter: 'blur(10px)',
                   color: '#fff',
@@ -1023,7 +1033,7 @@ function POS({ employeeId, employeeName }) {
                   fontSize: '18px',
                   fontWeight: 600,
                   cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                  boxShadow: cart.length === 0 ? '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  boxShadow: cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                   transition: 'all 0.3s ease',
                   opacity: 1
                 }}
@@ -1044,7 +1054,7 @@ function POS({ employeeId, employeeName }) {
                 disabled={cart.length === 0}
                 style={{
                   padding: '16px 24px',
-                  backgroundColor: cart.length === 0 ? 'rgba(128, 0, 128, 0.35)' : 'rgba(128, 0, 128, 0.55)',
+                  backgroundColor: cart.length === 0 ? `rgba(${themeColorRgb}, 0.35)` : `rgba(${themeColorRgb}, 0.55)`,
                   backdropFilter: 'blur(10px)',
                   WebkitBackdropFilter: 'blur(10px)',
                   color: '#fff',
@@ -1053,7 +1063,7 @@ function POS({ employeeId, employeeName }) {
                   fontSize: '18px',
                   fontWeight: 600,
                   cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                  boxShadow: cart.length === 0 ? '0 2px 8px rgba(128, 0, 128, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  boxShadow: cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                   transition: 'all 0.3s ease',
                   opacity: 1
                 }}
@@ -1179,7 +1189,7 @@ function POS({ employeeId, employeeName }) {
                   style={{
                     flex: 1,
                     padding: '16px',
-                    backgroundColor: paymentMethod === 'cash' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    backgroundColor: paymentMethod === 'cash' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                     color: '#fff',
@@ -1189,8 +1199,8 @@ function POS({ employeeId, employeeName }) {
                     fontWeight: 600,
                     cursor: 'pointer',
                     boxShadow: paymentMethod === 'cash' 
-                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
-                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
+                      : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
                     transition: 'all 0.3s ease'
                   }}
                 >
@@ -1204,7 +1214,7 @@ function POS({ employeeId, employeeName }) {
                   style={{
                     flex: 1,
                     padding: '16px',
-                    backgroundColor: paymentMethod === 'credit_card' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    backgroundColor: paymentMethod === 'credit_card' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                     color: '#fff',
@@ -1214,8 +1224,8 @@ function POS({ employeeId, employeeName }) {
                     fontWeight: 600,
                     cursor: 'pointer',
                     boxShadow: paymentMethod === 'credit_card' 
-                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
-                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
+                      : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
                     transition: 'all 0.3s ease'
                   }}
                 >
@@ -1377,7 +1387,7 @@ function POS({ employeeId, employeeName }) {
                 width: '100%',
                 padding: '16px',
                 marginTop: 'auto',
-                backgroundColor: processing || cart.length === 0 ? 'rgba(128, 0, 128, 0.4)' : 'rgba(128, 0, 128, 0.7)',
+                backgroundColor: processing || cart.length === 0 ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
                 color: '#fff',
@@ -1386,7 +1396,7 @@ function POS({ employeeId, employeeName }) {
                 fontSize: '18px',
                 fontWeight: 600,
                 cursor: processing || cart.length === 0 ? 'not-allowed' : 'pointer',
-                boxShadow: processing || cart.length === 0 ? '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                boxShadow: processing || cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                 transition: 'all 0.3s ease',
                 opacity: 1
               }}
@@ -1452,17 +1462,17 @@ function POS({ employeeId, employeeName }) {
                       onClick={() => handleCategorySelect(category)}
                       style={{
                         padding: '10px 16px',
-                        backgroundColor: selectedCategory === category ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                        backgroundColor: selectedCategory === category ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                         backdropFilter: 'blur(10px)',
                         WebkitBackdropFilter: 'blur(10px)',
-                        border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                        border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                         borderRadius: '8px',
                         fontSize: '14px',
                         fontWeight: selectedCategory === category ? 600 : 500,
                         color: '#fff',
                         cursor: 'pointer',
                         transition: 'all 0.3s ease',
-                        boxShadow: selectedCategory === category ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+                        boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
                       }}
                     >
                       {category}

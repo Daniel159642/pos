@@ -1,9 +1,40 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
 
 function Returns() {
   const [searchParams] = useSearchParams()
+  const { themeColor, themeMode } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
   const [view, setView] = useState('create') // 'create' or 'pending'
   const [orderNumber, setOrderNumber] = useState('')
   const [order, setOrder] = useState(null)
@@ -424,17 +455,17 @@ function Returns() {
             onClick={() => setView('create')}
             style={{
               padding: '10px 16px',
-              backgroundColor: view === 'create' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+              backgroundColor: view === 'create' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
-              border: view === 'create' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+              border: view === 'create' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
               borderRadius: '8px',
               fontSize: '14px',
               fontWeight: view === 'create' ? 600 : 500,
               color: '#fff',
               cursor: 'pointer',
               transition: 'all 0.3s ease',
-              boxShadow: view === 'create' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+              boxShadow: view === 'create' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
             }}
           >
             Create Return
@@ -443,17 +474,17 @@ function Returns() {
             onClick={() => setView('pending')}
             style={{
               padding: '10px 16px',
-              backgroundColor: view === 'pending' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+              backgroundColor: view === 'pending' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
-              border: view === 'pending' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+              border: view === 'pending' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
               borderRadius: '8px',
               fontSize: '14px',
               fontWeight: view === 'pending' ? 600 : 500,
               color: '#fff',
               cursor: 'pointer',
               transition: 'all 0.3s ease',
-              boxShadow: view === 'pending' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+              boxShadow: view === 'pending' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
             }}
           >
             Pending Returns
@@ -498,33 +529,34 @@ function Returns() {
                 width: '100%',
                 padding: '8px 0',
                 border: 'none',
-                borderBottom: '2px solid #ddd',
+                borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd',
                 borderRadius: '0',
                 backgroundColor: 'transparent',
                 outline: 'none',
                 fontSize: '14px',
                 boxSizing: 'border-box',
-                fontFamily: '"Product Sans", sans-serif'
+                fontFamily: '"Product Sans", sans-serif',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
           </div>
 
           {/* Orders Table */}
           {ordersLoading ? (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Loading...</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Loading...</div>
           ) : ordersData && filteredOrders.length > 0 ? (
             <div style={{ 
-              backgroundColor: '#fff', 
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff', 
               borderRadius: '4px', 
               overflowX: 'auto',
               overflowY: 'visible',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
               width: '100%',
               marginBottom: '30px'
             }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
                 <thead>
-                  <tr style={{ backgroundColor: '#f8f9fa' }}>
+                  <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa' }}>
                     {columnsWithActions.map(col => (
                       <th
                         key={col}
@@ -532,8 +564,8 @@ function Returns() {
                           padding: '12px',
                           textAlign: 'left',
                           fontWeight: 600,
-                          borderBottom: '2px solid #dee2e6',
-                          color: '#495057',
+                          borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
                           fontSize: '13px',
                           textTransform: 'uppercase',
                           letterSpacing: '0.5px'
@@ -557,7 +589,7 @@ function Returns() {
                           key={idx} 
                           onClick={() => handleRowClick(row)}
                           style={{ 
-                            backgroundColor: idx % 2 === 0 ? '#fff' : '#fafafa',
+                            backgroundColor: idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa'),
                             cursor: 'pointer'
                           }}
                         >
@@ -592,8 +624,9 @@ function Returns() {
                                 key={col} 
                                 style={{ 
                                   padding: '8px 12px', 
-                                  borderBottom: '1px solid #eee',
+                                  borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
                                   fontSize: '14px',
+                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                                   textAlign: (col.includes('price') || col.includes('cost') || col.includes('total') || 
                                              col.includes('amount') || col.includes('fee')) ? 'right' : 'left'
                                 }}
@@ -603,7 +636,7 @@ function Returns() {
                             )
                           })}
                           <td 
-                            style={{ padding: '8px 12px', borderBottom: '1px solid #eee' }}
+                            style={{ padding: '8px 12px', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
@@ -613,7 +646,7 @@ function Returns() {
                               }}
                               style={{
                                 padding: '6px 12px',
-                                backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                                 backdropFilter: 'blur(10px)',
                                 WebkitBackdropFilter: 'blur(10px)',
                                 color: '#fff',
@@ -622,16 +655,16 @@ function Returns() {
                                 cursor: 'pointer',
                                 fontSize: '14px',
                                 fontWeight: 600,
-                                boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                                 transition: 'all 0.3s ease'
                               }}
                               onMouseEnter={(e) => {
-                                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
-                                e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                                e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                               }}
                               onMouseLeave={(e) => {
-                                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
-                                e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                                e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                               }}
                             >
                               Select
@@ -640,18 +673,18 @@ function Returns() {
                         </tr>
                         {isExpanded && (
                           <tr key={`${idx}-details`}>
-                            <td colSpan={columnsWithActions.length} style={{ padding: '0', borderBottom: '1px solid #eee' }}>
+                            <td colSpan={columnsWithActions.length} style={{ padding: '0', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}>
                               <div style={{
                                 padding: '20px',
-                                backgroundColor: '#f8f9fa',
-                                borderTop: '2px solid #dee2e6'
+                                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
+                                borderTop: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6'
                               }}>
                                 {isLoading ? (
-                                  <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                                  <div style={{ textAlign: 'center', padding: '20px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
                                     Loading details...
                                   </div>
                                 ) : details ? (
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                                     <div>
                                       <strong>Order ID:</strong> {orderId || 'N/A'}
                                     </div>
@@ -689,35 +722,35 @@ function Returns() {
                                       {details.items && details.items.length > 0 ? (
                                         <table style={{ width: '100%', marginTop: '8px', borderCollapse: 'collapse' }}>
                                           <thead>
-                                            <tr style={{ backgroundColor: '#e9ecef' }}>
-                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>Product</th>
-                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>SKU</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Quantity</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Unit Price</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Discount</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Subtotal</th>
+                                            <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#e9ecef' }}>
+                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Product</th>
+                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>SKU</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Quantity</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Unit Price</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Discount</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Subtotal</th>
                                             </tr>
                                           </thead>
                                           <tbody>
                                             {details.items.map((item, itemIdx) => (
-                                              <tr key={itemIdx} style={{ backgroundColor: itemIdx % 2 === 0 ? '#fff' : '#f8f9fa' }}>
-                                                <td style={{ padding: '8px', fontSize: '13px' }}>{item.product_name || 'N/A'}</td>
-                                                <td style={{ padding: '8px', fontSize: '13px' }}>{item.sku || 'N/A'}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{item.quantity || 0}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(item.unit_price || 0).toFixed(2)}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(item.discount || 0).toFixed(2)}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(item.subtotal || 0).toFixed(2)}</td>
+                                              <tr key={itemIdx} style={{ backgroundColor: itemIdx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa') }}>
+                                                <td style={{ padding: '8px', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{item.product_name || 'N/A'}</td>
+                                                <td style={{ padding: '8px', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{item.sku || 'N/A'}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{item.quantity || 0}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>${(item.unit_price || 0).toFixed(2)}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>${(item.discount || 0).toFixed(2)}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>${(item.subtotal || 0).toFixed(2)}</td>
                                               </tr>
                                             ))}
                                           </tbody>
                                         </table>
                                       ) : (
-                                        <div style={{ marginTop: '8px', color: '#999', fontSize: '13px' }}>No items found</div>
+                                        <div style={{ marginTop: '8px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontSize: '13px' }}>No items found</div>
                                       )}
                                     </div>
                                   </div>
                                 ) : (
-                                  <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                                  <div style={{ textAlign: 'center', padding: '20px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
                                     No details available
                                   </div>
                                 )}
@@ -732,7 +765,7 @@ function Returns() {
               </table>
             </div>
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>No orders found</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>No orders found</div>
           )}
 
           {/* Return Form Modal */}
@@ -750,14 +783,14 @@ function Returns() {
               zIndex: 1000
             }}>
               <div style={{
-                backgroundColor: '#fff',
+                backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
                 borderRadius: '8px',
                 padding: '30px',
                 maxWidth: '800px',
                 width: '90%',
                 maxHeight: '90vh',
                 overflowY: 'auto',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+                boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.3)'
               }}>
                 <div style={{
                   display: 'flex',
@@ -765,7 +798,7 @@ function Returns() {
                   alignItems: 'center',
                   marginBottom: '24px'
                 }}>
-                  <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 600, fontFamily: '"Product Sans", sans-serif' }}>
+                  <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 600, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                     Create Return - Order: {order.order_number}
                   </h2>
                   <button
@@ -781,7 +814,7 @@ function Returns() {
                       border: 'none',
                       fontSize: '24px',
                       cursor: 'pointer',
-                      color: '#666',
+                      color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
                       padding: '0',
                       width: '30px',
                       height: '30px',
@@ -795,11 +828,12 @@ function Returns() {
                 </div>
 
                 <div style={{
-                  backgroundColor: '#f8f9fa',
-                  border: '1px solid #ddd',
+                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
+                  border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                   borderRadius: '4px',
                   padding: '15px',
-                  marginBottom: '20px'
+                  marginBottom: '20px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                 }}>
                   <p style={{ margin: '4px 0' }}>Date: {new Date(order.order_date).toLocaleDateString()}</p>
                   <p style={{ margin: '4px 0' }}>Total: ${parseFloat(order.total || 0).toFixed(2)}</p>
@@ -807,10 +841,10 @@ function Returns() {
 
                 {orderItems.length > 0 && (
                   <div style={{ marginBottom: '20px' }}>
-                    <h3 style={{ marginBottom: '12px', fontFamily: '"Product Sans", sans-serif' }}>Select Items to Return</h3>
+                    <h3 style={{ marginBottom: '12px', fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Select Items to Return</h3>
                     <div style={{
-                      backgroundColor: '#fff',
-                      border: '1px solid #ddd',
+                      backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                       borderRadius: '4px',
                       overflowX: 'auto',
                       overflowY: 'visible',
@@ -818,26 +852,26 @@ function Returns() {
                     }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
                         <thead>
-                          <tr style={{ backgroundColor: '#f5f5f5' }}>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Product</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Quantity</th>
-                            <th style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Price</th>
-                            <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Return</th>
+                          <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f5f5f5' }}>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Product</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Quantity</th>
+                            <th style={{ padding: '12px', textAlign: 'right', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Price</th>
+                            <th style={{ padding: '12px', textAlign: 'center', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Return</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {orderItems.map(item => (
-                            <tr key={item.order_item_id}>
-                              <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>
+                          {orderItems.map((item, itemIdx) => (
+                            <tr key={item.order_item_id} style={{ backgroundColor: itemIdx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa') }}>
+                              <td style={{ padding: '12px', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                                 {item.product_name || item.sku}
                               </td>
-                              <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '12px', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                                 {item.quantity}
                               </td>
-                              <td style={{ padding: '12px', textAlign: 'right', borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '12px', textAlign: 'right', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                                 ${parseFloat(item.unit_price || 0).toFixed(2)}
                               </td>
-                              <td style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '12px', textAlign: 'center', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}>
                                 <input
                                   type="checkbox"
                                   checked={!!selectedItems[item.order_item_id]}
@@ -852,23 +886,24 @@ function Returns() {
 
                     {Object.keys(selectedItems).length > 0 && (
                       <div style={{
-                        backgroundColor: '#fff',
-                        border: '1px solid #ddd',
+                        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         padding: '20px',
                         marginTop: '20px'
                       }}>
-                        <h3 style={{ fontFamily: '"Product Sans", sans-serif' }}>Return Details</h3>
+                        <h3 style={{ fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Return Details</h3>
                         {Object.entries(selectedItems).map(([itemId, data]) => {
                           const item = orderItems.find(i => i.order_item_id === parseInt(itemId))
                           return (
                             <div key={itemId} style={{
                               padding: '15px',
-                              border: '1px solid #eee',
+                              border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
                               borderRadius: '4px',
-                              marginBottom: '10px'
+                              marginBottom: '10px',
+                              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fafafa'
                             }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                                 <strong>{item?.product_name || item?.sku}</strong>
                                 <span>${(item?.unit_price * data.quantity).toFixed(2)}</span>
                               </div>
@@ -911,7 +946,7 @@ function Returns() {
 
                     <div style={{ marginTop: '20px' }}>
                       <div style={{ marginBottom: '15px' }}>
-                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>Reason:</label>
+                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Reason:</label>
                         <input
                           type="text"
                           value={reason}
@@ -920,14 +955,16 @@ function Returns() {
                           style={{
                             width: '100%',
                             padding: '10px',
-                            border: '1px solid #ddd',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                             borderRadius: '4px',
-                            fontFamily: '"Product Sans", sans-serif'
+                            fontFamily: '"Product Sans", sans-serif',
+                            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                           }}
                         />
                       </div>
                       <div style={{ marginBottom: '15px' }}>
-                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>Notes:</label>
+                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Notes:</label>
                         <textarea
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
@@ -936,9 +973,11 @@ function Returns() {
                           style={{
                             width: '100%',
                             padding: '10px',
-                            border: '1px solid #ddd',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                             borderRadius: '4px',
-                            fontFamily: '"Product Sans", sans-serif'
+                            fontFamily: '"Product Sans", sans-serif',
+                            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                           }}
                         />
                       </div>
@@ -970,7 +1009,7 @@ function Returns() {
                           disabled={loading || Object.keys(selectedItems).length === 0}
                           style={{
                             padding: '10px 20px',
-                            backgroundColor: loading || Object.keys(selectedItems).length === 0 ? '#ccc' : 'rgba(128, 0, 128, 0.7)',
+                            backgroundColor: loading || Object.keys(selectedItems).length === 0 ? '#ccc' : `rgba(${themeColorRgb}, 0.7)`,
                             backdropFilter: loading || Object.keys(selectedItems).length === 0 ? 'none' : 'blur(10px)',
                             WebkitBackdropFilter: loading || Object.keys(selectedItems).length === 0 ? 'none' : 'blur(10px)',
                             color: '#fff',
@@ -980,7 +1019,7 @@ function Returns() {
                             fontSize: '14px',
                             fontWeight: 600,
                             fontFamily: '"Product Sans", sans-serif',
-                            boxShadow: loading || Object.keys(selectedItems).length === 0 ? 'none' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                            boxShadow: loading || Object.keys(selectedItems).length === 0 ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                             transition: 'all 0.3s ease'
                           }}
                         >
@@ -996,17 +1035,17 @@ function Returns() {
         </div>
       ) : (
         <div>
-          {loading && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Loading...</div>}
+          {loading && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Loading...</div>}
           {pendingReturns && pendingReturns.data && pendingReturns.data.length > 0 ? (
             <div>
               <Table columns={pendingReturns.columns} data={pendingReturns.data} />
               <div style={{ marginTop: '20px' }}>
-                <h3>Actions</h3>
-                <p style={{ color: '#666' }}>Click on a return to approve or reject it. This will be implemented in the table view.</p>
+                <h3 style={{ color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Actions</h3>
+                <p style={{ color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>Click on a return to approve or reject it. This will be implemented in the table view.</p>
               </div>
             </div>
           ) : (
-            !loading && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>No pending returns</div>
+            !loading && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>No pending returns</div>
           )}
         </div>
       )}

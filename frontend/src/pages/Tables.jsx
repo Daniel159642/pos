@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
 import Tabs from '../components/Tabs'
 
@@ -83,6 +84,16 @@ const TABLE_CATEGORIES = {
 }
 
 function Tables() {
+  const { themeColor, themeMode } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
   const [allTables, setAllTables] = useState([])
   const [categories, setCategories] = useState([])
   const [activeCategory, setActiveCategory] = useState(null)
@@ -91,6 +102,27 @@ function Tables() {
   const [loading, setLoading] = useState(true)
   const [loadingTables, setLoadingTables] = useState(true)
   const [error, setError] = useState(null)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadTables()
@@ -245,7 +277,7 @@ function Tables() {
 
   if (loadingTables) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
         Loading tables...
       </div>
     )
@@ -253,7 +285,7 @@ function Tables() {
 
   if (Object.keys(categories).length === 0) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
         No tables found in database
       </div>
     )
@@ -273,7 +305,7 @@ function Tables() {
       </div>
       
       {activeCategory && currentCategoryTables.length > 0 && (
-        <div style={{ marginBottom: '20px', borderBottom: '1px solid #ddd', paddingBottom: '10px' }}>
+        <div style={{ marginBottom: '20px', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', paddingBottom: '10px' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {currentCategoryTables.map(table => {
               const isLegacy = activeCategory && activeCategory.includes('Legacy')
@@ -284,17 +316,17 @@ function Tables() {
                   onClick={() => setActiveTab(table.id)}
                   style={{
                     padding: '10px 16px',
-                    backgroundColor: activeTab === table.id ? 'rgba(128, 0, 128, 0.7)' : (isLegacy ? 'rgba(128, 128, 128, 0.2)' : 'rgba(128, 0, 128, 0.2)'),
+                    backgroundColor: activeTab === table.id ? `rgba(${themeColorRgb}, 0.7)` : (isLegacy ? 'rgba(128, 128, 128, 0.2)' : `rgba(${themeColorRgb}, 0.2)`),
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
-                    border: activeTab === table.id ? '1px solid rgba(255, 255, 255, 0.3)' : (isLegacy ? '1px solid rgba(128, 128, 128, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)'),
+                    border: activeTab === table.id ? '1px solid rgba(255, 255, 255, 0.3)' : (isLegacy ? '1px solid rgba(128, 128, 128, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`),
                     borderRadius: '8px',
                     fontSize: '14px',
                     fontWeight: activeTab === table.id ? 600 : 500,
                     color: '#fff',
                     cursor: 'pointer',
                     transition: 'all 0.3s ease',
-                    boxShadow: activeTab === table.id ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)',
+                    boxShadow: activeTab === table.id ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
                     opacity: isLegacy ? 0.7 : 1
                   }}
                 >
@@ -307,17 +339,17 @@ function Tables() {
       )}
       
       <div style={{ padding: '20px', overflowX: 'auto' }}>
-        {loading && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Loading...</div>}
-        {error && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>{error}</div>}
+        {loading && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Loading...</div>}
+        {error && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>{error}</div>}
         {!loading && !error && data && (
           data.data && data.data.length > 0 ? (
             <Table columns={data.columns} data={data.data} />
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>No data in this table</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>No data in this table</div>
           )
         )}
         {!loading && !error && data && data.columns && data.columns.length > 0 && data.data && data.data.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Table is empty</div>
+          <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Table is empty</div>
         )}
       </div>
     </div>

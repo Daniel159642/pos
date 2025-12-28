@@ -1,11 +1,34 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTheme } from '../contexts/ThemeContext'
 
 function ShipmentVerificationDashboard() {
+  const { themeMode } = useTheme()
   const [shipments, setShipments] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all') // all, pending, in_progress, completed
   const [showUploadModal, setShowUploadModal] = useState(false)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadShipments()
@@ -60,14 +83,14 @@ function ShipmentVerificationDashboard() {
   }
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto' }}>
+    <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto', backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : 'transparent' }}>
       <div style={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center',
         marginBottom: '24px'
       }}>
-        <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 600 }}>
+        <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
           Shipment Verification
         </h1>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -91,8 +114,8 @@ function ShipmentVerificationDashboard() {
             onClick={() => setFilter('all')}
             style={{
               padding: '8px 16px',
-              backgroundColor: filter === 'all' ? '#2196f3' : '#f5f5f5',
-              color: filter === 'all' ? 'white' : '#333',
+              backgroundColor: filter === 'all' ? '#2196f3' : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5'),
+              color: filter === 'all' ? 'white' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -105,8 +128,8 @@ function ShipmentVerificationDashboard() {
             onClick={() => setFilter('pending_review')}
             style={{
               padding: '8px 16px',
-              backgroundColor: filter === 'pending_review' ? '#ff9800' : '#f5f5f5',
-              color: filter === 'pending_review' ? 'white' : '#333',
+              backgroundColor: filter === 'pending_review' ? '#ff9800' : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5'),
+              color: filter === 'pending_review' ? 'white' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -119,8 +142,8 @@ function ShipmentVerificationDashboard() {
             onClick={() => setFilter('in_progress')}
             style={{
               padding: '8px 16px',
-              backgroundColor: filter === 'in_progress' ? '#2196f3' : '#f5f5f5',
-              color: filter === 'in_progress' ? 'white' : '#333',
+              backgroundColor: filter === 'in_progress' ? '#2196f3' : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5'),
+              color: filter === 'in_progress' ? 'white' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -133,8 +156,8 @@ function ShipmentVerificationDashboard() {
             onClick={() => setFilter('approved')}
             style={{
               padding: '8px 16px',
-              backgroundColor: filter === 'approved' ? '#4caf50' : '#f5f5f5',
-              color: filter === 'approved' ? 'white' : '#333',
+              backgroundColor: filter === 'approved' ? '#4caf50' : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5'),
+              color: filter === 'approved' ? 'white' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
               border: 'none',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -148,15 +171,15 @@ function ShipmentVerificationDashboard() {
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px' }}>
-          <div style={{ fontSize: '18px', color: '#666' }}>Loading shipments...</div>
+          <div style={{ fontSize: '18px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>Loading shipments...</div>
         </div>
       ) : shipments.length === 0 ? (
         <div style={{ 
           textAlign: 'center', 
           padding: '40px',
-          backgroundColor: '#f5f5f5',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#f5f5f5',
           borderRadius: '8px',
-          color: '#666'
+          color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
         }}>
           No shipments found
         </div>
@@ -172,6 +195,7 @@ function ShipmentVerificationDashboard() {
               shipment={shipment}
               getStatusColor={getStatusColor}
               getProgressColor={getProgressColor}
+              isDarkMode={isDarkMode}
             />
           ))}
         </div>
@@ -195,18 +219,18 @@ function ShipmentVerificationDashboard() {
   )
 }
 
-function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
+function ShipmentCard({ shipment, getStatusColor, getProgressColor, isDarkMode }) {
   const navigate = useNavigate()
   const progress = shipment.progress_percentage || 0
   const status = shipment.status || 'pending_review'
 
   return (
     <div style={{
-      backgroundColor: 'white',
+      backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
       borderRadius: '8px',
       padding: '20px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-      border: '1px solid #e0e0e0',
+      boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)',
+      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #e0e0e0',
       cursor: 'pointer',
       transition: 'transform 0.2s, box-shadow 0.2s',
       ':hover': {
@@ -217,11 +241,11 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
     onClick={() => navigate(`/shipment-verification/${shipment.pending_shipment_id}`)}
     onMouseEnter={(e) => {
       e.currentTarget.style.transform = 'translateY(-2px)'
-      e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)'
+      e.currentTarget.style.boxShadow = isDarkMode ? '0 4px 8px rgba(0,0,0,0.5)' : '0 4px 8px rgba(0,0,0,0.15)'
     }}
     onMouseLeave={(e) => {
       e.currentTarget.style.transform = 'translateY(0)'
-      e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+      e.currentTarget.style.boxShadow = isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
     }}
     >
       {/* Header */}
@@ -236,12 +260,12 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
             margin: 0, 
             fontSize: '18px', 
             fontWeight: 600,
-            color: '#333',
+            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
             marginBottom: '4px'
           }}>
             {shipment.vendor_name || 'Unknown Vendor'}
           </h3>
-          <div style={{ fontSize: '14px', color: '#666' }}>
+          <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>
             PO: {shipment.purchase_order_number || 'N/A'}
           </div>
         </div>
@@ -265,17 +289,17 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
           justifyContent: 'space-between',
           marginBottom: '6px',
           fontSize: '14px',
-          color: '#666'
+          color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
         }}>
           <span>Progress</span>
-          <span style={{ fontWeight: 600, color: '#333' }}>
+          <span style={{ fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             {progress.toFixed(1)}%
           </span>
         </div>
         <div style={{
           width: '100%',
           height: '8px',
-          backgroundColor: '#e0e0e0',
+          backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#e0e0e0',
           borderRadius: '4px',
           overflow: 'hidden'
         }}>
@@ -296,18 +320,18 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
         marginBottom: '16px'
       }}>
         <div>
-          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginBottom: '4px' }}>
             Items
           </div>
-          <div style={{ fontSize: '16px', fontWeight: 600, color: '#333' }}>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             {shipment.total_verified || 0} / {shipment.total_expected || 0}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginBottom: '4px' }}>
             Total Items
           </div>
-          <div style={{ fontSize: '16px', fontWeight: 600, color: '#333' }}>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             {shipment.total_items || 0}
           </div>
         </div>
@@ -320,7 +344,7 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
           alignItems: 'center',
           gap: '6px',
           padding: '6px 12px',
-          backgroundColor: '#ffebee',
+          backgroundColor: isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee',
           color: '#c62828',
           borderRadius: '4px',
           fontSize: '13px',
@@ -337,9 +361,9 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
         justifyContent: 'space-between',
         alignItems: 'center',
         fontSize: '12px',
-        color: '#999',
+        color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999',
         paddingTop: '12px',
-        borderTop: '1px solid #e0e0e0'
+        borderTop: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #e0e0e0'
       }}>
         <div>
           {shipment.uploaded_by_name && (
@@ -360,6 +384,7 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor }) {
 
 function ShipmentVerificationDetail({ shipmentId }) {
   const { id } = useParams()
+  const { themeMode } = useTheme()
   const actualId = shipmentId || id
   const navigate = useNavigate()
   const [session, setSession] = useState(null)
@@ -368,6 +393,27 @@ function ShipmentVerificationDetail({ shipmentId }) {
   const [currentItem, setCurrentItem] = useState(null)
   const [showIssueForm, setShowIssueForm] = useState(false)
   const [manualBarcode, setManualBarcode] = useState('')
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     if (actualId) {
@@ -537,7 +583,7 @@ function ShipmentVerificationDetail({ shipmentId }) {
 
   if (!progress) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center' }}>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#333' }}>
         <div>Loading shipment details...</div>
       </div>
     )
@@ -550,10 +596,11 @@ function ShipmentVerificationDetail({ shipmentId }) {
         style={{
           marginBottom: '20px',
           padding: '8px 16px',
-          backgroundColor: '#f5f5f5',
-          border: '1px solid #ddd',
+          backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5',
+          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
           borderRadius: '4px',
-          cursor: 'pointer'
+          cursor: 'pointer',
+          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
         }}
       >
         ← Back to Shipments
@@ -561,18 +608,18 @@ function ShipmentVerificationDetail({ shipmentId }) {
 
       {/* Header with progress */}
       <div style={{
-        backgroundColor: 'white',
+        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
         borderRadius: '8px',
         padding: '24px',
         marginBottom: '20px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
       }}>
-        <h2 style={{ margin: '0 0 16px 0' }}>Shipment Verification</h2>
+        <h2 style={{ margin: '0 0 16px 0', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Shipment Verification</h2>
         <div style={{ marginBottom: '12px' }}>
           <div style={{
             width: '100%',
             height: '12px',
-            backgroundColor: '#e0e0e0',
+            backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#e0e0e0',
             borderRadius: '6px',
             overflow: 'hidden'
           }}>
@@ -584,11 +631,11 @@ function ShipmentVerificationDetail({ shipmentId }) {
             }} />
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '24px', fontSize: '14px', color: '#666' }}>
+        <div style={{ display: 'flex', gap: '24px', fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>
           <span>
             {progress.progress?.total_verified_quantity || 0} / {progress.progress?.total_expected_quantity || 0} items
           </span>
-          <span style={{ fontWeight: 600, color: '#333' }}>
+          <span style={{ fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             {progress.completion_percentage || 0}% Complete
           </span>
           {progress.progress?.items_with_issues > 0 && (
@@ -601,13 +648,13 @@ function ShipmentVerificationDetail({ shipmentId }) {
 
       {/* Manual Barcode Entry */}
       <div style={{
-        backgroundColor: 'white',
+        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
         borderRadius: '8px',
         padding: '20px',
         marginBottom: '20px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
       }}>
-        <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>Scan Barcode</h3>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Scan Barcode</h3>
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="text"
@@ -623,9 +670,11 @@ function ShipmentVerificationDetail({ shipmentId }) {
             style={{
               flex: 1,
               padding: '10px',
-              border: '1px solid #ddd',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
               borderRadius: '4px',
-              fontSize: '16px'
+              fontSize: '16px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           />
           <button
@@ -654,35 +703,36 @@ function ShipmentVerificationDetail({ shipmentId }) {
       {/* Pending Items List */}
       {progress.pending_items && progress.pending_items.length > 0 && (
         <div style={{
-          backgroundColor: 'white',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
           borderRadius: '8px',
           padding: '20px',
           marginBottom: '20px',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
         }}>
-          <h3 style={{ margin: '0 0 16px 0' }}>
+          <h3 style={{ margin: '0 0 16px 0', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Pending Items ({progress.pending_items.length})
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {progress.pending_items.map(item => (
               <div key={item.pending_item_id} style={{
                 padding: '12px',
-                border: '1px solid #e0e0e0',
+                border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #e0e0e0',
                 borderRadius: '4px',
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center'
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fafafa'
               }}>
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+                  <div style={{ fontWeight: 600, marginBottom: '4px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                     {item.product_name}
                   </div>
-                  <div style={{ fontSize: '14px', color: '#666' }}>
+                  <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>
                     SKU: {item.product_sku}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '16px', fontWeight: 600 }}>
+                  <span style={{ fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                     {item.quantity_verified}/{item.quantity_expected}
                   </span>
                   <button
@@ -712,34 +762,35 @@ function ShipmentVerificationDetail({ shipmentId }) {
       {/* Issues Summary */}
       {progress.issues && progress.issues.length > 0 && (
         <div style={{
-          backgroundColor: 'white',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
           borderRadius: '8px',
           padding: '20px',
           marginBottom: '20px',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
         }}>
-          <h3 style={{ margin: '0 0 16px 0' }}>
+          <h3 style={{ margin: '0 0 16px 0', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Reported Issues ({progress.issues.length})
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {progress.issues.map(issue => (
               <div key={issue.issue_id} style={{
                 padding: '12px',
-                border: '1px solid #e0e0e0',
+                border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #e0e0e0',
                 borderRadius: '4px',
                 borderLeft: `4px solid ${
                   issue.severity === 'critical' ? '#f44336' :
                   issue.severity === 'major' ? '#ff9800' : '#2196f3'
-                }`
+                }`,
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fafafa'
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>
+                  <span style={{ fontWeight: 600, textTransform: 'capitalize', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                     {issue.issue_type.replace('_', ' ')}
                   </span>
                   <span style={{
                     padding: '2px 8px',
                     borderRadius: '4px',
-                    backgroundColor: issue.severity === 'critical' ? '#ffebee' : '#fff3e0',
+                    backgroundColor: issue.severity === 'critical' ? (isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee') : (isDarkMode ? 'rgba(255, 152, 0, 0.2)' : '#fff3e0'),
                     color: issue.severity === 'critical' ? '#c62828' : '#e65100',
                     fontSize: '12px',
                     textTransform: 'capitalize'
@@ -747,13 +798,13 @@ function ShipmentVerificationDetail({ shipmentId }) {
                     {issue.severity}
                   </span>
                 </div>
-                <div style={{ fontSize: '14px', color: '#666', marginBottom: '4px' }}>
+                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginBottom: '4px' }}>
                   {issue.product_name}
                 </div>
-                <div style={{ fontSize: '14px', color: '#333' }}>
+                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                   {issue.description}
                 </div>
-                <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
+                <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', marginTop: '8px' }}>
                   Reported by {issue.reported_by_name} on {new Date(issue.reported_at).toLocaleString()}
                 </div>
               </div>
@@ -796,11 +847,33 @@ function ShipmentVerificationDetail({ shipmentId }) {
 }
 
 function IssueReportForm({ item, onSubmit, onCancel }) {
+  const { themeMode } = useTheme()
   const [issueType, setIssueType] = useState('missing')
   const [severity, setSeverity] = useState('minor')
   const [description, setDescription] = useState('')
   const [quantityAffected, setQuantityAffected] = useState(1)
   const [photo, setPhoto] = useState(null)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   const handleSubmit = () => {
     onSubmit({
@@ -827,7 +900,7 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
       zIndex: 1000
     }}>
       <div style={{
-        backgroundColor: 'white',
+        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
         borderRadius: '8px',
         padding: '24px',
         maxWidth: '500px',
@@ -835,15 +908,15 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
         maxHeight: '90vh',
         overflow: 'auto'
       }}>
-        <h3 style={{ margin: '0 0 16px 0' }}>Report Issue</h3>
+        <h3 style={{ margin: '0 0 16px 0', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Report Issue</h3>
         {item?.product_name && (
-          <p style={{ margin: '0 0 16px 0', color: '#666' }}>
+          <p style={{ margin: '0 0 16px 0', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>
             {item.product_name}
           </p>
         )}
 
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Issue Type:
           </label>
           <select
@@ -852,8 +925,10 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
             style={{
               width: '100%',
               padding: '8px',
-              border: '1px solid #ddd',
-              borderRadius: '4px'
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '4px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           >
             <option value="missing">Missing Items</option>
@@ -867,7 +942,7 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
         </div>
 
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Severity:
           </label>
           <select
@@ -876,8 +951,10 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
             style={{
               width: '100%',
               padding: '8px',
-              border: '1px solid #ddd',
-              borderRadius: '4px'
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '4px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           >
             <option value="minor">Minor</option>
@@ -887,7 +964,7 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
         </div>
 
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Quantity Affected:
           </label>
           <input
@@ -898,14 +975,16 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
             style={{
               width: '100%',
               padding: '8px',
-              border: '1px solid #ddd',
-              borderRadius: '4px'
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '4px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           />
         </div>
 
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Description:
           </label>
           <textarea
@@ -916,15 +995,17 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
             style={{
               width: '100%',
               padding: '8px',
-              border: '1px solid #ddd',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
               borderRadius: '4px',
-              fontFamily: 'inherit'
+              fontFamily: 'inherit',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           />
         </div>
 
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+          <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
             Photo Evidence (optional):
           </label>
           <input
@@ -935,8 +1016,10 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
             style={{
               width: '100%',
               padding: '8px',
-              border: '1px solid #ddd',
-              borderRadius: '4px'
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '4px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           />
         </div>
@@ -946,9 +1029,9 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
             onClick={onCancel}
             style={{
               padding: '10px 20px',
-              backgroundColor: '#f5f5f5',
-              color: '#333',
-              border: '1px solid #ddd',
+              backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
               borderRadius: '4px',
               cursor: 'pointer'
             }}
@@ -977,6 +1060,7 @@ function IssueReportForm({ item, onSubmit, onCancel }) {
 }
 
 function UploadShipmentModal({ onClose, onSuccess }) {
+  const { themeMode } = useTheme()
   const [vendors, setVendors] = useState([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -988,6 +1072,27 @@ function UploadShipmentModal({ onClose, onSuccess }) {
   })
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadVendors()
@@ -1086,7 +1191,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
       zIndex: 1000
     }}>
       <div style={{
-        backgroundColor: 'white',
+        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
         borderRadius: '8px',
         padding: '24px',
         maxWidth: '600px',
@@ -1095,7 +1200,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
         overflow: 'auto'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 600 }}>Upload New Shipment</h2>
+          <h2 style={{ margin: 0, fontSize: '24px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Upload New Shipment</h2>
           <button
             onClick={onClose}
             style={{
@@ -1103,7 +1208,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
               border: 'none',
               fontSize: '24px',
               cursor: 'pointer',
-              color: '#666',
+              color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
               padding: '0',
               width: '30px',
               height: '30px',
@@ -1119,7 +1224,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
         {error && (
           <div style={{
             padding: '12px',
-            backgroundColor: '#ffebee',
+            backgroundColor: isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee',
             color: '#c62828',
             borderRadius: '4px',
             marginBottom: '16px'
@@ -1131,7 +1236,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
         {success && (
           <div style={{
             padding: '12px',
-            backgroundColor: '#e8f5e9',
+            backgroundColor: isDarkMode ? 'rgba(76, 175, 80, 0.2)' : '#e8f5e9',
             color: '#2e7d32',
             borderRadius: '4px',
             marginBottom: '16px'
@@ -1142,7 +1247,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
               Vendor <span style={{ color: '#f44336' }}>*</span>
             </label>
             <select
@@ -1152,9 +1257,11 @@ function UploadShipmentModal({ onClose, onSuccess }) {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
-                fontSize: '14px'
+                fontSize: '14px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             >
               <option value="">Select a vendor</option>
@@ -1167,7 +1274,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
           </div>
 
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
               Purchase Order Number
             </label>
             <input
@@ -1178,15 +1285,17 @@ function UploadShipmentModal({ onClose, onSuccess }) {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
-                fontSize: '14px'
+                fontSize: '14px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
           </div>
 
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
               Expected Delivery Date
             </label>
             <input
@@ -1196,15 +1305,17 @@ function UploadShipmentModal({ onClose, onSuccess }) {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
-                fontSize: '14px'
+                fontSize: '14px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
           </div>
 
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
               Shipment Document <span style={{ color: '#f44336' }}>*</span>
             </label>
             <input
@@ -1215,12 +1326,14 @@ function UploadShipmentModal({ onClose, onSuccess }) {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
-                fontSize: '14px'
+                fontSize: '14px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+            <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginTop: '4px' }}>
               Supported formats: PDF, Excel (.xlsx, .xls), CSV
             </div>
             {formData.document && (
@@ -1237,9 +1350,9 @@ function UploadShipmentModal({ onClose, onSuccess }) {
               disabled={uploading}
               style={{
                 padding: '10px 20px',
-                backgroundColor: '#f5f5f5',
-                color: '#333',
-                border: '1px solid #ddd',
+                backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f5f5f5',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
                 cursor: uploading ? 'not-allowed' : 'pointer',
                 fontWeight: 500

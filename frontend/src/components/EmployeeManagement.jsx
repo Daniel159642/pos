@@ -1,13 +1,45 @@
 import React, { useState, useEffect } from 'react';
 import { usePermissions } from '../contexts/PermissionContext';
+import { useTheme } from '../contexts/ThemeContext';
 import ScheduleManager from './ScheduleManager';
 
 function EmployeeManagement() {
   const { hasPermission } = usePermissions();
+  const { themeColor, themeMode } = useTheme();
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
   const [activeTab, setActiveTab] = useState('employees');
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadEmployees();
@@ -35,7 +67,7 @@ function EmployeeManagement() {
       <div style={{ 
         padding: '20px', 
         textAlign: 'center', 
-        color: '#999',
+        color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999',
         fontFamily: '"Roboto Mono", monospace'
       }}>
         You don't have permission to access Employee Management.
@@ -46,7 +78,7 @@ function EmployeeManagement() {
   return (
     <div style={{ 
       padding: '24px', 
-      backgroundColor: 'white', 
+      backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white', 
       minHeight: 'calc(100vh - 200px)',
       maxWidth: '1400px',
       margin: '0 auto'
@@ -58,17 +90,17 @@ function EmployeeManagement() {
             onClick={() => setActiveTab('employees')}
             style={{
               padding: '10px 16px',
-              backgroundColor: activeTab === 'employees' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+              backgroundColor: activeTab === 'employees' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
-              border: activeTab === 'employees' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+              border: activeTab === 'employees' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
               borderRadius: '8px',
               fontSize: '14px',
               fontWeight: activeTab === 'employees' ? 600 : 500,
               color: '#fff',
               cursor: 'pointer',
               transition: 'all 0.3s ease',
-              boxShadow: activeTab === 'employees' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+              boxShadow: activeTab === 'employees' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
             }}
           >
             Employees
@@ -77,17 +109,17 @@ function EmployeeManagement() {
             onClick={() => setActiveTab('schedule')}
             style={{
               padding: '10px 16px',
-              backgroundColor: activeTab === 'schedule' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+              backgroundColor: activeTab === 'schedule' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
-              border: activeTab === 'schedule' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+              border: activeTab === 'schedule' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
               borderRadius: '8px',
               fontSize: '14px',
               fontWeight: activeTab === 'schedule' ? 600 : 500,
               color: '#fff',
               cursor: 'pointer',
               transition: 'all 0.3s ease',
-              boxShadow: activeTab === 'schedule' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+              boxShadow: activeTab === 'schedule' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
             }}
           >
             Schedule Builder
@@ -98,7 +130,7 @@ function EmployeeManagement() {
       {/* Tab Content */}
       <div style={{ 
         padding: '24px', 
-        backgroundColor: 'white'
+        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'
       }}>
         {activeTab === 'employees' && (
           <EmployeeList 
@@ -117,9 +149,40 @@ function EmployeeManagement() {
 }
 
 function EmployeeList({ employees, loading, error, onRefresh }) {
+  const { themeColor, themeMode } = useTheme();
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
   const [roles, setRoles] = useState([]);
   const [availability, setAvailability] = useState({});
   const [expandedRow, setExpandedRow] = useState(null);
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadRoles();
@@ -181,7 +244,7 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
   };
 
   if (loading) {
-    return <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontFamily: '"Roboto Mono", monospace' }}>Loading employees...</div>;
+    return <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontFamily: '"Roboto Mono", monospace' }}>Loading employees...</div>;
   }
 
   if (error) {
@@ -193,10 +256,11 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
           style={{
             marginLeft: '16px',
             padding: '8px 16px',
-            border: '1px solid #000',
+            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
             borderRadius: '0',
             cursor: 'pointer',
-            backgroundColor: '#fff',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+            color: isDarkMode ? 'var(--text-primary, #fff)' : '#000',
             fontFamily: '"Roboto Mono", monospace',
             fontSize: '14px'
           }}
@@ -211,22 +275,22 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
     <div>
       <div style={{ overflowX: 'auto' }}>
         <div style={{ 
-          backgroundColor: '#fff', 
+          backgroundColor: 'var(--bg-primary, #fff)', 
           borderRadius: '4px', 
           overflowX: 'auto',
           overflowY: 'visible',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          boxShadow: '0 1px 3px var(--shadow, rgba(0,0,0,0.1))',
           width: '100%'
         }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
             <thead>
-              <tr style={{ backgroundColor: '#f8f9fa' }}>
+              <tr style={{ backgroundColor: 'var(--bg-secondary, #f8f9fa)' }}>
                 <th style={{ 
                   padding: '12px', 
                   textAlign: 'left', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -235,8 +299,8 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   padding: '12px', 
                   textAlign: 'left', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -245,8 +309,8 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   padding: '12px', 
                   textAlign: 'left', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -255,8 +319,8 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   padding: '12px', 
                   textAlign: 'left', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -265,8 +329,8 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   padding: '12px', 
                   textAlign: 'left', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -275,8 +339,8 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   padding: '12px', 
                   textAlign: 'left', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -285,8 +349,8 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   padding: '12px', 
                   textAlign: 'center', 
                   fontWeight: 600, 
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: '2px solid var(--border-color, #dee2e6)',
+                  color: 'var(--text-primary, #495057)',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -299,60 +363,66 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                   <tr 
                     onClick={() => setExpandedRow(expandedRow === employee.employee_id ? null : employee.employee_id)}
                     style={{ 
-                      backgroundColor: idx % 2 === 0 ? '#fff' : '#fafafa',
+                      backgroundColor: idx % 2 === 0 ? 'var(--bg-primary, #fff)' : 'var(--bg-tertiary, #fafafa)',
                       cursor: 'pointer'
                     }}
                   >
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
-                      fontSize: '14px'
+                      borderBottom: '1px solid var(--border-light, #eee)',
+                      fontSize: '14px',
+                      color: 'var(--text-primary, #333)'
                     }}>{employee.employee_id}</td>
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
-                      fontSize: '14px'
+                      borderBottom: '1px solid var(--border-light, #eee)',
+                      fontSize: '14px',
+                      color: 'var(--text-primary, #333)'
                     }}>
                       {employee.first_name} {employee.last_name}
                     </td>
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
-                      fontSize: '14px'
+                      borderBottom: '1px solid var(--border-light, #eee)',
+                      fontSize: '14px',
+                      color: 'var(--text-primary, #333)'
                     }}>
                       {employee.username || employee.employee_code || 'N/A'}
                     </td>
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
-                      fontSize: '14px'
+                      borderBottom: '1px solid var(--border-light, #eee)',
+                      fontSize: '14px',
+                      color: 'var(--text-primary, #333)'
                     }}>{employee.position}</td>
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
-                      fontSize: '14px'
+                      borderBottom: '1px solid var(--border-light, #eee)',
+                      fontSize: '14px',
+                      color: 'var(--text-primary, #333)'
                     }}>{getRoleName(employee.role_id)}</td>
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
-                      fontSize: '14px'
+                      borderBottom: '1px solid var(--border-light, #eee)',
+                      fontSize: '14px',
+                      color: 'var(--text-primary, #333)'
                     }}>
                       {availability[employee.employee_id] ? (
                         <div>
-                          <div style={{ fontSize: '13px', fontWeight: 500 }}>
+                          <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary, #333)' }}>
                             {availability[employee.employee_id].hours.toFixed(1)}h
                           </div>
-                          <div style={{ fontSize: '11px', color: '#666' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-tertiary, #666)' }}>
                             {availability[employee.employee_id].days} day{availability[employee.employee_id].days !== 1 ? 's' : ''}
                           </div>
                         </div>
                       ) : (
-                        <span style={{ color: '#999', fontSize: '13px' }}>Not scheduled</span>
+                        <span style={{ color: 'var(--text-tertiary, #999)', fontSize: '13px' }}>Not scheduled</span>
                       )}
                     </td>
                     <td style={{ 
                       padding: '8px 12px', 
-                      borderBottom: '1px solid #eee',
+                      borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
                       textAlign: 'center'
                     }}>
                       <button
@@ -363,7 +433,7 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                         }}
                         style={{
                           padding: '6px 12px',
-                          backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                          backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                           backdropFilter: 'blur(10px)',
                           WebkitBackdropFilter: 'blur(10px)',
                           color: '#fff',
@@ -372,16 +442,16 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                           cursor: 'pointer',
                           fontSize: '14px',
                           fontWeight: 600,
-                          boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                          boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                           transition: 'all 0.3s ease'
                         }}
                         onMouseEnter={(e) => {
-                          e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
-                          e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                          e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                         }}
                         onMouseLeave={(e) => {
-                          e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
-                          e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                          e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                         }}
                       >
                         Actions
@@ -392,70 +462,70 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
                     <tr>
                       <td colSpan={7} style={{ 
                         padding: '0', 
-                        borderBottom: '1px solid #eee'
+                        borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee'
                       }}>
                         <div style={{
                           padding: '20px',
-                          backgroundColor: '#f8f9fa',
-                          borderTop: '2px solid #dee2e6'
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
+                          borderTop: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6'
                         }}>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Email</div>
-                          <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.email || 'N/A'}</div>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Email</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{employee.email || 'N/A'}</div>
                         </div>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Department</div>
-                          <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.department || 'N/A'}</div>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Department</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{employee.department || 'N/A'}</div>
                         </div>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Status</div>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Status</div>
                           <div style={{ fontSize: '14px', fontWeight: 500 }}>
                             <span style={{
                               padding: '4px 8px',
                               borderRadius: '0',
                               fontSize: '12px',
                               fontWeight: 500,
-                              backgroundColor: employee.active ? '#e8f5e9' : '#ffebee',
-                              color: employee.active ? '#2e7d32' : '#c62828',
-                              border: '1px solid #000'
+                              backgroundColor: employee.active ? (isDarkMode ? 'rgba(46, 125, 50, 0.3)' : '#e8f5e9') : (isDarkMode ? 'rgba(198, 40, 40, 0.3)' : '#ffebee'),
+                              color: employee.active ? (isDarkMode ? '#81c784' : '#2e7d32') : (isDarkMode ? '#ef5350' : '#c62828'),
+                              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000'
                             }}>
                               {employee.active ? 'Active' : 'Inactive'}
                             </span>
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Phone</div>
-                          <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.phone || 'N/A'}</div>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Phone</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{employee.phone || 'N/A'}</div>
                         </div>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Date Started</div>
-                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Date Started</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                             {employee.date_started ? new Date(employee.date_started).toLocaleDateString() : 'N/A'}
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Hourly Rate</div>
-                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Hourly Rate</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                             {employee.hourly_rate ? `$${employee.hourly_rate.toFixed(2)}` : 'N/A'}
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Employment Type</div>
-                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Employment Type</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                             {employee.employment_type ? employee.employment_type.replace('_', ' ').toUpperCase() : 'N/A'}
                           </div>
                         </div>
                         {employee.address && (
                           <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Address</div>
-                            <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.address}</div>
+                            <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Address</div>
+                            <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{employee.address}</div>
                           </div>
                         )}
                         {employee.notes && (
                           <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Notes</div>
-                            <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.notes}</div>
+                            <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', marginBottom: '4px' }}>Notes</div>
+                            <div style={{ fontSize: '14px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{employee.notes}</div>
                           </div>
                         )}
                       </div>
@@ -469,7 +539,7 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
         </table>
         </div>
         {employees.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontFamily: '"Roboto Mono", monospace' }}>
+          <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontFamily: '"Roboto Mono", monospace' }}>
             No employees found
           </div>
         )}

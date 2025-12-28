@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { usePermissions } from '../contexts/PermissionContext'
+import { useTheme } from '../contexts/ThemeContext'
 import Statistics from './Statistics'
 import { ParticleCard } from './MagicBento'
 import './MagicBento.css'
@@ -7,6 +8,15 @@ import './MagicBento.css'
 function Dashboard() {
   const navigate = useNavigate()
   const { hasPermission } = usePermissions()
+  const { themeColor } = useTheme()
+  
+  // Convert hex to RGB
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
 
   // Left column boxes
   const leftBoxes = [
@@ -16,7 +26,8 @@ function Dashboard() {
       description: 'Orders, returns & revenue',
       size: 'large',
       component: Statistics,
-      isComponent: true
+      isComponent: true,
+      onClick: () => navigate('/statistics')
     },
     {
       id: 'shipment-verification',
@@ -91,19 +102,35 @@ function Dashboard() {
       <div
         className={`magic-bento-card magic-bento-card--border-glow ${!isComponentBox ? 'magic-bento-card--text-autohide' : ''}`}
         style={{
-          cursor: isComponentBox ? 'default' : 'pointer',
+          cursor: 'pointer',
           minHeight: 0,
           height: '100%',
           gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
           gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
-          '--glow-color': '132, 0, 255',
-          backgroundColor: isPOS ? 'rgba(132, 0, 255, 0.1)' : undefined
+          '--glow-color': themeColorRgb,
+          backgroundColor: isPOS ? `rgba(${themeColorRgb}, 0.1)` : undefined
         }}
       >
         {isComponentBox && Component ? (
           <>
-            <div className="magic-bento-card__header" style={{ flexShrink: 0 }}>
-              <div className="magic-bento-card__label">{box.title}</div>
+            <div 
+              className="magic-bento-card__header" 
+              style={{ flexShrink: 0, cursor: 'pointer' }}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (box.onClick) box.onClick()
+              }}
+            >
+              <div 
+                className="magic-bento-card__label"
+                style={{
+                  fontStyle: 'italic',
+                  fontFamily: 'Georgia, "Times New Roman", serif',
+                  fontSize: '18px'
+                }}
+              >
+                {box.title}
+              </div>
             </div>
             <div className="magic-bento-card__content" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
               <Component />
@@ -120,15 +147,11 @@ function Dashboard() {
           }}>
             <div 
               className="magic-bento-card__label"
-              style={
-                (box.id === 'employee-management' || box.id === 'shipment-verification' || box.id === 'calendar' || box.id === 'returns')
-                  ? {
-                      fontStyle: 'italic',
-                      fontFamily: 'Georgia, "Times New Roman", serif',
-                      fontSize: '18px'
-                    }
-                  : {}
-              }
+              style={{
+                fontStyle: 'italic',
+                fontFamily: 'Georgia, "Times New Roman", serif',
+                fontSize: '18px'
+              }}
             >
               {box.title}
             </div>
@@ -140,20 +163,20 @@ function Dashboard() {
     return (
       <ParticleCard
         key={box.id}
-        onClick={!isComponentBox ? box.onClick : undefined}
+        onClick={box.onClick}
         enableStars={false}
         enableTilt={false}
         enableMagnetism={false}
-        clickEffect={!isComponentBox}
+        clickEffect={true}
         particleCount={12}
-        glowColor="132, 0, 255"
+        glowColor={themeColorRgb}
         disableAnimations={false}
         style={{
           minHeight: 0,
           height: '100%',
           gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
           gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
-          cursor: isComponentBox ? 'default' : 'pointer'
+          cursor: 'pointer'
         }}
       >
         {boxContent}
@@ -171,7 +194,7 @@ function Dashboard() {
       overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column',
-      backgroundColor: 'white'
+      backgroundColor: 'var(--bg-primary, white)'
     }}>
       <div style={{
         display: 'grid',

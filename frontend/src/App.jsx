@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { PermissionProvider, usePermissions } from './contexts/PermissionContext'
+import { ThemeProvider } from './contexts/ThemeContext'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import POS from './components/POS'
@@ -13,6 +14,7 @@ import CalendarSubscription from './components/CalendarSubscription'
 import EmployeeManagement from './components/EmployeeManagement'
 import Profile from './pages/Profile'
 import ShipmentVerification from './pages/ShipmentVerification'
+import StatisticsPage from './pages/Statistics'
 import './index.css'
 
 function ProtectedRoute({ children, sessionToken, employee, onLogout }) {
@@ -131,6 +133,13 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
           </Layout>
         </ProtectedRoute>
       } />
+      <Route path="/statistics" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <StatisticsPage />
+          </Layout>
+        </ProtectedRoute>
+      } />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
@@ -141,10 +150,10 @@ function Layout({ children, employee, onLogout }) {
   const { hasPermission } = usePermissions()
   
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-secondary, #f5f5f5)' }}>
       <div style={{ 
-        backgroundColor: '#fff', 
-        borderBottom: '1px solid #ddd',
+        backgroundColor: 'var(--bg-primary, #fff)', 
+        borderBottom: '1px solid var(--border-color, #ddd)',
         padding: '10px 20px',
         display: 'flex',
         justifyContent: 'space-between',
@@ -162,7 +171,7 @@ function Layout({ children, employee, onLogout }) {
               fontWeight: 500,
               fontStyle: 'italic',
               fontFamily: 'Georgia, "Times New Roman", serif',
-              color: 'purple'
+              color: 'var(--theme-color, purple)'
             }}
           >
             Swift
@@ -178,7 +187,7 @@ function Layout({ children, employee, onLogout }) {
               cursor: 'pointer',
               fontSize: '16px',
               fontWeight: 500,
-              color: '#666'
+              color: 'var(--text-tertiary, #666)'
             }}
           >
             Profile
@@ -187,10 +196,11 @@ function Layout({ children, employee, onLogout }) {
             onClick={onLogout}
             style={{
               padding: '6px 12px',
-              backgroundColor: '#f0f0f0',
-              border: '1px solid #ddd',
+              backgroundColor: 'var(--bg-secondary, #f0f0f0)',
+              border: '1px solid var(--border-color, #ddd)',
               borderRadius: '4px',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              color: 'var(--text-primary, #000)'
             }}
           >
             Logout
@@ -258,15 +268,17 @@ function App() {
 
   return (
     <BrowserRouter>
-      <PermissionProvider>
-        <AppContent
-          sessionToken={sessionToken}
-          setSessionToken={setSessionToken}
-          employee={employee}
-          setEmployee={setEmployee}
-          onLogout={handleLogout}
-        />
-      </PermissionProvider>
+      <ThemeProvider>
+        <PermissionProvider>
+          <AppContent
+            sessionToken={sessionToken}
+            setSessionToken={setSessionToken}
+            employee={employee}
+            setEmployee={setEmployee}
+            onLogout={handleLogout}
+          />
+        </PermissionProvider>
+      </ThemeProvider>
     </BrowserRouter>
   )
 }

@@ -3,8 +3,10 @@ import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
+import { useTheme } from '../contexts/ThemeContext'
 
 function Calendar() {
+  const { themeMode } = useTheme()
   const calendarRef = useRef(null)
   const [events, setEvents] = useState([])
   const [schedules, setSchedules] = useState([])
@@ -18,6 +20,27 @@ function Calendar() {
     schedule: true,
     maintenance: true
   })
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadCalendarData()
@@ -205,26 +228,26 @@ function Calendar() {
 
   if (loading) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
         Loading calendar...
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '24px', backgroundColor: 'white', minHeight: 'calc(100vh - 200px)', maxWidth: '1400px', margin: '0 auto' }}>
+    <div style={{ padding: '24px', backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white', minHeight: 'calc(100vh - 200px)', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Event Filters */}
       <div style={{ 
         marginBottom: '20px', 
         padding: '16px', 
-        backgroundColor: '#f8f9fa', 
+        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa', 
         borderRadius: '4px',
         display: 'flex',
         flexWrap: 'wrap',
         gap: '12px',
         alignItems: 'center'
       }}>
-        <span style={{ fontWeight: 600, marginRight: '8px' }}>Filter Events:</span>
+        <span style={{ fontWeight: 600, marginRight: '8px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Filter Events:</span>
         {['holiday', 'event', 'meeting', 'shipment', 'schedule', 'maintenance'].map(type => (
           <label 
             key={type}
@@ -233,7 +256,8 @@ function Calendar() {
               alignItems: 'center', 
               gap: '6px', 
               cursor: 'pointer',
-              fontSize: '14px'
+              fontSize: '14px',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}
           >
             <input
@@ -270,17 +294,18 @@ function Calendar() {
           selectable={false}
           dayMaxEvents={true}
           moreLinkClick="popover"
+          themeSystem={isDarkMode ? 'standard' : 'standard'}
         />
       </div>
 
       {/* Selected Event Details */}
       {selectedEvent && (
         <div style={{
-          border: '3px solid black',
+          border: isDarkMode ? '3px solid var(--border-color, #404040)' : '3px solid black',
           borderRadius: '0',
           padding: '24px',
           marginTop: '20px',
-          backgroundColor: 'white'
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'
         }}>
           <div style={{ 
             display: 'flex', 
@@ -293,7 +318,8 @@ function Calendar() {
             <h3 style={{ 
               margin: 0, 
               fontSize: '20px',
-              fontWeight: 600
+              fontWeight: 600,
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}>
               {selectedEvent.title || selectedEvent.event_type}
             </h3>
@@ -301,9 +327,9 @@ function Calendar() {
               onClick={() => setSelectedEvent(null)}
               style={{
                 padding: '6px 12px',
-                backgroundColor: 'white',
-                color: 'black',
-                border: '1px solid #000',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : 'white',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : 'black',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                 borderRadius: '0',
                 cursor: 'pointer',
                 fontSize: '12px'
@@ -316,9 +342,10 @@ function Calendar() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{
               padding: '16px',
-              border: '1px solid #e0e0e0',
+              border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #e0e0e0',
               borderRadius: '0',
-              borderLeft: `4px solid ${getEventColor(selectedEvent.event_type || selectedEvent.eventType)}`
+              borderLeft: `4px solid ${getEventColor(selectedEvent.event_type || selectedEvent.eventType)}`,
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fafafa'
             }}>
               <div style={{ 
                 display: 'flex', 
@@ -331,13 +358,14 @@ function Calendar() {
                     fontSize: '16px', 
                     fontWeight: 500, 
                     marginBottom: '4px',
-                    textTransform: 'capitalize'
+                    textTransform: 'capitalize',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                   }}>
                     {selectedEvent.title || selectedEvent.event_type}
                   </div>
                   <div style={{ 
                     fontSize: '12px', 
-                    color: '#666',
+                    color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
                     textTransform: 'capitalize'
                   }}>
                     {selectedEvent.eventType || selectedEvent.type}
@@ -345,7 +373,7 @@ function Calendar() {
                     {selectedEvent.end_time && ` - ${formatTime(selectedEvent.end_time)}`}
                   </div>
                   {selectedEvent.event_date && (
-                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                    <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginTop: '4px' }}>
                       Date: {new Date(selectedEvent.event_date).toLocaleDateString()}
                     </div>
                   )}
@@ -362,17 +390,17 @@ function Calendar() {
                 </div>
               </div>
               {selectedEvent.description && (
-                <div style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #e0e0e0)' : '#666', marginTop: '8px' }}>
                   {selectedEvent.description}
                 </div>
               )}
               {selectedEvent.employee_name && (
-                <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginTop: '4px' }}>
                   Employee: {selectedEvent.employee_name}
                 </div>
               )}
               {selectedEvent.location && (
-                <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginTop: '4px' }}>
                   Location: {selectedEvent.location}
                 </div>
               )}
@@ -384,11 +412,12 @@ function Calendar() {
                     onClick={() => downloadEvent(selectedEvent)}
                     style={{
                       padding: '6px 12px',
-                      backgroundColor: '#f0f0f0',
-                      border: '1px solid #ddd',
+                      backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f0f0f0',
+                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                       borderRadius: '4px',
                       cursor: 'pointer',
-                      fontSize: '12px'
+                      fontSize: '12px',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                     }}
                   >
                     📥 Download .ics
@@ -397,11 +426,12 @@ function Calendar() {
                     onClick={() => addToCalendar(selectedEvent)}
                     style={{
                       padding: '6px 12px',
-                      backgroundColor: '#f0f0f0',
-                      border: '1px solid #ddd',
+                      backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f0f0f0',
+                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                       borderRadius: '4px',
                       cursor: 'pointer',
-                      fontSize: '12px'
+                      fontSize: '12px',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                     }}
                   >
                     📅 Add to Google Calendar

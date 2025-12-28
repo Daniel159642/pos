@@ -2,9 +2,11 @@
   --hue: 27;
   --sat: 69%;
   --white: hsl(0, 0%, 100%);
-  --purple-primary: rgba(132, 0, 255, 1);
-  --purple-glow: rgba(132, 0, 255, 0.2);
-  --purple-border: rgba(132, 0, 255, 0.8);
+  --theme-color: #8400ff;
+  --theme-color-rgb: 132, 0, 255;
+  --purple-primary: var(--theme-color);
+  --purple-glow: rgba(var(--theme-color-rgb), 0.2);
+  --purple-border: rgba(var(--theme-color-rgb), 0.8);
   --border-color: #e0e0e0;
   --background-light: #ffffff;
   --text-dark: #333333;
@@ -31,10 +33,40 @@
   --glow-y: 50%;
   --glow-intensity: 0;
   --glow-radius: 200px;
+  
+  /* Inner glow effect */
+  box-shadow: 
+    inset 0 0 20px rgba(var(--theme-color-rgb, 132, 0, 255), 0.20),
+    inset 0 0 40px rgba(var(--theme-color-rgb, 132, 0, 255), 0.12),
+    inset 0 0 60px rgba(var(--theme-color-rgb, 132, 0, 255), 0.06);
+}
+
+.dark-theme .magic-bento-card {
+  background: rgba(var(--theme-color-rgb, 132, 0, 255), 0.15);
+  border-color: rgba(var(--theme-color-rgb, 132, 0, 255), 0.5);
+}
+
+.dark-theme .magic-bento-card__header,
+.dark-theme .magic-bento-card__content {
+  color: var(--text-primary, #ffffff);
+}
+
+.dark-theme .magic-bento-card__label,
+.dark-theme .magic-bento-card__title {
+  color: var(--text-primary, #ffffff);
+}
+
+.dark-theme .magic-bento-card__description {
+  color: var(--text-secondary, #e0e0e0);
+  opacity: 0.8;
 }
 
 .magic-bento-card:hover {
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+  box-shadow: 
+    0 8px 25px rgba(0, 0, 0, 0.15),
+    inset 0 0 30px rgba(var(--theme-color-rgb, 132, 0, 255), 0.30),
+    inset 0 0 60px rgba(var(--theme-color-rgb, 132, 0, 255), 0.18),
+    inset 0 0 90px rgba(var(--theme-color-rgb, 132, 0, 255), 0.10);
   border-color: black;
 }
 
@@ -106,8 +138,18 @@
   display: none;
 }
 
+.magic-bento-card--border-glow {
+  box-shadow: 
+    inset 0 0 20px rgba(var(--theme-color-rgb, 132, 0, 255), 0.20),
+    inset 0 0 40px rgba(var(--theme-color-rgb, 132, 0, 255), 0.12),
+    inset 0 0 60px rgba(var(--theme-color-rgb, 132, 0, 255), 0.06);
+}
+
 .magic-bento-card--border-glow:hover {
-  box-shadow: none;
+  box-shadow: 
+    inset 0 0 30px rgba(var(--theme-color-rgb, 132, 0, 255), 0.30),
+    inset 0 0 60px rgba(var(--theme-color-rgb, 132, 0, 255), 0.18),
+    inset 0 0 90px rgba(var(--theme-color-rgb, 132, 0, 255), 0.10);
 }
 
 .particle-container {

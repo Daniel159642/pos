@@ -1,10 +1,33 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useTheme } from '../contexts/ThemeContext'
 
 function Login({ onLogin }) {
+  const { themeMode } = useTheme()
   const [employeeCode, setEmployeeCode] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -67,23 +90,34 @@ function Login({ onLogin }) {
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: '100vh',
-      backgroundColor: '#f5f5f5'
+      backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#f5f5f5'
     }}>
       <div style={{
-        backgroundColor: '#fff',
+        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
         padding: '40px',
         borderRadius: '8px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+        boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.1)',
         width: '100%',
-        maxWidth: '400px'
+        maxWidth: '400px',
+        border: isDarkMode ? '1px solid var(--border-color, #404040)' : 'none'
       }}>
-        <h1 style={{ marginTop: 0, marginBottom: '30px', textAlign: 'center' }}>
+        <h1 style={{ 
+          marginTop: 0, 
+          marginBottom: '30px', 
+          textAlign: 'center',
+          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+        }}>
           POS System Login
         </h1>
         
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>
+            <label style={{ 
+              display: 'block', 
+              marginBottom: '8px', 
+              fontWeight: 500,
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+            }}>
               Username / Employee Code
             </label>
             <input
@@ -94,16 +128,23 @@ function Login({ onLogin }) {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
                 fontSize: '16px',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box',
+                backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
           </div>
 
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>
+            <label style={{ 
+              display: 'block', 
+              marginBottom: '8px', 
+              fontWeight: 500,
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+            }}>
               Password
             </label>
             <input
@@ -114,10 +155,12 @@ function Login({ onLogin }) {
               style={{
                 width: '100%',
                 padding: '10px',
-                border: '1px solid #ddd',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
                 fontSize: '16px',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box',
+                backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
           </div>
@@ -126,10 +169,11 @@ function Login({ onLogin }) {
             <div style={{
               padding: '10px',
               marginBottom: '20px',
-              backgroundColor: '#ffebee',
-              color: '#d32f2f',
+              backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#ffebee',
+              color: isDarkMode ? '#ef5350' : '#d32f2f',
               borderRadius: '4px',
-              fontSize: '14px'
+              fontSize: '14px',
+              border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : 'none'
             }}>
               {error}
             </div>
@@ -141,13 +185,26 @@ function Login({ onLogin }) {
             style={{
               width: '100%',
               padding: '12px',
-              backgroundColor: loading ? '#ccc' : '#000',
+              backgroundColor: loading 
+                ? (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#ccc') 
+                : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#000'),
               color: '#fff',
               border: 'none',
               borderRadius: '4px',
               fontSize: '16px',
               fontWeight: 500,
-              cursor: loading ? 'not-allowed' : 'pointer'
+              cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              if (!loading) {
+                e.target.style.backgroundColor = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#333'
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!loading) {
+                e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#000'
+              }
             }}
           >
             {loading ? 'Logging in...' : 'Login'}

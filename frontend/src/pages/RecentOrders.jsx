@@ -1,9 +1,19 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
 
 function RecentOrders() {
   const navigate = useNavigate()
+  const { themeColor, themeMode } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -11,6 +21,27 @@ function RecentOrders() {
   const [orderDetails, setOrderDetails] = useState({})
   const [loadingDetails, setLoadingDetails] = useState({})
   const [searchQuery, setSearchQuery] = useState('')
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     loadData()
@@ -127,32 +158,33 @@ function RecentOrders() {
             width: '100%',
             padding: '8px 0',
             border: 'none',
-            borderBottom: '2px solid #ddd',
+            borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd',
             borderRadius: '0',
             backgroundColor: 'transparent',
             outline: 'none',
             fontSize: '14px',
             boxSizing: 'border-box',
-            fontFamily: '"Product Sans", sans-serif'
+            fontFamily: '"Product Sans", sans-serif',
+            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
           }}
         />
       </div>
       <div style={{ overflowX: 'auto' }}>
-        {loading && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Loading...</div>}
-        {error && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>{error}</div>}
+        {loading && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Loading...</div>}
+        {error && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>{error}</div>}
         {!loading && !error && data && (
           data.data && data.data.length > 0 ? (
             <div style={{ 
-              backgroundColor: '#fff', 
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff', 
               borderRadius: '4px', 
               overflowX: 'auto',
               overflowY: 'visible',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
               width: '100%'
             }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
                 <thead>
-                  <tr style={{ backgroundColor: '#f8f9fa' }}>
+                  <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa' }}>
                     {columnsWithActions.map(col => (
                       <th
                         key={col}
@@ -160,8 +192,8 @@ function RecentOrders() {
                           padding: '12px',
                           textAlign: 'left',
                           fontWeight: 600,
-                          borderBottom: '2px solid #dee2e6',
-                          color: '#495057',
+                          borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
                           fontSize: '13px',
                           textTransform: 'uppercase',
                           letterSpacing: '0.5px'
@@ -185,7 +217,7 @@ function RecentOrders() {
                           key={idx} 
                           onClick={() => handleRowClick(row)}
                           style={{ 
-                            backgroundColor: idx % 2 === 0 ? '#fff' : '#fafafa',
+                            backgroundColor: idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa'),
                             cursor: 'pointer'
                           }}
                         >
@@ -220,8 +252,9 @@ function RecentOrders() {
                                 key={col} 
                                 style={{ 
                                   padding: '8px 12px', 
-                                  borderBottom: '1px solid #eee',
+                                  borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
                                   fontSize: '14px',
+                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                                   textAlign: (col.includes('price') || col.includes('cost') || col.includes('total') || 
                                              col.includes('amount') || col.includes('fee')) ? 'right' : 'left'
                                 }}
@@ -231,14 +264,14 @@ function RecentOrders() {
                             )
                           })}
                           <td 
-                            style={{ padding: '8px 12px', borderBottom: '1px solid #eee' }}
+                            style={{ padding: '8px 12px', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
                               onClick={() => handleReturn(row.order_number || row.orderNumber, orderId)}
                               style={{
                                 padding: '6px 12px',
-                                backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                                 backdropFilter: 'blur(10px)',
                                 WebkitBackdropFilter: 'blur(10px)',
                                 color: '#fff',
@@ -247,16 +280,16 @@ function RecentOrders() {
                                 cursor: 'pointer',
                                 fontSize: '14px',
                                 fontWeight: 600,
-                                boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                                 transition: 'all 0.3s ease'
                               }}
                               onMouseEnter={(e) => {
-                                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
-                                e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                                e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                               }}
                               onMouseLeave={(e) => {
-                                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
-                                e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                                e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                               }}
                             >
                               Return
@@ -265,18 +298,18 @@ function RecentOrders() {
                         </tr>
                         {isExpanded && (
                           <tr key={`${idx}-details`}>
-                            <td colSpan={columnsWithActions.length} style={{ padding: '0', borderBottom: '1px solid #eee' }}>
+                            <td colSpan={columnsWithActions.length} style={{ padding: '0', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}>
                               <div style={{
                                 padding: '20px',
-                                backgroundColor: '#f8f9fa',
-                                borderTop: '2px solid #dee2e6'
+                                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
+                                borderTop: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6'
                               }}>
                                 {isLoading ? (
-                                  <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                                  <div style={{ textAlign: 'center', padding: '20px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
                                     Loading details...
                                   </div>
                                 ) : details ? (
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                                     <div>
                                       <strong>Order ID:</strong> {orderId || 'N/A'}
                                     </div>
@@ -314,35 +347,35 @@ function RecentOrders() {
                                       {details.items && details.items.length > 0 ? (
                                         <table style={{ width: '100%', marginTop: '8px', borderCollapse: 'collapse' }}>
                                           <thead>
-                                            <tr style={{ backgroundColor: '#e9ecef' }}>
-                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>Product</th>
-                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>SKU</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Quantity</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Unit Price</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Discount</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Subtotal</th>
+                                            <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#e9ecef' }}>
+                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Product</th>
+                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>SKU</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Quantity</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Unit Price</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Discount</th>
+                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Subtotal</th>
                                             </tr>
                                           </thead>
                                           <tbody>
                                             {details.items.map((item, itemIdx) => (
-                                              <tr key={itemIdx} style={{ backgroundColor: itemIdx % 2 === 0 ? '#fff' : '#f8f9fa' }}>
-                                                <td style={{ padding: '8px', fontSize: '13px' }}>{item.product_name || 'N/A'}</td>
-                                                <td style={{ padding: '8px', fontSize: '13px' }}>{item.sku || 'N/A'}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{item.quantity || 0}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(item.unit_price || 0).toFixed(2)}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(item.discount || 0).toFixed(2)}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(item.subtotal || 0).toFixed(2)}</td>
+                                              <tr key={itemIdx} style={{ backgroundColor: itemIdx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa') }}>
+                                                <td style={{ padding: '8px', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{item.product_name || 'N/A'}</td>
+                                                <td style={{ padding: '8px', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{item.sku || 'N/A'}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>{item.quantity || 0}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>${(item.unit_price || 0).toFixed(2)}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>${(item.discount || 0).toFixed(2)}</td>
+                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>${(item.subtotal || 0).toFixed(2)}</td>
                                               </tr>
                                             ))}
                                           </tbody>
                                         </table>
                                       ) : (
-                                        <div style={{ marginTop: '8px', color: '#999', fontSize: '13px' }}>No items found</div>
+                                        <div style={{ marginTop: '8px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontSize: '13px' }}>No items found</div>
                                       )}
                                     </div>
                                   </div>
                                 ) : (
-                                  <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                                  <div style={{ textAlign: 'center', padding: '20px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
                                     No details available
                                   </div>
                                 )}
@@ -357,7 +390,7 @@ function RecentOrders() {
               </table>
             </div>
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>No orders found</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>No orders found</div>
           )
         )}
       </div>

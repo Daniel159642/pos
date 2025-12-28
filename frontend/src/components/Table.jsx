@@ -1,4 +1,26 @@
+import { useState, useEffect } from 'react'
+
 function Table({ columns, data, onEdit }) {
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [])
+  
   const formatValue = (value, column) => {
     if (value === null || value === undefined) return ''
     
@@ -54,8 +76,9 @@ function Table({ columns, data, onEdit }) {
   const getCellStyle = (col, value) => {
     const baseStyle = { 
       padding: '8px 12px', 
-      borderBottom: '1px solid #eee',
-      fontSize: '14px'
+      borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
+      fontSize: '14px',
+      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
     }
     
     if (col.includes('price') || col.includes('cost') || col.includes('total') || 
@@ -73,16 +96,16 @@ function Table({ columns, data, onEdit }) {
 
   return (
     <div style={{ 
-      backgroundColor: '#fff', 
+      backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff', 
       borderRadius: '4px', 
       overflowX: 'auto',
       overflowY: 'visible',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+      boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
       width: '100%'
     }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
         <thead>
-          <tr style={{ backgroundColor: '#f8f9fa' }}>
+          <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa' }}>
             {columns.map(col => (
               <th
                 key={col}
@@ -90,8 +113,8 @@ function Table({ columns, data, onEdit }) {
                   padding: '12px',
                   textAlign: 'left',
                   fontWeight: 600,
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px'
@@ -106,8 +129,8 @@ function Table({ columns, data, onEdit }) {
                   padding: '12px',
                   textAlign: 'center',
                   fontWeight: 600,
-                  borderBottom: '2px solid #dee2e6',
-                  color: '#495057',
+                  borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
@@ -121,7 +144,7 @@ function Table({ columns, data, onEdit }) {
         </thead>
       <tbody>
         {data.map((row, idx) => (
-          <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+          <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa') }}>
             {columns.map(col => (
               <td key={col} style={getCellStyle(col, row[col])}>
                 {formatValue(row[col], col)}
@@ -130,7 +153,7 @@ function Table({ columns, data, onEdit }) {
             {onEdit && (
               <td style={{ 
                 padding: '8px 12px', 
-                borderBottom: '1px solid #eee',
+                borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
                 textAlign: 'center'
               }}>
                 <button

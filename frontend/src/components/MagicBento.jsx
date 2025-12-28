@@ -4,10 +4,13 @@ import './MagicBento.css';
 
 const DEFAULT_PARTICLE_COUNT = 12;
 const DEFAULT_SPOTLIGHT_RADIUS = 300;
-const DEFAULT_GLOW_COLOR = '132, 0, 255';
+const getDefaultGlowColor = () => {
+  const rgb = getComputedStyle(document.documentElement).getPropertyValue('--theme-color-rgb')?.trim();
+  return rgb || '132, 0, 255';
+};
 const MOBILE_BREAKPOINT = 768;
 
-const createParticleElement = (x, y, color = DEFAULT_GLOW_COLOR) => {
+const createParticleElement = (x, y, color = getDefaultGlowColor()) => {
   const el = document.createElement('div');
   el.className = 'particle';
   el.style.cssText = `
@@ -47,7 +50,7 @@ export const ParticleCard = ({
   disableAnimations = false,
   style,
   particleCount = DEFAULT_PARTICLE_COUNT,
-  glowColor = DEFAULT_GLOW_COLOR,
+  glowColor = getDefaultGlowColor(),
   enableTilt = true,
   clickEffect = false,
   enableMagnetism = false,
@@ -197,7 +200,7 @@ export const ParticleCard = ({
         width: ${maxDistance * 2}px;
         height: ${maxDistance * 2}px;
         border-radius: 50%;
-        background: radial-gradient(circle, rgba(${glowColor}, 0.4) 0%, rgba(${glowColor}, 0.2) 30%, transparent 70%);
+        background: radial-gradient(circle, rgba(${glowColor || getDefaultGlowColor()}, 0.4) 0%, rgba(${glowColor || getDefaultGlowColor()}, 0.2) 30%, transparent 70%);
         left: ${x - maxDistance}px;
         top: ${y - maxDistance}px;
         pointer-events: none;
@@ -270,11 +273,11 @@ export const GlobalSpotlight = ({
       border-radius: 50%;
       pointer-events: none;
       background: radial-gradient(circle,
-        rgba(${glowColor}, 0.15) 0%,
-        rgba(${glowColor}, 0.08) 15%,
-        rgba(${glowColor}, 0.04) 25%,
-        rgba(${glowColor}, 0.02) 40%,
-        rgba(${glowColor}, 0.01) 65%,
+        rgba(${glowColor || getDefaultGlowColor()}, 0.15) 0%,
+        rgba(${glowColor || getDefaultGlowColor()}, 0.08) 15%,
+        rgba(${glowColor || getDefaultGlowColor()}, 0.04) 25%,
+        rgba(${glowColor || getDefaultGlowColor()}, 0.02) 40%,
+        rgba(${glowColor || getDefaultGlowColor()}, 0.01) 65%,
         transparent 70%
       );
       z-index: 200;

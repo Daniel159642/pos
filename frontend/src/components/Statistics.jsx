@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
+import { useTheme } from '../contexts/ThemeContext'
 
 function Statistics() {
   // All hooks must be declared at the top, before any early returns
+  const { themeMode, themeColor } = useTheme()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -13,6 +15,36 @@ function Statistics() {
   const [mouseEnd, setMouseEnd] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
   const containerRef = useRef(null)
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
+  // Update dark mode state when theme changes
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    // Check initially
+    checkDarkMode()
+    
+    // Watch for class changes
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   // Minimum swipe distance (in pixels)
   const minSwipeDistance = 50
@@ -42,7 +74,7 @@ function Statistics() {
 
   const renderWeeklyChart = () => {
     if (!stats || !stats.weekly_revenue || stats.weekly_revenue.length === 0) {
-      return <div style={{ padding: '20px', textAlign: 'center', color: '#999', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>No revenue data</div>
+      return <div style={{ padding: '20px', textAlign: 'center', color: isDarkMode ? '#fff' : '#999', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>No revenue data</div>
     }
 
     const maxRevenue = Math.max(...stats.weekly_revenue.map(d => d.revenue), 1)
@@ -50,10 +82,18 @@ function Statistics() {
     const svgWidth = 400
     const barWidth = 40
     const spacing = 20
+    
+    // Theme-aware colors
+    const axisColor = isDarkMode ? '#fff' : '#ddd'
+    const dayLabelColor = isDarkMode ? '#fff' : '#666'
+    const revenueLabelColor = isDarkMode ? '#fff' : '#333'
+    const titleColor = isDarkMode ? '#fff' : '#333'
+    // Bar color uses theme color
+    const barColor = isDarkMode ? `rgba(${themeColorRgb}, 0.6)` : `rgba(${themeColorRgb}, 0.5)`
 
     return (
       <div style={{ padding: '8px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '100%', flexShrink: 0, boxSizing: 'border-box' }}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 500 }}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 500, color: titleColor }}>
           Weekly Revenue
         </h3>
         <div style={{ overflow: 'hidden', width: '100%', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -71,7 +111,7 @@ function Statistics() {
                   y={y}
                   width={barWidth}
                   height={barHeight}
-                  fill="rgba(220, 180, 255, 0.5)"
+                  fill={barColor}
                   rx="4"
                 />
                 <text
@@ -79,7 +119,7 @@ function Statistics() {
                   y={chartHeight + 20}
                   textAnchor="middle"
                   fontSize="9"
-                  fill="#666"
+                  fill={dayLabelColor}
                 >
                   {day.day}
                 </text>
@@ -88,7 +128,7 @@ function Statistics() {
                   y={y - 2}
                   textAnchor="middle"
                   fontSize="8"
-                  fill="#333"
+                  fill={revenueLabelColor}
                   fontWeight="500"
                 >
                   ${day.revenue.toFixed(0)}
@@ -103,7 +143,7 @@ function Statistics() {
             y1={0}
             x2={0}
             y2={chartHeight}
-            stroke="#ddd"
+            stroke={axisColor}
             strokeWidth="1"
           />
           
@@ -113,7 +153,7 @@ function Statistics() {
             y1={chartHeight}
             x2={svgWidth}
             y2={chartHeight}
-            stroke="#ddd"
+            stroke={axisColor}
             strokeWidth="1"
           />
           </svg>
@@ -129,7 +169,7 @@ function Statistics() {
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
-        color: '#999'
+        color: isDarkMode ? '#fff' : '#999'
       }}>
         Loading...
       </div>
@@ -143,7 +183,7 @@ function Statistics() {
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
-        color: '#999'
+        color: isDarkMode ? '#fff' : '#999'
       }}>
         {error}
       </div>
@@ -155,6 +195,10 @@ function Statistics() {
   }
 
   const renderOverview = () => {
+    const titleColor = isDarkMode ? '#fff' : '#333'
+    const valueColor = isDarkMode ? '#fff' : '#333'
+    const labelColor = isDarkMode ? '#e0e0e0' : '#666'
+    
     return (
       <div style={{
         padding: '8px',
@@ -166,23 +210,23 @@ function Statistics() {
         flexShrink: 0,
         boxSizing: 'border-box'
       }}>
-        <h3 style={{ margin: '0 0 12px 0', fontSize: '12px', fontWeight: 500 }}>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '12px', fontWeight: 500, color: titleColor }}>
           Overview
         </h3>
         <div style={{ display: 'flex', gap: '20px', justifyContent: 'center' }}>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '24px', fontWeight: 600, color: '#333', marginBottom: '4px' }}>
+            <div style={{ fontSize: '24px', fontWeight: 600, color: valueColor, marginBottom: '4px' }}>
               {stats.total_orders || 0}
             </div>
-            <div style={{ fontSize: '11px', color: '#666' }}>
+            <div style={{ fontSize: '11px', color: labelColor }}>
               Total Orders
             </div>
           </div>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '24px', fontWeight: 600, color: '#333', marginBottom: '4px' }}>
+            <div style={{ fontSize: '24px', fontWeight: 600, color: valueColor, marginBottom: '4px' }}>
               {stats.total_returns || 0}
             </div>
-            <div style={{ fontSize: '11px', color: '#666' }}>
+            <div style={{ fontSize: '11px', color: labelColor }}>
               Total Returns
             </div>
           </div>
@@ -310,43 +354,48 @@ function Statistics() {
         </div>
       </div>
 
-      {/* Navigation Dots */}
+      {/* Navigation Buttons */}
       <div style={{
         display: 'flex',
         justifyContent: 'center',
-        gap: '8px',
+        gap: '12px',
         padding: '16px',
-        borderTop: '1px solid #eee',
-        backgroundColor: '#fff'
+        backgroundColor: 'transparent'
       }}>
         <button
           onClick={() => setActiveView(0)}
           style={{
-            width: '10px',
-            height: '10px',
-            borderRadius: '50%',
+            padding: '6px 12px',
             border: 'none',
-            backgroundColor: activeView === 0 ? '#4a90e2' : '#ddd',
+            backgroundColor: 'transparent',
+            color: activeView === 0 ? 'var(--text-primary, #333)' : 'var(--text-tertiary, #999)',
             cursor: 'pointer',
-            padding: 0,
-            transition: 'background-color 0.2s'
+            fontSize: '12px',
+            fontWeight: activeView === 0 ? 600 : 400,
+            transition: 'all 0.2s',
+            textDecoration: activeView === 0 ? 'underline' : 'none'
           }}
-          aria-label="Weekly Revenue"
-        />
+          aria-label="Chart"
+        >
+          Chart
+        </button>
         <button
           onClick={() => setActiveView(1)}
           style={{
-            width: '10px',
-            height: '10px',
-            borderRadius: '50%',
+            padding: '6px 12px',
             border: 'none',
-            backgroundColor: activeView === 1 ? '#4a90e2' : '#ddd',
+            backgroundColor: 'transparent',
+            color: activeView === 1 ? 'var(--text-primary, #333)' : 'var(--text-tertiary, #999)',
             cursor: 'pointer',
-            padding: 0,
-            transition: 'background-color 0.2s'
+            fontSize: '12px',
+            fontWeight: activeView === 1 ? 600 : 400,
+            transition: 'all 0.2s',
+            textDecoration: activeView === 1 ? 'underline' : 'none'
           }}
           aria-label="Overview"
-        />
+        >
+          Overview
+        </button>
       </div>
     </div>
   )

@@ -1,7 +1,18 @@
 import { useState, useEffect } from 'react'
+import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
 
 function Inventory() {
+  const { themeColor, themeMode } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
   const [inventory, setInventory] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -15,6 +26,27 @@ function Inventory() {
   const [editError, setEditError] = useState(null)
   const [editSuccess, setEditSuccess] = useState(false)
   const [sessionToken, setSessionToken] = useState(null)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
 
   useEffect(() => {
     setSessionToken(localStorage.getItem('sessionToken'))
@@ -186,16 +218,17 @@ function Inventory() {
               onClick={() => setSelectedCategory(null)}
               style={{
                 padding: '8px 16px',
-                backgroundColor: '#f0f0f0',
-                border: '1px solid #ddd',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
                 cursor: 'pointer',
-                fontSize: '14px'
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             >
               ← Back
             </button>
-            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500 }}>
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
               {selectedCategory} ({items.length} items)
             </h2>
           </div>
@@ -206,7 +239,7 @@ function Inventory() {
               onEdit={handleEditProduct}
             />
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
               No items found in this category
             </div>
           )}
@@ -230,17 +263,17 @@ function Inventory() {
                 onClick={() => handleCategoryClick(category)}
                 style={{
                   padding: '10px 16px',
-                  backgroundColor: selectedCategory === category ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                  backgroundColor: selectedCategory === category ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                   backdropFilter: 'blur(10px)',
                   WebkitBackdropFilter: 'blur(10px)',
-                  border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                  border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                   borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: selectedCategory === category ? 600 : 500,
                   color: '#fff',
                   cursor: 'pointer',
                   transition: 'all 0.3s ease',
-                  boxShadow: selectedCategory === category ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+                  boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
                 }}
               >
                 {category}
@@ -249,7 +282,7 @@ function Inventory() {
           })}
         </div>
         {categories.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+          <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
             No categories found
           </div>
         )}
@@ -273,16 +306,17 @@ function Inventory() {
               onClick={() => setSelectedVendor(null)}
               style={{
                 padding: '8px 16px',
-                backgroundColor: '#f0f0f0',
-                border: '1px solid #ddd',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                 borderRadius: '4px',
                 cursor: 'pointer',
-                fontSize: '14px'
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             >
               ← Back
             </button>
-            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500 }}>
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
               {selectedVendor} ({items.length} items)
             </h2>
           </div>
@@ -293,7 +327,7 @@ function Inventory() {
               onEdit={handleEditProduct}
             />
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
               No items found for this vendor
             </div>
           )}
@@ -317,19 +351,19 @@ function Inventory() {
                 onClick={() => handleVendorClick(vendor)}
                 style={{
                   padding: '24px',
-                  backgroundColor: '#fff',
-                  border: '2px solid #e0e0e0',
+                  backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                  border: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #e0e0e0',
                   borderRadius: '8px',
                   cursor: 'pointer',
                   transition: 'all 0.2s',
                   textAlign: 'center'
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#4a90e2'
-                  e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)'
+                  e.currentTarget.style.borderColor = isDarkMode ? `rgba(${themeColorRgb}, 0.5)` : '#4a90e2'
+                  e.currentTarget.style.boxShadow = isDarkMode ? `0 4px 8px rgba(${themeColorRgb}, 0.2)` : '0 4px 8px rgba(0,0,0,0.1)'
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = '#e0e0e0'
+                  e.currentTarget.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#e0e0e0'
                   e.currentTarget.style.boxShadow = 'none'
                 }}
               >
@@ -337,13 +371,13 @@ function Inventory() {
                   fontSize: '18px', 
                   fontWeight: 600, 
                   marginBottom: '8px',
-                  color: '#333'
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                 }}>
                   {vendor}
                 </div>
                 <div style={{ 
                   fontSize: '14px', 
-                  color: '#666' 
+                  color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' 
                 }}>
                   {itemCount} {itemCount === 1 ? 'item' : 'items'}
                 </div>
@@ -352,7 +386,7 @@ function Inventory() {
           })}
         </div>
         {vendors.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+          <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
             No vendors found
           </div>
         )}
@@ -364,7 +398,7 @@ function Inventory() {
   const renderAllItems = () => {
     if (filteredInventory.length === 0) {
       return (
-        <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+        <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
           {searchQuery ? 'No items match your search' : 'No items found'}
         </div>
       )
@@ -383,7 +417,7 @@ function Inventory() {
 
   if (loading) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
         Loading...
       </div>
     )
@@ -391,7 +425,7 @@ function Inventory() {
 
   if (error) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
         {error}
       </div>
     )
@@ -417,13 +451,14 @@ function Inventory() {
                 width: '100%',
                 padding: '8px 0',
                 border: 'none',
-                borderBottom: '2px solid #ddd',
+                borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd',
                 borderRadius: '0',
                 backgroundColor: 'transparent',
                 outline: 'none',
                 fontSize: '14px',
                 boxSizing: 'border-box',
-                fontFamily: '"Product Sans", sans-serif'
+                fontFamily: '"Product Sans", sans-serif',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
           </div>
@@ -431,8 +466,8 @@ function Inventory() {
           {/* Edit Product Form */}
           {editingProduct && (
             <div style={{
-              backgroundColor: '#fff',
-              border: '1px solid #ddd',
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
               borderRadius: '8px',
               padding: '12px',
               marginTop: '20px'
@@ -440,10 +475,10 @@ function Inventory() {
               {editError && (
                 <div style={{
                   padding: '8px',
-                  backgroundColor: '#fee',
-                  border: '1px solid #fcc',
+                  backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee',
+                  border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc',
                   borderRadius: '4px',
-                  color: '#c33',
+                  color: isDarkMode ? '#ef5350' : '#c33',
                   marginBottom: '12px',
                   fontSize: '12px'
                 }}>
@@ -454,10 +489,10 @@ function Inventory() {
               {editSuccess && (
                 <div style={{
                   padding: '8px',
-                  backgroundColor: '#efe',
-                  border: '1px solid #cfc',
+                  backgroundColor: isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#efe',
+                  border: isDarkMode ? '1px solid rgba(46, 125, 50, 0.4)' : '1px solid #cfc',
                   borderRadius: '4px',
-                  color: '#3c3',
+                  color: isDarkMode ? '#81c784' : '#3c3',
                   marginBottom: '12px',
                   fontSize: '12px'
                 }}>
@@ -468,7 +503,7 @@ function Inventory() {
               <form onSubmit={handleSaveProduct}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Product Name *
                     </label>
                     <input
@@ -480,17 +515,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       SKU *
                     </label>
                     <input
@@ -502,17 +539,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Barcode
                     </label>
                     <input
@@ -523,17 +562,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Category
                     </label>
                     <input
@@ -544,17 +585,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Product Price *
                     </label>
                     <input
@@ -568,17 +611,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Product Cost *
                     </label>
                     <input
@@ -592,17 +637,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Current Quantity *
                     </label>
                     <input
@@ -616,17 +663,19 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       Vendor
                     </label>
                     <input
@@ -637,11 +686,13 @@ function Inventory() {
                       style={{
                         width: '100%',
                         padding: '6px',
-                        border: '1px solid #ddd',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
                         boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     />
                   </div>
@@ -658,13 +709,14 @@ function Inventory() {
                       style={{
                         flex: 1,
                         padding: '8px',
-                        backgroundColor: '#f0f0f0',
-                        border: '1px solid #ddd',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         cursor: editLoading ? 'not-allowed' : 'pointer',
                         fontSize: '13px',
                         fontWeight: 500,
-                        fontFamily: '"Product Sans", sans-serif'
+                        fontFamily: '"Product Sans", sans-serif',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                       }}
                     >
                       Cancel
@@ -675,7 +727,7 @@ function Inventory() {
                       style={{
                         flex: 1,
                         padding: '8px',
-                        backgroundColor: editLoading ? '#ccc' : 'rgba(128, 0, 128, 0.7)',
+                        backgroundColor: editLoading ? '#ccc' : `rgba(${themeColorRgb}, 0.7)`,
                         color: '#fff',
                         border: 'none',
                         borderRadius: '4px',
@@ -700,7 +752,7 @@ function Inventory() {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          borderLeft: '1px solid #ddd',
+          borderLeft: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
           paddingLeft: '30px'
         }}>
           {/* Filter Buttons */}
@@ -708,24 +760,24 @@ function Inventory() {
             display: 'flex', 
             gap: '8px', 
             marginBottom: '20px',
-            borderBottom: '2px solid #eee',
+            borderBottom: isDarkMode ? '2px solid var(--border-light, #333)' : '2px solid #eee',
             paddingBottom: '12px'
           }}>
             <button
               onClick={() => handleFilterChange('category')}
               style={{
                 padding: '10px 16px',
-                backgroundColor: filterView === 'category' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backgroundColor: filterView === 'category' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
-                border: filterView === 'category' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                border: filterView === 'category' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: filterView === 'category' ? 600 : 500,
                 color: '#fff',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: filterView === 'category' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+                boxShadow: filterView === 'category' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
               }}
             >
               Category
@@ -734,17 +786,17 @@ function Inventory() {
               onClick={() => handleFilterChange('vendor')}
               style={{
                 padding: '10px 16px',
-                backgroundColor: filterView === 'vendor' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backgroundColor: filterView === 'vendor' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
-                border: filterView === 'vendor' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                border: filterView === 'vendor' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: filterView === 'vendor' ? 600 : 500,
                 color: '#fff',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: filterView === 'vendor' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+                boxShadow: filterView === 'vendor' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
               }}
             >
               Vendor
@@ -753,17 +805,17 @@ function Inventory() {
               onClick={() => handleFilterChange('all')}
               style={{
                 padding: '10px 16px',
-                backgroundColor: filterView === 'all' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backgroundColor: filterView === 'all' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
-                border: filterView === 'all' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                border: filterView === 'all' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: filterView === 'all' ? 600 : 500,
                 color: '#fff',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: filterView === 'all' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+                boxShadow: filterView === 'all' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
               }}
             >
               All

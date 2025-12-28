@@ -9,11 +9,39 @@ html {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Theme Variables */
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f5;
+    --bg-tertiary: #fafafa;
+    --text-primary: #000000;
+    --text-secondary: #333333;
+    --text-tertiary: #666666;
+    --border-color: #ddd;
+    --border-light: #eee;
+    --shadow: rgba(0, 0, 0, 0.1);
+    --shadow-hover: rgba(0, 0, 0, 0.15);
+}
+
+.dark-theme {
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2d2d2d;
+    --bg-tertiary: #3a3a3a;
+    --text-primary: #ffffff;
+    --text-secondary: #e0e0e0;
+    --text-tertiary: #b0b0b0;
+    --border-color: #404040;
+    --border-light: #333333;
+    --shadow: rgba(0, 0, 0, 0.3);
+    --shadow-hover: rgba(0, 0, 0, 0.4);
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
-    background: white;
-    color: #000;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
     font-size: 14px;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 @keyframes slideIn {
@@ -32,6 +60,8 @@ body {
     padding: 20px;
     max-width: 1400px;
     margin: 0 auto;
+    background: var(--bg-primary);
+    color: var(--text-primary);
 }
 
 .admin-header {
@@ -47,11 +77,11 @@ body {
 }
 
 .employees-table {
-    background: white;
+    background: var(--bg-primary);
     border-radius: 8px;
     overflow-x: auto;
     overflow-y: visible;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px var(--shadow);
     width: 100%;
 }
 
@@ -62,20 +92,22 @@ body {
 }
 
 .employees-table th {
-    background: #f5f5f5;
+    background: var(--bg-secondary);
     padding: 12px;
     text-align: left;
     font-weight: 600;
-    border-bottom: 2px solid #ddd;
+    border-bottom: 2px solid var(--border-color);
+    color: var(--text-primary);
 }
 
 .employees-table td {
     padding: 12px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-primary);
 }
 
 .employees-table tr:hover {
-    background: #f9f9f9;
+    background: var(--bg-secondary);
 }
 
 .status-badge {
@@ -172,13 +204,14 @@ body {
 }
 
 .modal-content {
-    background: white;
+    background: var(--bg-primary);
+    color: var(--text-primary);
     border-radius: 8px;
     max-width: 600px;
     width: 100%;
     max-height: 90vh;
     overflow-y: auto;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 20px var(--shadow-hover);
 }
 
 .modal-content.large-modal {
@@ -190,7 +223,7 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 20px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border-light);
 }
 
 .modal-header h2 {
@@ -203,7 +236,7 @@ body {
     border: none;
     font-size: 24px;
     cursor: pointer;
-    color: #666;
+    color: var(--text-tertiary);
     padding: 0;
     width: 30px;
     height: 30px;
@@ -213,7 +246,7 @@ body {
 }
 
 .btn-close:hover {
-    color: #000;
+    color: var(--text-primary);
 }
 
 .modal-body {
@@ -225,7 +258,7 @@ body {
     justify-content: flex-end;
     gap: 12px;
     padding: 20px;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--border-light);
 }
 
 /* Form Styles */
@@ -248,16 +281,19 @@ body {
     margin-bottom: 6px;
     font-weight: 500;
     font-size: 14px;
+    color: var(--text-primary);
 }
 
 .form-group input,
 .form-group select,
 .form-group textarea {
     padding: 8px 12px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 14px;
     font-family: inherit;
+    background: var(--bg-primary);
+    color: var(--text-primary);
 }
 
 .form-group input:focus,
@@ -300,6 +336,99 @@ body {
 .pos-page,
 .pos-page * {
     font-family: "Product Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+/* FullCalendar Dark Mode Styles */
+.dark-theme .fc {
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-header-toolbar {
+    background: var(--bg-secondary, #2d2d2d);
+    border-color: var(--border-color, #404040);
+}
+
+.dark-theme .fc-button {
+    background-color: var(--bg-tertiary, #3a3a3a) !important;
+    border-color: var(--border-color, #404040) !important;
+    color: var(--text-primary, #fff) !important;
+}
+
+.dark-theme .fc-button:hover {
+    background-color: var(--bg-primary, #1a1a1a) !important;
+}
+
+.dark-theme .fc-button-primary:not(:disabled).fc-button-active {
+    background-color: var(--theme-color, #8400ff) !important;
+    border-color: var(--theme-color, #8400ff) !important;
+}
+
+.dark-theme .fc-daygrid-day {
+    background-color: var(--bg-primary, #1a1a1a);
+    border-color: var(--border-color, #404040);
+}
+
+.dark-theme .fc-daygrid-day-top {
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-col-header-cell {
+    background-color: var(--bg-secondary, #2d2d2d);
+    border-color: var(--border-color, #404040);
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-daygrid-day-number {
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-day-today {
+    background-color: rgba(var(--theme-color-rgb, 132, 0, 255), 0.1) !important;
+}
+
+.dark-theme .fc-daygrid-day-frame {
+    background-color: var(--bg-primary, #1a1a1a);
+}
+
+.dark-theme .fc-scrollgrid {
+    border-color: var(--border-color, #404040);
+}
+
+.dark-theme .fc-timegrid-slot {
+    border-color: var(--border-color, #404040);
+}
+
+.dark-theme .fc-timegrid-col {
+    border-color: var(--border-color, #404040);
+}
+
+.dark-theme .fc-timegrid-axis {
+    border-color: var(--border-color, #404040);
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-timegrid-slot-label {
+    color: var(--text-tertiary, #999);
+}
+
+.dark-theme .fc-timegrid-now-indicator-line {
+    border-color: var(--theme-color, #8400ff);
+}
+
+.dark-theme .fc-popover {
+    background-color: var(--bg-primary, #1a1a1a);
+    border-color: var(--border-color, #404040);
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-popover-header {
+    background-color: var(--bg-secondary, #2d2d2d);
+    border-color: var(--border-color, #404040);
+    color: var(--text-primary, #fff);
+}
+
+.dark-theme .fc-more-link {
+    color: var(--text-primary, #fff);
 }
 
 

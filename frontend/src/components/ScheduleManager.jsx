@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
 import SimpleScheduleView from './SimpleScheduleView';
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
@@ -33,6 +34,37 @@ function formatTime(timeStr) {
 }
 
 function ScheduleManager() {
+  const { themeColor, themeMode } = useTheme();
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
+  
   const calendarRef = useRef(null);
   const [startDate, setStartDate] = useState(() => {
     const nextMonday = getNextMonday();
@@ -379,7 +411,7 @@ function ScheduleManager() {
       <div style={{ 
         marginBottom: '30px',
         padding: '24px',
-        backgroundColor: '#fff'
+        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff'
       }}>
         <form onSubmit={(e) => { e.preventDefault(); generateSchedule(); }}>
           {/* Date Range Calendar and Employee Selection */}
@@ -423,20 +455,21 @@ function ScheduleManager() {
                     start: selectedRange.start,
                     end: new Date(new Date(selectedRange.end).setDate(new Date(selectedRange.end).getDate() + 1)).toISOString().split('T')[0],
                     display: 'background',
-                    backgroundColor: 'rgba(128, 0, 128, 0.2)',
-                    borderColor: 'rgba(128, 0, 128, 0.5)'
+                    backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
+                    borderColor: `rgba(${themeColorRgb}, 0.5)`
                   }] : []}
                 />
               </div>
               {startDate && endDate && (
                 <div style={{ 
                   padding: '10px', 
-                  backgroundColor: '#fff', 
-                  border: '1px solid #000',
+                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff', 
+                  border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                   borderRadius: '0',
                   fontSize: '13px',
                   fontFamily: '"Product Sans", sans-serif',
-                  marginBottom: '15px'
+                  marginBottom: '15px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                 }}>
                   Period: {new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} to {new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   {(() => {
@@ -469,10 +502,11 @@ function ScheduleManager() {
                     flex: 1,
                     padding: '6px 0',
                     border: 'none',
-                    borderBottom: '1px solid #000',
+                    borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                     borderRadius: '0',
                     fontSize: '14px',
                     backgroundColor: 'transparent',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                     cursor: 'pointer',
                     fontFamily: '"Product Sans", sans-serif',
                     outline: 'none'
@@ -481,7 +515,8 @@ function ScheduleManager() {
                 <span style={{
                   fontSize: '14px',
                   fontFamily: '"Product Sans", sans-serif',
-                  fontWeight: 500
+                  fontWeight: 500,
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                 }}>
                   to
                 </span>
@@ -504,10 +539,11 @@ function ScheduleManager() {
                     flex: 1,
                     padding: '6px 0',
                     border: 'none',
-                    borderBottom: '1px solid #000',
+                    borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                     borderRadius: '0',
                     fontSize: '14px',
                     backgroundColor: 'transparent',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                     cursor: 'pointer',
                     fontFamily: '"Product Sans", sans-serif',
                     outline: 'none'
@@ -524,7 +560,7 @@ function ScheduleManager() {
                   onClick={selectAllEmployees}
                   style={{
                     padding: '6px 12px',
-                    backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                    backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                     border: '1px solid rgba(255, 255, 255, 0.2)',
@@ -533,17 +569,17 @@ function ScheduleManager() {
                     fontSize: '14px',
                     fontWeight: 600,
                     color: '#fff',
-                    boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                     transition: 'all 0.3s ease',
                     fontFamily: '"Product Sans", sans-serif'
                   }}
                   onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
-                    e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                    e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                    e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                   }}
                   onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
-                    e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                    e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                    e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                   }}
                 >
                   Select All
@@ -553,24 +589,24 @@ function ScheduleManager() {
                   onClick={deselectAllEmployees}
                   style={{
                     padding: '6px 12px',
-                    backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                    backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
-                    border: '1px solid rgba(128, 0, 128, 0.3)',
+                    border: `1px solid rgba(${themeColorRgb}, 0.3)`,
                     borderRadius: '8px',
                     cursor: 'pointer',
                     fontSize: '14px',
                     fontWeight: 500,
                     color: '#fff',
-                    boxShadow: '0 2px 8px rgba(128, 0, 128, 0.1)',
+                    boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
                     transition: 'all 0.3s ease',
                     fontFamily: '"Product Sans", sans-serif'
                   }}
                   onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                    e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
                   }}
                   onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                    e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
                   }}
                 >
                   Deselect All
@@ -601,7 +637,7 @@ function ScheduleManager() {
                       onChange={() => toggleEmployeeSelection(emp.employee_id)}
                       style={{ cursor: 'pointer', width: '18px', height: '18px' }}
                     />
-                    <span>
+                    <span style={{ color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                       {emp.first_name} {emp.last_name}
                     </span>
                   </label>
@@ -619,10 +655,10 @@ function ScheduleManager() {
               style={{
                 width: '100%',
                 padding: '12px',
-                backgroundColor: showSettings ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backgroundColor: showSettings ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
-                border: showSettings ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                border: showSettings ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                 borderRadius: '8px',
                 cursor: 'pointer',
                 fontSize: '14px',
@@ -630,18 +666,18 @@ function ScheduleManager() {
                 color: '#fff',
                 marginBottom: showSettings ? '15px' : '0',
                 textAlign: 'left',
-                boxShadow: showSettings ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)',
+                boxShadow: showSettings ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
                 transition: 'all 0.3s ease',
                 fontFamily: '"Product Sans", sans-serif'
               }}
               onMouseEnter={(e) => {
                 if (!showSettings) {
-                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                  e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
                 }
               }}
               onMouseLeave={(e) => {
                 if (!showSettings) {
-                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                  e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
                 }
               }}
             >
@@ -651,9 +687,9 @@ function ScheduleManager() {
       {showSettings && (
         <div style={{
           padding: '20px',
-          border: '1px solid #000',
+          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
           borderRadius: '0',
-                backgroundColor: '#fff',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
                 marginTop: '15px'
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
@@ -661,7 +697,8 @@ function ScheduleManager() {
                     margin: '0', 
                     fontSize: '15px',
                     fontFamily: '"Product Sans", sans-serif',
-                    fontWeight: 600
+                    fontWeight: 600,
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                   }}>
                     Generation Settings
                   </h4>
@@ -670,27 +707,27 @@ function ScheduleManager() {
                     onClick={() => setShowAdvanced(!showAdvanced)}
                     style={{
                       padding: '6px 12px',
-                      backgroundColor: showAdvanced ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                      backgroundColor: showAdvanced ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
                       backdropFilter: 'blur(10px)',
                       WebkitBackdropFilter: 'blur(10px)',
-                      border: showAdvanced ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                      border: showAdvanced ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
                       borderRadius: '8px',
                       cursor: 'pointer',
                       fontSize: '12px',
                       fontWeight: 600,
                       color: '#fff',
-                      boxShadow: showAdvanced ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)',
+                      boxShadow: showAdvanced ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
                       transition: 'all 0.3s ease',
                       fontFamily: '"Product Sans", sans-serif'
                     }}
                     onMouseEnter={(e) => {
                       if (!showAdvanced) {
-                        e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (!showAdvanced) {
-                        e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
                       }
                     }}
                   >
@@ -705,7 +742,8 @@ function ScheduleManager() {
                       marginBottom: '8px', 
                       fontWeight: 500, 
                       fontSize: '14px',
-                      fontFamily: '"Product Sans", sans-serif'
+                      fontFamily: '"Product Sans", sans-serif',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                     }}>
               Algorithm:
                     </label>
@@ -715,10 +753,11 @@ function ScheduleManager() {
                       style={{ 
                         width: '100%', 
                         padding: '10px', 
-                        border: '1px solid #000',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                         borderRadius: '0',
                         fontSize: '14px',
-                        backgroundColor: '#fff',
+                        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                         fontFamily: '"Product Sans", sans-serif'
                       }}
                     >
@@ -734,7 +773,8 @@ function ScheduleManager() {
                       marginBottom: '8px', 
                       fontWeight: 500, 
                       fontSize: '14px',
-                      fontFamily: '"Product Sans", sans-serif'
+                      fontFamily: '"Product Sans", sans-serif',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                     }}>
               Max Consecutive Days:
                     </label>
@@ -747,9 +787,11 @@ function ScheduleManager() {
                       style={{ 
                         width: '100%', 
                         padding: '10px', 
-                        border: '1px solid #000',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                         borderRadius: '0',
                         fontSize: '14px',
+                        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                         fontFamily: '"Product Sans", sans-serif'
                       }}
                     />
@@ -761,7 +803,8 @@ function ScheduleManager() {
                       marginBottom: '8px', 
                       fontWeight: 500, 
                       fontSize: '14px',
-                      fontFamily: '"Product Sans", sans-serif'
+                      fontFamily: '"Product Sans", sans-serif',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                     }}>
               Min Hours Between Shifts:
                     </label>
@@ -774,9 +817,11 @@ function ScheduleManager() {
                       style={{ 
                         width: '100%', 
                         padding: '10px', 
-                        border: '1px solid #000',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                         borderRadius: '0',
                         fontSize: '14px',
+                        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                         fontFamily: '"Product Sans", sans-serif'
                       }}
                     />
@@ -790,7 +835,8 @@ function ScheduleManager() {
                           marginBottom: '8px', 
                           fontWeight: 500, 
                           fontSize: '14px',
-                          fontFamily: '"Product Sans", sans-serif'
+                          fontFamily: '"Product Sans", sans-serif',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                         }}>
                           Min Employees per Shift:
             </label>
@@ -803,9 +849,11 @@ function ScheduleManager() {
                           style={{ 
                             width: '100%', 
                             padding: '10px', 
-                            border: '1px solid #000',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                             borderRadius: '0',
                             fontSize: '14px',
+                            backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                             fontFamily: '"Product Sans", sans-serif'
                           }}
                         />
@@ -817,7 +865,8 @@ function ScheduleManager() {
                           marginBottom: '8px', 
                           fontWeight: 500, 
                           fontSize: '14px',
-                          fontFamily: '"Product Sans", sans-serif'
+                          fontFamily: '"Product Sans", sans-serif',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                         }}>
                           Max Employees per Shift:
                         </label>
@@ -830,9 +879,11 @@ function ScheduleManager() {
                           style={{ 
                             width: '100%', 
                             padding: '10px', 
-                            border: '1px solid #000',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                             borderRadius: '0',
                             fontSize: '14px',
+                            backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                             fontFamily: '"Product Sans", sans-serif'
                           }}
                         />
@@ -844,7 +895,8 @@ function ScheduleManager() {
                           marginBottom: '8px', 
                           fontWeight: 500, 
                           fontSize: '14px',
-                          fontFamily: '"Product Sans", sans-serif'
+                          fontFamily: '"Product Sans", sans-serif',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                         }}>
                           Default Shift Length (hours):
                         </label>
@@ -857,9 +909,11 @@ function ScheduleManager() {
                           style={{ 
                             width: '100%', 
                             padding: '10px', 
-                            border: '1px solid #000',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
                             borderRadius: '0',
                             fontSize: '14px',
+                            backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                             fontFamily: '"Product Sans", sans-serif'
                           }}
                         />
@@ -881,7 +935,7 @@ function ScheduleManager() {
                 onChange={(e) => setSettings({...settings, distribute_hours_evenly: e.target.checked})}
                         style={{ width: '18px', height: '18px', cursor: 'pointer' }}
               />
-                      <span style={{ fontSize: '14px' }}>Distribute Hours Evenly</span>
+                      <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Distribute Hours Evenly</span>
             </label>
 
                     <label style={{ 
@@ -895,9 +949,9 @@ function ScheduleManager() {
                 type="checkbox"
                 checked={settings.avoid_clopening}
                 onChange={(e) => setSettings({...settings, avoid_clopening: e.target.checked})}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: isDarkMode ? 'var(--theme-color, #8400ff)' : '#000' }}
                       />
-                      <span style={{ fontSize: '14px' }}>Avoid Clopening (close then open)</span>
+                      <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Avoid Clopening (close then open)</span>
                     </label>
 
                     <label style={{ 
@@ -911,9 +965,9 @@ function ScheduleManager() {
                         type="checkbox"
                         checked={settings.prioritize_seniority}
                         onChange={(e) => setSettings({...settings, prioritize_seniority: e.target.checked})}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: isDarkMode ? 'var(--theme-color, #8400ff)' : '#000' }}
                       />
-                      <span style={{ fontSize: '14px' }}>Prioritize Seniority</span>
+                      <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Prioritize Seniority</span>
             </label>
                   </div>
           </div>
@@ -927,7 +981,7 @@ function ScheduleManager() {
             gap: '10px', 
             justifyContent: 'flex-end',
             paddingTop: '20px',
-            borderTop: '1px solid #000',
+            borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #000',
             marginTop: '20px'
           }}>
             <button
@@ -938,24 +992,24 @@ function ScheduleManager() {
               }}
               style={{
                 padding: '10px 16px',
-                backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
-                border: '1px solid rgba(128, 0, 128, 0.3)',
+                border: `1px solid rgba(${themeColorRgb}, 0.3)`,
                 borderRadius: '8px',
                 cursor: 'pointer',
                 fontSize: '14px',
                 fontWeight: 500,
                 color: '#fff',
-                boxShadow: '0 2px 8px rgba(128, 0, 128, 0.1)',
+                boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
                 transition: 'all 0.3s ease',
                 fontFamily: '"Product Sans", sans-serif'
               }}
               onMouseEnter={(e) => {
-                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
               }}
               onMouseLeave={(e) => {
-                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
               }}
             >
               Clear
@@ -966,7 +1020,7 @@ function ScheduleManager() {
               style={{
                 padding: '10px 16px',
                 cursor: (loading || selectedEmployees.length === 0) ? 'not-allowed' : 'pointer',
-                backgroundColor: (loading || selectedEmployees.length === 0) ? 'rgba(128, 0, 128, 0.3)' : 'rgba(128, 0, 128, 0.7)',
+                backgroundColor: (loading || selectedEmployees.length === 0) ? `rgba(${themeColorRgb}, 0.3)` : `rgba(${themeColorRgb}, 0.7)`,
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
                 color: '#fff',
@@ -974,20 +1028,20 @@ function ScheduleManager() {
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: 600,
-                boxShadow: (loading || selectedEmployees.length === 0) ? '0 2px 8px rgba(128, 0, 128, 0.1)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                boxShadow: (loading || selectedEmployees.length === 0) ? `0 2px 8px rgba(${themeColorRgb}, 0.1)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                 transition: 'all 0.3s ease',
                 fontFamily: '"Product Sans", sans-serif'
               }}
               onMouseEnter={(e) => {
                 if (!loading && selectedEmployees.length > 0) {
-                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
-                  e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                  e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                  e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                 }
               }}
               onMouseLeave={(e) => {
                 if (!loading && selectedEmployees.length > 0) {
-                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
-                  e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                  e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                  e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                 }
               }}
             >
@@ -1002,7 +1056,8 @@ function ScheduleManager() {
         <div style={{
           marginTop: '30px',
           padding: '25px',
-          border: '1px solid #ddd'
+          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff'
         }}>
           <div style={{ 
             display: 'flex', 
@@ -1010,13 +1065,13 @@ function ScheduleManager() {
             alignItems: 'center',
             marginBottom: '20px',
             paddingBottom: '15px',
-            borderBottom: '1px solid #ddd'
+            borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'
           }}>
         <div>
-              <h2 style={{ margin: '0 0 5px 0', fontSize: '24px', fontWeight: '600' }}>
+              <h2 style={{ margin: '0 0 5px 0', fontSize: '24px', fontWeight: '600', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                 {schedule.period.status === 'draft' ? 'Draft Schedule' : 'Published Schedule'}
               </h2>
-              <p style={{ margin: '0', fontSize: '14px' }}>
+              <p style={{ margin: '0', fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>
                 {schedule.period.status === 'draft' 
                   ? 'Review and edit the schedule below, then click "Confirm & Publish" when ready.'
                   : 'This schedule has been published and is now final.'}
@@ -1030,23 +1085,23 @@ function ScheduleManager() {
                     style={{ 
                       padding: '10px 16px', 
                       cursor: 'pointer',
-                      backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
                       backdropFilter: 'blur(10px)',
                       WebkitBackdropFilter: 'blur(10px)',
-                      border: '1px solid rgba(128, 0, 128, 0.3)',
+                      border: `1px solid rgba(${themeColorRgb}, 0.3)`,
                       borderRadius: '8px',
                       fontSize: '14px',
                       fontWeight: 500,
                       color: '#fff',
-                      boxShadow: '0 2px 8px rgba(128, 0, 128, 0.1)',
+                      boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
                       transition: 'all 0.3s ease',
                       fontFamily: '"Product Sans", sans-serif'
                     }}
                     onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                      e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
                     }}
                     onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                      e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
                     }}
                   >
                     Save as Template
@@ -1056,7 +1111,7 @@ function ScheduleManager() {
                     style={{ 
                       padding: '10px 16px', 
                       cursor: 'pointer',
-                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                       backdropFilter: 'blur(10px)',
                       WebkitBackdropFilter: 'blur(10px)',
                       border: '1px solid rgba(255, 255, 255, 0.2)',
@@ -1064,17 +1119,17 @@ function ScheduleManager() {
                       fontSize: '14px',
                       fontWeight: 600,
                       color: '#fff',
-                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                       transition: 'all 0.3s ease',
                       fontFamily: '"Product Sans", sans-serif'
                     }}
                     onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
-                      e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                      e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                      e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                     }}
                     onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
-                      e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                      e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                      e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
                     }}
                   >
                     Confirm & Publish
@@ -1084,9 +1139,11 @@ function ScheduleManager() {
               {schedule.period.status === 'published' && (
                 <span style={{
                   padding: '10px 20px',
-                  border: '1px solid #ddd',
+                  border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                   fontSize: '14px',
-                  fontWeight: '600'
+                  fontWeight: '600',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f5f5f5'
                 }}>
                   Published
                 </span>
@@ -1097,17 +1154,20 @@ function ScheduleManager() {
           {schedule.conflicts && schedule.conflicts.length > 0 && (
             <div style={{
               padding: '20px',
-              border: '1px solid #ddd',
-              marginBottom: '20px'
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              marginBottom: '20px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff'
             }}>
-              <h3 style={{ margin: '0 0 15px 0' }}>
+              <h3 style={{ margin: '0 0 15px 0', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
                 {schedule.conflicts.length} Conflict(s) Detected
               </h3>
               {schedule.conflicts.map((conflict, i) => (
                 <div key={i} style={{ 
                   marginTop: '10px',
                   padding: '10px',
-                  border: '1px solid #ddd'
+                  border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #ddd',
+                  backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fafafa',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                 }}>
                   <strong>{conflict.type}:</strong> {conflict.message}
                   {conflict.employee && <span> - {conflict.employee}</span>}
