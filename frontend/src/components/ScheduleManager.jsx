@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import SimpleScheduleView from './SimpleScheduleView';
+import FullCalendar from '@fullcalendar/react'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import interactionPlugin from '@fullcalendar/interaction'
 
 function getNextMonday() {
   const today = new Date();
@@ -30,6 +33,7 @@ function formatTime(timeStr) {
 }
 
 function ScheduleManager() {
+  const calendarRef = useRef(null);
   const [startDate, setStartDate] = useState(() => {
     const nextMonday = getNextMonday();
     return nextMonday.toISOString().split('T')[0];
@@ -39,6 +43,13 @@ function ScheduleManager() {
     const end = new Date(nextMonday);
     end.setDate(end.getDate() + 6); // End of week
     return end.toISOString().split('T')[0];
+  });
+  const [selectedRange, setSelectedRange] = useState(() => {
+    const nextMonday = getNextMonday();
+    const start = nextMonday.toISOString().split('T')[0];
+    const end = new Date(nextMonday);
+    end.setDate(end.getDate() + 6);
+    return { start, end: end.toISOString().split('T')[0] };
   });
   const [schedule, setSchedule] = useState(null);
   const [templates, setTemplates] = useState([]);
@@ -167,6 +178,11 @@ function ScheduleManager() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
+      console.log('Loaded schedule data:', data);
+      console.log('Shifts count:', data.shifts?.length || 0);
+      if (data.shifts && data.shifts.length > 0) {
+        console.log('First shift sample:', data.shifts[0]);
+      }
       setSchedule(data);
     } catch (err) {
       console.error('Failed to load schedule:', err);
@@ -362,297 +378,238 @@ function ScheduleManager() {
       {/* Schedule Generation Form */}
       <div style={{ 
         marginBottom: '30px',
-        padding: '25px',
-        backgroundColor: '#fff',
-        borderRadius: '12px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        border: '2px solid #007bff'
+        padding: '24px',
+        backgroundColor: '#fff'
       }}>
-        <h2 style={{ margin: '0 0 20px 0', color: '#2c3e50', fontSize: '22px', fontWeight: '600' }}>
-          📝 Schedule Generation Form
-        </h2>
-        
         <form onSubmit={(e) => { e.preventDefault(); generateSchedule(); }}>
-          {/* Date Range */}
-          <div style={{ marginBottom: '25px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#495057', fontSize: '16px', fontWeight: '600' }}>
-              📅 Schedule Period
-            </h3>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-              gap: '15px',
-              marginBottom: '15px'
-            }}>
-              <div>
-                <label style={{ 
-                  display: 'block', 
-                  marginBottom: '8px', 
-                  fontWeight: '600', 
-                  fontSize: '14px',
-                  color: '#495057'
+          {/* Date Range Calendar and Employee Selection */}
+          <div style={{ display: 'flex', gap: '30px', marginBottom: '25px', alignItems: 'flex-start' }}>
+            {/* Date Range Calendar */}
+            <div style={{ flex: '0 0 400px' }}>
+              <div style={{ marginBottom: '15px' }}>
+                <FullCalendar
+                  ref={calendarRef}
+                  plugins={[dayGridPlugin, interactionPlugin]}
+                  initialView="dayGridMonth"
+                  headerToolbar={{
+                    left: 'prev',
+                    center: 'title',
+                    right: 'next'
+                  }}
+                  selectable={true}
+                  selectMirror={true}
+                  dayMaxEvents={true}
+                  select={(selectInfo) => {
+                    const start = selectInfo.startStr;
+                    const end = new Date(selectInfo.end);
+                    end.setDate(end.getDate() - 1); // FullCalendar's end is exclusive
+                    const endStr = end.toISOString().split('T')[0];
+                    
+                    setStartDate(start);
+                    setEndDate(endStr);
+                    setSelectedRange({
+                      start: start,
+                      end: endStr
+                    });
+                    
+                    // Clear selection after setting dates
+                    calendarRef.current?.getApi().unselect();
+                  }}
+                  selectOverlap={false}
+                  height={300}
+                  aspectRatio={1.35}
+                  events={selectedRange ? [{
+                    title: 'Selected Period',
+                    start: selectedRange.start,
+                    end: new Date(new Date(selectedRange.end).setDate(new Date(selectedRange.end).getDate() + 1)).toISOString().split('T')[0],
+                    display: 'background',
+                    backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                    borderColor: 'rgba(128, 0, 128, 0.5)'
+                  }] : []}
+                />
+              </div>
+              {startDate && endDate && (
+                <div style={{ 
+                  padding: '10px', 
+                  backgroundColor: '#fff', 
+                  border: '1px solid #000',
+                  borderRadius: '0',
+                  fontSize: '13px',
+                  fontFamily: '"Product Sans", sans-serif',
+                  marginBottom: '15px'
                 }}>
-                  Start Date: *
-                </label>
+                  Period: {new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} to {new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {(() => {
+                    const days = Math.ceil((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
+                    return ` (${days} day${days !== 1 ? 's' : ''})`;
+                  })()}
+                </div>
+              )}
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center',
+                gap: '10px',
+                marginBottom: '15px'
+              }}>
                 <input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    if (endDate && e.target.value > endDate) {
+                      setEndDate(e.target.value);
+                    }
+                    setSelectedRange({
+                      start: e.target.value,
+                      end: endDate || e.target.value
+                    });
+                  }}
                   required
                   style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '2px solid #ddd',
-                    borderRadius: '8px',
-                    fontSize: '15px',
-                    backgroundColor: '#fff',
-                    cursor: 'pointer'
+                    flex: 1,
+                    padding: '6px 0',
+                    border: 'none',
+                    borderBottom: '1px solid #000',
+                    borderRadius: '0',
+                    fontSize: '14px',
+                    backgroundColor: 'transparent',
+                    cursor: 'pointer',
+                    fontFamily: '"Product Sans", sans-serif',
+                    outline: 'none'
                   }}
                 />
-              </div>
-              <div>
-                <label style={{ 
-                  display: 'block', 
-                  marginBottom: '8px', 
-                  fontWeight: '600', 
+                <span style={{
                   fontSize: '14px',
-                  color: '#495057'
+                  fontFamily: '"Product Sans", sans-serif',
+                  fontWeight: 500
                 }}>
-                  End Date: *
-                </label>
+                  to
+                </span>
                 <input
                   type="date"
                   value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    if (startDate && e.target.value < startDate) {
+                      setStartDate(e.target.value);
+                    }
+                    setSelectedRange({
+                      start: startDate || e.target.value,
+                      end: e.target.value
+                    });
+                  }}
                   min={startDate}
                   required
                   style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '2px solid #ddd',
-                    borderRadius: '8px',
-                    fontSize: '15px',
-                    backgroundColor: '#fff',
-                    cursor: 'pointer'
+                    flex: 1,
+                    padding: '6px 0',
+                    border: 'none',
+                    borderBottom: '1px solid #000',
+                    borderRadius: '0',
+                    fontSize: '14px',
+                    backgroundColor: 'transparent',
+                    cursor: 'pointer',
+                    fontFamily: '"Product Sans", sans-serif',
+                    outline: 'none'
                   }}
                 />
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-          <button 
-                type="button"
-                onClick={() => {
-                  const nextMonday = getNextMonday();
-                  setStartDate(nextMonday.toISOString().split('T')[0]);
-                  const end = new Date(nextMonday);
-                  end.setDate(end.getDate() + 6);
-                  setEndDate(end.toISOString().split('T')[0]);
-                }}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: '#e9ecef',
-                  border: '1px solid #ddd',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500'
-                }}
-              >
-                📅 This Week
-          </button>
-          <button 
-                type="button"
-                onClick={() => {
-                  const nextMonday = getNextMonday();
-                  const weekAfter = new Date(nextMonday);
-                  weekAfter.setDate(weekAfter.getDate() + 7);
-                  setStartDate(weekAfter.toISOString().split('T')[0]);
-                  const end = new Date(weekAfter);
-                  end.setDate(end.getDate() + 6);
-                  setEndDate(end.toISOString().split('T')[0]);
-                }}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: '#e9ecef',
-                  border: '1px solid #ddd',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500'
-                }}
-              >
-                📅 Next Week
-          </button>
-        </div>
-            {startDate && endDate && (
-              <div style={{ 
-                padding: '10px', 
-                backgroundColor: '#e7f3ff', 
-                borderRadius: '6px',
-                fontSize: '13px',
-                color: '#0056b3'
-              }}>
-                📊 Period: {new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} to {new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                {(() => {
-                  const days = Math.ceil((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
-                  return ` (${days} day${days !== 1 ? 's' : ''})`;
-                })()}
+
+            {/* Employee Selection */}
+            <div style={{ flex: 1 }}>
+              <div style={{ marginBottom: '15px', display: 'flex', gap: '10px' }}>
+                <button 
+                  type="button"
+                  onClick={selectAllEmployees}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    color: '#fff',
+                    boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    transition: 'all 0.3s ease',
+                    fontFamily: '"Product Sans", sans-serif'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
+                    e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
+                    e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                  }}
+                >
+                  Select All
+                </button>
+                <button 
+                  type="button"
+                  onClick={deselectAllEmployees}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(128, 0, 128, 0.3)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: '#fff',
+                    boxShadow: '0 2px 8px rgba(128, 0, 128, 0.1)',
+                    transition: 'all 0.3s ease',
+                    fontFamily: '"Product Sans", sans-serif'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                  }}
+                >
+                  Deselect All
+                </button>
               </div>
-            )}
-      </div>
-
-          {/* Employee Selection */}
-          <div style={{ marginBottom: '25px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#495057', fontSize: '16px', fontWeight: '600' }}>
-              👥 Select Employees
-            </h3>
-            <div style={{ marginBottom: '15px' }}>
-        <button 
-                type="button"
-                onClick={selectAllEmployees}
-                style={{
-                  padding: '6px 12px',
-                  marginRight: '10px',
-                  backgroundColor: '#e9ecef',
-                  border: '1px solid #ddd',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px'
-                }}
-              >
-                Select All
-        </button>
-        <button 
-                type="button"
-                onClick={deselectAllEmployees}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: '#e9ecef',
-                  border: '1px solid #ddd',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px'
-                }}
-              >
-                Deselect All
-        </button>
-              <span style={{ marginLeft: '15px', color: '#666', fontSize: '14px', fontWeight: '500' }}>
-                {selectedEmployees.length} of {employees.length} selected
-              </span>
-            </div>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-              gap: '10px',
-              maxHeight: '200px',
-              overflowY: 'auto',
-              padding: '15px',
-              backgroundColor: '#f8f9fa',
-              borderRadius: '8px',
-              border: '1px solid #ddd'
-            }}>
-              {employees.map(emp => (
-                <label
-                  key={emp.employee_id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '10px',
-                    backgroundColor: selectedEmployees.includes(emp.employee_id) ? '#e7f3ff' : 'white',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: `2px solid ${selectedEmployees.includes(emp.employee_id) ? '#007bff' : '#ddd'}`,
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedEmployees.includes(emp.employee_id)}
-                    onChange={() => toggleEmployeeSelection(emp.employee_id)}
-                    style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                  />
-                  <span style={{ fontSize: '14px', fontWeight: '500' }}>
-                    {emp.first_name} {emp.last_name}
-                  </span>
-                </label>
-              ))}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                gap: '8px',
+                maxHeight: '400px',
+                overflowY: 'auto'
+              }}>
+                {employees.map(emp => (
+                  <label
+                    key={emp.employee_id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      cursor: 'pointer',
+                      fontFamily: '"Product Sans", sans-serif',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedEmployees.includes(emp.employee_id)}
+                      onChange={() => toggleEmployeeSelection(emp.employee_id)}
+                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                    />
+                    <span>
+                      {emp.first_name} {emp.last_name}
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
 
-
-        <div style={{ position: 'relative', display: 'inline-block' }}>
-          <button 
-            style={{ 
-              padding: '12px 24px', 
-              cursor: 'pointer',
-              backgroundColor: '#fff',
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-              fontSize: '15px',
-              fontWeight: '500'
-            }}
-          >
-            📋 Templates ▼
-          </button>
-          {templates.length > 0 && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              backgroundColor: 'white',
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000,
-              minWidth: '250px',
-              marginTop: '5px',
-              maxHeight: '300px',
-              overflowY: 'auto'
-            }}>
-              {templates.map(template => (
-                <div 
-                  key={template.template_id}
-                  onClick={() => copyFromTemplate(template.template_id)}
-                  style={{
-                    padding: '12px',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid #eee',
-                    transition: 'background-color 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
-                >
-                  <div style={{ fontWeight: '600', marginBottom: '4px' }}>{template.template_name}</div>
-                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-                    {template.description || 'No description'}
-                  </div>
-                  <small style={{ color: '#999' }}>Used {template.use_count || 0} times</small>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-          {/* View Mode Selector */}
-          <div style={{ marginBottom: '20px' }}>
-            <select
-              value={viewMode}
-              onChange={(e) => setViewMode(e.target.value)}
-              style={{
-                padding: '10px 16px',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                fontSize: '14px',
-                backgroundColor: '#fff',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="grid">📊 Grid View</option>
-              <option value="timeline">⏱️ Timeline View</option>
-              <option value="employee">👥 Employee View</option>
-            </select>
-          </div>
 
           {/* Advanced Settings (Collapsible) */}
           <div style={{ marginBottom: '25px' }}>
@@ -662,15 +619,30 @@ function ScheduleManager() {
               style={{
                 width: '100%',
                 padding: '12px',
-                backgroundColor: showSettings ? '#6c757d' : '#e9ecef',
-                color: showSettings ? 'white' : '#333',
-                border: '1px solid #ddd',
+                backgroundColor: showSettings ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: showSettings ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
                 borderRadius: '8px',
                 cursor: 'pointer',
-                fontSize: '15px',
-                fontWeight: '600',
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#fff',
                 marginBottom: showSettings ? '15px' : '0',
-                textAlign: 'left'
+                textAlign: 'left',
+                boxShadow: showSettings ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)',
+                transition: 'all 0.3s ease',
+                fontFamily: '"Product Sans", sans-serif'
+              }}
+              onMouseEnter={(e) => {
+                if (!showSettings) {
+                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!showSettings) {
+                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                }
               }}
             >
               {showSettings ? '▼' : '▶'} Advanced Settings {showSettings ? '(Click to hide)' : '(Click to show)'}
@@ -679,23 +651,47 @@ function ScheduleManager() {
       {showSettings && (
         <div style={{
           padding: '20px',
-          border: '1px solid #ddd',
-          borderRadius: '8px',
-                backgroundColor: '#f8f9fa',
+          border: '1px solid #000',
+          borderRadius: '0',
+                backgroundColor: '#fff',
                 marginTop: '15px'
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                  <h4 style={{ margin: '0', color: '#495057', fontSize: '15px' }}>⚙️ Generation Settings</h4>
+                  <h4 style={{ 
+                    margin: '0', 
+                    fontSize: '15px',
+                    fontFamily: '"Product Sans", sans-serif',
+                    fontWeight: 600
+                  }}>
+                    Generation Settings
+                  </h4>
                   <button
                     type="button"
                     onClick={() => setShowAdvanced(!showAdvanced)}
                     style={{
                       padding: '6px 12px',
-                      backgroundColor: '#fff',
-                      border: '1px solid #ddd',
-                      borderRadius: '6px',
+                      backgroundColor: showAdvanced ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      border: showAdvanced ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                      borderRadius: '8px',
                       cursor: 'pointer',
-                      fontSize: '12px'
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: '#fff',
+                      boxShadow: showAdvanced ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)',
+                      transition: 'all 0.3s ease',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!showAdvanced) {
+                        e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!showAdvanced) {
+                        e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
+                      }
                     }}
                   >
                     {showAdvanced ? 'Hide' : 'Show'} Advanced
@@ -704,7 +700,13 @@ function ScheduleManager() {
           
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+                    <label style={{ 
+                      display: 'block', 
+                      marginBottom: '8px', 
+                      fontWeight: 500, 
+                      fontSize: '14px',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
               Algorithm:
                     </label>
               <select 
@@ -713,20 +715,27 @@ function ScheduleManager() {
                       style={{ 
                         width: '100%', 
                         padding: '10px', 
-                        border: '1px solid #ddd',
-                        borderRadius: '6px',
+                        border: '1px solid #000',
+                        borderRadius: '0',
                         fontSize: '14px',
-                        backgroundColor: '#fff'
+                        backgroundColor: '#fff',
+                        fontFamily: '"Product Sans", sans-serif'
                       }}
                     >
-                      <option value="balanced">⚖️ Balanced (Default)</option>
-                      <option value="cost_optimized">💰 Cost Optimized</option>
-                      <option value="preference_prioritized">⭐ Preference Priority</option>
+                      <option value="balanced">Balanced (Default)</option>
+                      <option value="cost_optimized">Cost Optimized</option>
+                      <option value="preference_prioritized">Preference Priority</option>
               </select>
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+                    <label style={{ 
+                      display: 'block', 
+                      marginBottom: '8px', 
+                      fontWeight: 500, 
+                      fontSize: '14px',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
               Max Consecutive Days:
                     </label>
               <input 
@@ -738,15 +747,22 @@ function ScheduleManager() {
                       style={{ 
                         width: '100%', 
                         padding: '10px', 
-                        border: '1px solid #ddd',
-                        borderRadius: '6px',
-                        fontSize: '14px'
+                        border: '1px solid #000',
+                        borderRadius: '0',
+                        fontSize: '14px',
+                        fontFamily: '"Product Sans", sans-serif'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+                    <label style={{ 
+                      display: 'block', 
+                      marginBottom: '8px', 
+                      fontWeight: 500, 
+                      fontSize: '14px',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
               Min Hours Between Shifts:
                     </label>
               <input 
@@ -758,9 +774,10 @@ function ScheduleManager() {
                       style={{ 
                         width: '100%', 
                         padding: '10px', 
-                        border: '1px solid #ddd',
-                        borderRadius: '6px',
-                        fontSize: '14px'
+                        border: '1px solid #000',
+                        borderRadius: '0',
+                        fontSize: '14px',
+                        fontFamily: '"Product Sans", sans-serif'
                       }}
                     />
                   </div>
@@ -768,7 +785,13 @@ function ScheduleManager() {
                   {showAdvanced && (
                     <>
                       <div>
-                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: '8px', 
+                          fontWeight: 500, 
+                          fontSize: '14px',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}>
                           Min Employees per Shift:
             </label>
                         <input 
@@ -780,15 +803,22 @@ function ScheduleManager() {
                           style={{ 
                             width: '100%', 
                             padding: '10px', 
-                            border: '1px solid #ddd',
-                            borderRadius: '6px',
-                            fontSize: '14px'
+                            border: '1px solid #000',
+                            borderRadius: '0',
+                            fontSize: '14px',
+                            fontFamily: '"Product Sans", sans-serif'
                           }}
                         />
                       </div>
 
                       <div>
-                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: '8px', 
+                          fontWeight: 500, 
+                          fontSize: '14px',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}>
                           Max Employees per Shift:
                         </label>
                         <input 
@@ -800,15 +830,22 @@ function ScheduleManager() {
                           style={{ 
                             width: '100%', 
                             padding: '10px', 
-                            border: '1px solid #ddd',
-                            borderRadius: '6px',
-                            fontSize: '14px'
+                            border: '1px solid #000',
+                            borderRadius: '0',
+                            fontSize: '14px',
+                            fontFamily: '"Product Sans", sans-serif'
                           }}
                         />
                       </div>
 
                       <div>
-                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '14px' }}>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: '8px', 
+                          fontWeight: 500, 
+                          fontSize: '14px',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}>
                           Default Shift Length (hours):
                         </label>
                         <input 
@@ -820,9 +857,10 @@ function ScheduleManager() {
                           style={{ 
                             width: '100%', 
                             padding: '10px', 
-                            border: '1px solid #ddd',
-                            borderRadius: '6px',
-                            fontSize: '14px'
+                            border: '1px solid #000',
+                            borderRadius: '0',
+                            fontSize: '14px',
+                            fontFamily: '"Product Sans", sans-serif'
                           }}
                         />
                       </div>
@@ -830,7 +868,13 @@ function ScheduleManager() {
                   )}
 
                   <div style={{ gridColumn: 'span 2' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                    <label style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '10px', 
+                      marginTop: '10px',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
               <input 
                 type="checkbox"
                 checked={settings.distribute_hours_evenly}
@@ -840,7 +884,13 @@ function ScheduleManager() {
                       <span style={{ fontSize: '14px' }}>Distribute Hours Evenly</span>
             </label>
 
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                    <label style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '10px', 
+                      marginTop: '10px',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
               <input 
                 type="checkbox"
                 checked={settings.avoid_clopening}
@@ -850,7 +900,13 @@ function ScheduleManager() {
                       <span style={{ fontSize: '14px' }}>Avoid Clopening (close then open)</span>
                     </label>
 
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                    <label style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '10px', 
+                      marginTop: '10px',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       <input 
                         type="checkbox"
                         checked={settings.prioritize_seniority}
@@ -871,7 +927,7 @@ function ScheduleManager() {
             gap: '10px', 
             justifyContent: 'flex-end',
             paddingTop: '20px',
-            borderTop: '2px solid #e0e0e0',
+            borderTop: '1px solid #000',
             marginTop: '20px'
           }}>
             <button
@@ -881,13 +937,25 @@ function ScheduleManager() {
                 setShowSettings(false);
               }}
               style={{
-                padding: '12px 24px',
-                backgroundColor: '#e9ecef',
-                border: '1px solid #ddd',
+                padding: '10px 16px',
+                backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: '1px solid rgba(128, 0, 128, 0.3)',
                 borderRadius: '8px',
                 cursor: 'pointer',
-                fontSize: '15px',
-                fontWeight: '500'
+                fontSize: '14px',
+                fontWeight: 500,
+                color: '#fff',
+                boxShadow: '0 2px 8px rgba(128, 0, 128, 0.1)',
+                transition: 'all 0.3s ease',
+                fontFamily: '"Product Sans", sans-serif'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
               }}
             >
               Clear
@@ -896,25 +964,34 @@ function ScheduleManager() {
               type="submit"
               disabled={loading || selectedEmployees.length === 0}
               style={{
-                padding: '12px 32px',
+                padding: '10px 16px',
                 cursor: (loading || selectedEmployees.length === 0) ? 'not-allowed' : 'pointer',
-                backgroundColor: (loading || selectedEmployees.length === 0) ? '#ccc' : '#007bff',
-                color: 'white',
-                border: 'none',
+                backgroundColor: (loading || selectedEmployees.length === 0) ? 'rgba(128, 0, 128, 0.3)' : 'rgba(128, 0, 128, 0.7)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                color: '#fff',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
                 borderRadius: '8px',
-                fontSize: '16px',
-                fontWeight: '600',
-                boxShadow: (loading || selectedEmployees.length === 0) ? 'none' : '0 2px 4px rgba(0,123,255,0.3)',
-                transition: 'all 0.2s'
+                fontSize: '14px',
+                fontWeight: 600,
+                boxShadow: (loading || selectedEmployees.length === 0) ? '0 2px 8px rgba(128, 0, 128, 0.1)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                transition: 'all 0.3s ease',
+                fontFamily: '"Product Sans", sans-serif'
               }}
               onMouseEnter={(e) => {
-                if (!loading && selectedEmployees.length > 0) e.target.style.backgroundColor = '#0056b3';
+                if (!loading && selectedEmployees.length > 0) {
+                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
+                  e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                }
               }}
               onMouseLeave={(e) => {
-                if (!loading && selectedEmployees.length > 0) e.target.style.backgroundColor = '#007bff';
+                if (!loading && selectedEmployees.length > 0) {
+                  e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
+                  e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                }
               }}
             >
-              {loading ? '⏳ Generating...' : '🤖 Generate Draft Schedule'}
+              {loading ? 'Generating...' : 'Generate Draft Schedule'}
             </button>
           </div>
         </form>
@@ -951,11 +1028,25 @@ function ScheduleManager() {
                   <button 
                     onClick={saveAsTemplate}
                     style={{ 
-                      padding: '10px 20px', 
+                      padding: '10px 16px', 
                       cursor: 'pointer',
-                      backgroundColor: '#fff',
-                      border: '1px solid #ddd',
-                      fontSize: '14px'
+                      backgroundColor: 'rgba(128, 0, 128, 0.2)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      border: '1px solid rgba(128, 0, 128, 0.3)',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      color: '#fff',
+                      boxShadow: '0 2px 8px rgba(128, 0, 128, 0.1)',
+                      transition: 'all 0.3s ease',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.3)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.2)'
                     }}
                   >
                     Save as Template
@@ -963,12 +1054,27 @@ function ScheduleManager() {
                   <button 
                     onClick={publishSchedule}
                     style={{ 
-                      padding: '10px 24px', 
+                      padding: '10px 16px', 
                       cursor: 'pointer',
-                      backgroundColor: '#fff',
-                      border: '1px solid #ddd',
-                      fontSize: '15px',
-                      fontWeight: '600'
+                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      color: '#fff',
+                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      transition: 'all 0.3s ease',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
+                      e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
+                      e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
                     }}
                   >
                     Confirm & Publish

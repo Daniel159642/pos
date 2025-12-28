@@ -296,4 +296,10 @@ body {
     text-align: center;
 }
 
+/* POS Page - Product Sans Font */
+.pos-page,
+.pos-page * {
+    font-family: "Product Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
 

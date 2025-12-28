@@ -11,6 +11,10 @@ function Login({ onLogin }) {
     setError('')
     setLoading(true)
 
+    // Create AbortController for timeout
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
@@ -19,8 +23,11 @@ function Login({ onLogin }) {
           username: employeeCode,  // Support both username and employee_code
           employee_code: employeeCode,
           password: password
-        })
+        }),
+        signal: controller.signal
       })
+
+      clearTimeout(timeoutId)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -42,7 +49,12 @@ function Login({ onLogin }) {
         setError(result.message || 'Login failed')
       }
     } catch (err) {
-      setError('Connection error. Please make sure the backend server is running on port 5001.')
+      clearTimeout(timeoutId)
+      if (err.name === 'AbortError') {
+        setError('Request timed out. Please check if the backend server is running on port 5001.')
+      } else {
+        setError('Connection error. Please make sure the backend server is running on port 5001.')
+      }
       console.error('Login error:', err)
     } finally {
       setLoading(false)

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import Table from '../components/Table'
-import EditProductModal from '../components/EditProductModal'
 
 function Inventory() {
   const [inventory, setInventory] = useState([])
@@ -11,7 +10,10 @@ function Inventory() {
   const [selectedCategory, setSelectedCategory] = useState(null)
   const [selectedVendor, setSelectedVendor] = useState(null)
   const [editingProduct, setEditingProduct] = useState(null)
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editFormData, setEditFormData] = useState({})
+  const [editLoading, setEditLoading] = useState(false)
+  const [editError, setEditError] = useState(null)
+  const [editSuccess, setEditSuccess] = useState(false)
   const [sessionToken, setSessionToken] = useState(null)
 
   useEffect(() => {
@@ -43,16 +45,75 @@ function Inventory() {
 
   const handleEditProduct = (product) => {
     setEditingProduct(product)
-    setIsEditModalOpen(true)
+    setEditFormData({
+      product_name: product.product_name || '',
+      sku: product.sku || '',
+      barcode: product.barcode || '',
+      product_price: product.product_price || 0,
+      product_cost: product.product_cost || 0,
+      current_quantity: product.current_quantity || 0,
+      category: product.category || '',
+      vendor: product.vendor || '',
+      vendor_id: product.vendor_id || null,
+      photo: product.photo || ''
+    })
+    setEditError(null)
+    setEditSuccess(false)
   }
 
-  const handleCloseEditModal = () => {
-    setIsEditModalOpen(false)
+  const handleCloseEdit = () => {
     setEditingProduct(null)
+    setEditFormData({})
+    setEditError(null)
+    setEditSuccess(false)
   }
 
-  const handleSaveProduct = () => {
-    loadInventory() // Reload inventory after save
+  const handleEditChange = (e) => {
+    const { name, value } = e.target
+    setEditFormData(prev => ({
+      ...prev,
+      [name]: name === 'product_price' || name === 'product_cost' || name === 'current_quantity' || name === 'vendor_id'
+        ? (value === '' ? null : parseFloat(value))
+        : value
+    }))
+  }
+
+  const handleSaveProduct = async (e) => {
+    if (e) e.preventDefault()
+    setEditLoading(true)
+    setEditError(null)
+    setEditSuccess(false)
+
+    try {
+      const updateData = {
+        ...editFormData,
+        session_token: sessionToken
+      }
+
+      const response = await fetch(`/api/inventory/${editingProduct.product_id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updateData)
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to update product')
+      }
+
+      setEditSuccess(true)
+      setTimeout(() => {
+        loadInventory() // Reload inventory after save
+        handleCloseEdit()
+      }, 1000)
+    } catch (err) {
+      setEditError(err.message || 'An error occurred while updating the product')
+    } finally {
+      setEditLoading(false)
+    }
   }
 
   // Get unique categories
@@ -156,50 +217,34 @@ function Inventory() {
     return (
       <div>
         <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
-          gap: '16px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '8px',
           marginTop: '20px'
         }}>
           {categories.map(category => {
             const itemCount = getItemsByCategory(category).length
             return (
-              <div
+              <button
                 key={category}
                 onClick={() => handleCategoryClick(category)}
                 style={{
-                  padding: '24px',
-                  backgroundColor: '#fff',
-                  border: '2px solid #e0e0e0',
+                  padding: '10px 16px',
+                  backgroundColor: selectedCategory === category ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
                   borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: selectedCategory === category ? 600 : 500,
+                  color: '#fff',
                   cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  textAlign: 'center'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#4a90e2'
-                  e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = '#e0e0e0'
-                  e.currentTarget.style.boxShadow = 'none'
+                  transition: 'all 0.3s ease',
+                  boxShadow: selectedCategory === category ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
                 }}
               >
-                <div style={{ 
-                  fontSize: '18px', 
-                  fontWeight: 600, 
-                  marginBottom: '8px',
-                  color: '#333'
-                }}>
-                  {category}
-                </div>
-                <div style={{ 
-                  fontSize: '14px', 
-                  color: '#666' 
-                }}>
-                  {itemCount} {itemCount === 1 ? 'item' : 'items'}
-                </div>
-              </div>
+                {category}
+              </button>
             )
           })}
         </div>
@@ -354,10 +399,6 @@ function Inventory() {
 
   return (
     <div style={{ padding: '40px', maxWidth: '1600px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '30px', fontSize: '28px', fontWeight: 500 }}>
-        Inventory
-      </h1>
-      
       <div style={{ display: 'flex', gap: '30px', height: 'calc(100vh - 200px)' }}>
         {/* Left Column - Search */}
         <div style={{ 
@@ -367,15 +408,6 @@ function Inventory() {
           flexDirection: 'column'
         }}>
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ 
-              display: 'block', 
-              marginBottom: '8px', 
-              fontSize: '14px', 
-              fontWeight: 500,
-              color: '#333'
-            }}>
-              Search Inventory
-            </label>
             <input
               type="text"
               placeholder="Search by name, SKU, barcode..."
@@ -383,14 +415,283 @@ function Inventory() {
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
                 width: '100%',
-                padding: '12px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                padding: '8px 0',
+                border: 'none',
+                borderBottom: '2px solid #ddd',
+                borderRadius: '0',
+                backgroundColor: 'transparent',
+                outline: 'none',
                 fontSize: '14px',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box',
+                fontFamily: '"Product Sans", sans-serif'
               }}
             />
           </div>
+
+          {/* Edit Product Form */}
+          {editingProduct && (
+            <div style={{
+              backgroundColor: '#fff',
+              border: '1px solid #ddd',
+              borderRadius: '8px',
+              padding: '12px',
+              marginTop: '20px'
+            }}>
+              {editError && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: '#fee',
+                  border: '1px solid #fcc',
+                  borderRadius: '4px',
+                  color: '#c33',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  {editError}
+                </div>
+              )}
+
+              {editSuccess && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: '#efe',
+                  border: '1px solid #cfc',
+                  borderRadius: '4px',
+                  color: '#3c3',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  Product updated successfully!
+                </div>
+              )}
+
+              <form onSubmit={handleSaveProduct}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Product Name *
+                    </label>
+                    <input
+                      type="text"
+                      name="product_name"
+                      value={editFormData.product_name || ''}
+                      onChange={handleEditChange}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      SKU *
+                    </label>
+                    <input
+                      type="text"
+                      name="sku"
+                      value={editFormData.sku || ''}
+                      onChange={handleEditChange}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Barcode
+                    </label>
+                    <input
+                      type="text"
+                      name="barcode"
+                      value={editFormData.barcode || ''}
+                      onChange={handleEditChange}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Category
+                    </label>
+                    <input
+                      type="text"
+                      name="category"
+                      value={editFormData.category || ''}
+                      onChange={handleEditChange}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Product Price *
+                    </label>
+                    <input
+                      type="number"
+                      name="product_price"
+                      value={editFormData.product_price || ''}
+                      onChange={handleEditChange}
+                      required
+                      min="0"
+                      step="0.01"
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Product Cost *
+                    </label>
+                    <input
+                      type="number"
+                      name="product_cost"
+                      value={editFormData.product_cost || ''}
+                      onChange={handleEditChange}
+                      required
+                      min="0"
+                      step="0.01"
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Current Quantity *
+                    </label>
+                    <input
+                      type="number"
+                      name="current_quantity"
+                      value={editFormData.current_quantity || ''}
+                      onChange={handleEditChange}
+                      required
+                      min="0"
+                      step="1"
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif' }}>
+                      Vendor
+                    </label>
+                    <input
+                      type="text"
+                      name="vendor"
+                      value={editFormData.vendor || ''}
+                      onChange={handleEditChange}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        boxSizing: 'border-box',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{
+                    display: 'flex',
+                    gap: '8px',
+                    marginTop: '4px'
+                  }}>
+                    <button
+                      type="button"
+                      onClick={handleCloseEdit}
+                      disabled={editLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: '#f0f0f0',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        cursor: editLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={editLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: editLoading ? '#ccc' : 'rgba(128, 0, 128, 0.7)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: editLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                    >
+                      {editLoading ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
 
         {/* Right Column - Grid with Filters */}
@@ -398,7 +699,9 @@ function Inventory() {
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          borderLeft: '1px solid #ddd',
+          paddingLeft: '30px'
         }}>
           {/* Filter Buttons */}
           <div style={{ 
@@ -411,15 +714,18 @@ function Inventory() {
             <button
               onClick={() => handleFilterChange('category')}
               style={{
-                padding: '10px 20px',
-                backgroundColor: filterView === 'category' ? '#000' : '#f0f0f0',
-                color: filterView === 'category' ? '#fff' : '#000',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
+                padding: '10px 16px',
+                backgroundColor: filterView === 'category' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: filterView === 'category' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                borderRadius: '8px',
                 fontSize: '14px',
-                fontWeight: 500,
-                transition: 'all 0.2s'
+                fontWeight: filterView === 'category' ? 600 : 500,
+                color: '#fff',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: filterView === 'category' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
               }}
             >
               Category
@@ -427,15 +733,18 @@ function Inventory() {
             <button
               onClick={() => handleFilterChange('vendor')}
               style={{
-                padding: '10px 20px',
-                backgroundColor: filterView === 'vendor' ? '#000' : '#f0f0f0',
-                color: filterView === 'vendor' ? '#fff' : '#000',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
+                padding: '10px 16px',
+                backgroundColor: filterView === 'vendor' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: filterView === 'vendor' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                borderRadius: '8px',
                 fontSize: '14px',
-                fontWeight: 500,
-                transition: 'all 0.2s'
+                fontWeight: filterView === 'vendor' ? 600 : 500,
+                color: '#fff',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: filterView === 'vendor' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
               }}
             >
               Vendor
@@ -443,15 +752,18 @@ function Inventory() {
             <button
               onClick={() => handleFilterChange('all')}
               style={{
-                padding: '10px 20px',
-                backgroundColor: filterView === 'all' ? '#000' : '#f0f0f0',
-                color: filterView === 'all' ? '#fff' : '#000',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
+                padding: '10px 16px',
+                backgroundColor: filterView === 'all' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: filterView === 'all' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                borderRadius: '8px',
                 fontSize: '14px',
-                fontWeight: 500,
-                transition: 'all 0.2s'
+                fontWeight: filterView === 'all' ? 600 : 500,
+                color: '#fff',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: filterView === 'all' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
               }}
             >
               All
@@ -471,13 +783,6 @@ function Inventory() {
         </div>
       </div>
 
-      <EditProductModal
-        product={editingProduct}
-        isOpen={isEditModalOpen}
-        onClose={handleCloseEditModal}
-        onSave={handleSaveProduct}
-        sessionToken={sessionToken}
-      />
     </div>
   )
 }

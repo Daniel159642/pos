@@ -13,10 +13,6 @@ import CalendarSubscription from './components/CalendarSubscription'
 import EmployeeManagement from './components/EmployeeManagement'
 import Profile from './pages/Profile'
 import ShipmentVerification from './pages/ShipmentVerification'
-import CustomerDisplay from './components/CustomerDisplay'
-import CustomerDisplayPopup from './pages/CustomerDisplayPopup'
-import ScheduleManager from './components/ScheduleManager'
-import AvailabilitySubmission from './components/AvailabilitySubmission'
 import './index.css'
 
 function ProtectedRoute({ children, sessionToken, employee, onLogout }) {
@@ -107,11 +103,6 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
           </Layout>
         </ProtectedRoute>
       } />
-      <Route path="/admin" element={
-        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
-          <Navigate to="/profile" replace />
-        </ProtectedRoute>
-      } />
       <Route path="/employee-management" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
           <Layout employee={employee} onLogout={onLogout}>
@@ -140,22 +131,6 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
           </Layout>
         </ProtectedRoute>
       } />
-      <Route path="/customer-display" element={<CustomerDisplay />} />
-      <Route path="/customer-display-popup" element={<CustomerDisplayPopup />} />
-      <Route path="/schedule" element={
-        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
-          <Layout employee={employee} onLogout={onLogout}>
-            <ScheduleManager />
-          </Layout>
-        </ProtectedRoute>
-      } />
-      <Route path="/availability" element={
-        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
-          <Layout employee={employee} onLogout={onLogout}>
-            <AvailabilitySubmission employeeId={employee?.employee_id} />
-          </Layout>
-        </ProtectedRoute>
-      } />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
@@ -166,16 +141,14 @@ function Layout({ children, employee, onLogout }) {
   const { hasPermission } = usePermissions()
   
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: 'white' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
       <div style={{ 
-        backgroundColor: 'rgba(200, 200, 200, 0.3)', 
+        backgroundColor: '#fff', 
+        borderBottom: '1px solid #ddd',
         padding: '10px 20px',
-        margin: '0 12px 12px 12px',
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        borderBottomLeftRadius: '20px',
-        borderBottomRightRadius: '20px'
+        alignItems: 'center'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <button
@@ -187,47 +160,15 @@ function Layout({ children, employee, onLogout }) {
               cursor: 'pointer',
               fontSize: '18px',
               fontWeight: 500,
-              borderRadius: '8px',
               fontStyle: 'italic',
               fontFamily: 'Georgia, "Times New Roman", serif',
-              color: 'yellow'
+              color: 'purple'
             }}
           >
             Swift
           </button>
-          <span style={{ color: '#666' }}>Welcome, {employee?.employee_name}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <button
-            onClick={() => navigate('/schedule')}
-            style={{
-              padding: '6px 12px',
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 500,
-              color: '#666',
-              borderRadius: '8px'
-            }}
-          >
-            Schedule
-          </button>
-          <button
-            onClick={() => navigate('/availability')}
-            style={{
-              padding: '6px 12px',
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 500,
-              color: '#666',
-              borderRadius: '8px'
-            }}
-          >
-            Availability
-          </button>
           <button
             onClick={() => navigate('/profile')}
             style={{
@@ -237,8 +178,7 @@ function Layout({ children, employee, onLogout }) {
               cursor: 'pointer',
               fontSize: '16px',
               fontWeight: 500,
-              color: '#666',
-              borderRadius: '8px'
+              color: '#666'
             }}
           >
             Profile
@@ -249,7 +189,7 @@ function Layout({ children, employee, onLogout }) {
               padding: '6px 12px',
               backgroundColor: '#f0f0f0',
               border: '1px solid #ddd',
-              borderRadius: '8px',
+              borderRadius: '4px',
               cursor: 'pointer'
             }}
           >

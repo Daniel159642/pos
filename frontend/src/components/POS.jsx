@@ -531,14 +531,17 @@ function POS({ employeeId, employeeName }) {
   }
 
   return (
-    <div style={{ 
+    <div className="pos-page" style={{ 
       display: 'flex', 
       flexDirection: 'column',
-      height: 'calc(100vh - 100px)',
+      height: 'calc(100vh - 60px)',
       gap: '20px',
-      padding: '20px',
-      backgroundColor: '#f5f5f5',
-      position: 'relative'
+      padding: '0 20px 0 20px',
+      paddingTop: '0',
+      paddingBottom: '0',
+      backgroundColor: 'white',
+      position: 'relative',
+      fontFamily: '"Product Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
       {/* Customer Display Full Screen Overlay */}
       {showCustomerDisplay && (
@@ -579,7 +582,7 @@ function POS({ employeeId, employeeName }) {
                   maxWidth: '400px'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                    <h3 style={{ margin: 0, fontSize: '18px' }}>Cashier Controls</h3>
+                    <h3 style={{ margin: 0, fontSize: '18px', fontFamily: '"Product Sans", sans-serif' }}>Cashier Controls</h3>
                     <button
                       onClick={() => {
                         setShowCustomerDisplay(false)
@@ -654,7 +657,7 @@ function POS({ employeeId, employeeName }) {
                         border: '2px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '20px',
-                        fontFamily: 'monospace',
+                        fontFamily: '"Product Sans", sans-serif',
                         fontWeight: 600,
                         marginBottom: '10px',
                         backgroundColor: '#f9f9f9',
@@ -723,13 +726,18 @@ function POS({ employeeId, employeeName }) {
                     style={{
                       width: '100%',
                       padding: '12px',
-                      backgroundColor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? '#ccc' : '#000',
+                      backgroundColor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'rgba(128, 0, 128, 0.4)' : 'rgba(128, 0, 128, 0.7)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
                       color: '#fff',
-                      border: 'none',
-                      borderRadius: '4px',
+                      border: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '8px',
                       fontSize: '16px',
                       fontWeight: 600,
-                      cursor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'not-allowed' : 'pointer'
+                      cursor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'not-allowed' : 'pointer',
+                      boxShadow: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      transition: 'all 0.3s ease',
+                      opacity: 1
                     }}
                   >
                     {processing ? 'Processing...' : 'Complete Payment'}
@@ -759,15 +767,15 @@ function POS({ employeeId, employeeName }) {
                     setShowSummary(false)
                   }}
                   style={{
-                    padding: '10px 20px',
-                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                    color: '#fff',
+                    padding: '6px 12px',
+                    backgroundColor: 'transparent',
+                    color: '#666',
                     border: 'none',
                     borderRadius: '4px',
-                    fontSize: '14px',
-                    fontWeight: 600,
+                    fontSize: '12px',
+                    fontWeight: 400,
                     cursor: 'pointer',
-                    backdropFilter: 'blur(10px)'
+                    opacity: 0.7
                   }}
                 >
                   Cancel
@@ -829,23 +837,20 @@ function POS({ employeeId, employeeName }) {
       {/* Main Content Row - Hidden when customer display is showing */}
       <div style={{
         display: showCustomerDisplay ? 'none' : 'flex',
-        gap: '20px',
+        gap: '0',
         flex: '1',
         minHeight: 0
       }}>
         {/* Left Column - Cart */}
         <div style={{
           flex: '1',
-          backgroundColor: '#fff',
-          borderRadius: '8px',
           padding: '20px',
+          paddingRight: '20px',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          minWidth: 0
+          minWidth: 0,
+          borderRight: '1px solid #ddd'
         }}>
-        <h2 style={{ marginTop: 0, marginBottom: '20px' }}>Current Order</h2>
-        
         {/* Cart Items */}
         <div style={{ flex: 1, overflowY: 'auto', marginBottom: '20px' }}>
           {cart.length === 0 ? (
@@ -875,7 +880,7 @@ function POS({ employeeId, employeeName }) {
                       <div style={{ fontWeight: 500 }}>{item.product_name}</div>
                       <div style={{ fontSize: '12px', color: '#999' }}>{item.sku}</div>
                     </td>
-                    <td style={{ textAlign: 'right', padding: '12px', fontFamily: 'monospace' }}>
+                    <td style={{ textAlign: 'right', padding: '12px', fontFamily: '"Product Sans", sans-serif' }}>
                       ${item.unit_price.toFixed(2)}
                     </td>
                     <td style={{ textAlign: 'center', padding: '12px' }}>
@@ -885,12 +890,13 @@ function POS({ employeeId, employeeName }) {
                           style={{
                             width: '28px',
                             height: '28px',
-                            border: '1px solid #ddd',
-                            backgroundColor: '#fff',
+                            border: 'none',
+                            backgroundColor: 'transparent',
                             borderRadius: '4px',
                             cursor: 'pointer',
                             fontSize: '18px',
-                            lineHeight: '1'
+                            lineHeight: '1',
+                            color: '#800080'
                           }}
                         >-</button>
                         <span style={{ minWidth: '30px', textAlign: 'center', fontWeight: 500 }}>
@@ -902,18 +908,19 @@ function POS({ employeeId, employeeName }) {
                           style={{
                             width: '28px',
                             height: '28px',
-                            border: '1px solid #ddd',
-                            backgroundColor: '#fff',
+                            border: 'none',
+                            backgroundColor: 'transparent',
                             borderRadius: '4px',
                             cursor: item.quantity >= item.available_quantity ? 'not-allowed' : 'pointer',
                             fontSize: '18px',
                             lineHeight: '1',
+                            color: '#800080',
                             opacity: item.quantity >= item.available_quantity ? 0.5 : 1
                           }}
                         >+</button>
                       </div>
                     </td>
-                    <td style={{ textAlign: 'right', padding: '12px', fontFamily: 'monospace', fontWeight: 500 }}>
+                    <td style={{ textAlign: 'right', padding: '12px', fontFamily: '"Product Sans", sans-serif', fontWeight: 500 }}>
                       ${(item.unit_price * item.quantity).toFixed(2)}
                     </td>
                     <td style={{ padding: '12px' }}>
@@ -922,7 +929,7 @@ function POS({ employeeId, employeeName }) {
                         style={{
                           border: 'none',
                           backgroundColor: 'transparent',
-                          color: '#d32f2f',
+                          color: '#800080',
                           cursor: 'pointer',
                           fontSize: '18px',
                           padding: '0',
@@ -945,20 +952,20 @@ function POS({ employeeId, employeeName }) {
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ color: '#666' }}>Subtotal:</span>
-            <span style={{ fontFamily: 'monospace', fontWeight: 500 }}>
+            <span style={{ fontFamily: '"Product Sans", sans-serif', fontWeight: 500 }}>
               ${calculateSubtotal().toFixed(2)}
             </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ color: '#666' }}>Tax ({(taxRate * 100).toFixed(1)}%):</span>
-            <span style={{ fontFamily: 'monospace', fontWeight: 500 }}>
+            <span style={{ fontFamily: '"Product Sans", sans-serif', fontWeight: 500 }}>
               ${calculateTax().toFixed(2)}
             </span>
           </div>
           {selectedTip > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-              <span style={{ color: '#2e7d32' }}>Tip:</span>
-              <span style={{ fontFamily: 'monospace', fontWeight: 500, color: '#2e7d32' }}>
+              <span>Tip:</span>
+              <span style={{ fontFamily: '"Product Sans", sans-serif', fontWeight: 500 }}>
                 ${selectedTip.toFixed(2)}
               </span>
             </div>
@@ -969,65 +976,100 @@ function POS({ employeeId, employeeName }) {
             fontSize: '24px',
             fontWeight: 600,
             paddingTop: '12px',
-            borderTop: '2px solid #000',
+            borderTop: '2px solid #eee',
             marginTop: '12px'
           }}>
-            <span>Total:</span>
-            <span style={{ fontFamily: 'monospace' }}>
+            <span style={{ color: '#666' }}>Total:</span>
+            <span style={{ fontFamily: '"Product Sans", sans-serif', color: '#000' }}>
               ${calculateTotalWithTip().toFixed(2)}
             </span>
           </div>
 
-          {/* Pay Button */}
-          <ProtectedComponent permission="process_sale" fallback={
-            <button
-              disabled
-              style={{
-                width: '100%',
-                padding: '16px',
-                backgroundColor: '#ccc',
-                color: '#666',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '18px',
-                fontWeight: 600,
-                cursor: 'not-allowed'
-              }}
-            >
-              No Permission to Process Sales
-            </button>
-          }>
-            <button
-              onClick={() => {
-                setShowSummary(true)
-                setShowCustomerDisplay(true)
-              }}
-              disabled={cart.length === 0}
-              style={{
-                width: '100%',
-                padding: '16px',
-                backgroundColor: cart.length === 0 ? '#ccc' : '#000',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '18px',
-                fontWeight: 600,
-                cursor: cart.length === 0 ? 'not-allowed' : 'pointer'
-              }}
-            >
-              Pay
-            </button>
-          </ProtectedComponent>
+          {/* Pay and Discount Buttons */}
+          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+            <ProtectedComponent permission="process_sale" fallback={
+              <button
+                disabled
+                style={{
+                  flex: 1,
+                  padding: '16px',
+                  backgroundColor: '#E9D5FF',
+                  color: '#666',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '18px',
+                  fontWeight: 600,
+                  cursor: 'not-allowed'
+                }}
+              >
+                No Permission to Process Sales
+              </button>
+            }>
+              <button
+                onClick={() => {
+                  setShowSummary(true)
+                  setShowCustomerDisplay(true)
+                }}
+                disabled={cart.length === 0}
+                style={{
+                  flex: 1,
+                  padding: '16px',
+                  backgroundColor: cart.length === 0 ? 'rgba(128, 0, 128, 0.4)' : 'rgba(128, 0, 128, 0.7)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  color: '#fff',
+                  border: cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
+                  fontSize: '18px',
+                  fontWeight: 600,
+                  cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
+                  boxShadow: cart.length === 0 ? '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  transition: 'all 0.3s ease',
+                  opacity: 1
+                }}
+              >
+                Pay
+              </button>
+            </ProtectedComponent>
+            <ProtectedComponent permission="apply_discount" fallback={null}>
+              <button
+                onClick={() => {
+                  // TODO: Implement discount functionality
+                  const discountAmount = prompt('Enter discount amount (e.g., 10 for $10 or 10% for 10%):')
+                  if (discountAmount) {
+                    // Handle discount logic here
+                    console.log('Discount:', discountAmount)
+                  }
+                }}
+                disabled={cart.length === 0}
+                style={{
+                  padding: '16px 24px',
+                  backgroundColor: cart.length === 0 ? 'rgba(128, 0, 128, 0.35)' : 'rgba(128, 0, 128, 0.55)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  color: '#fff',
+                  border: cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
+                  fontSize: '18px',
+                  fontWeight: 600,
+                  cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
+                  boxShadow: cart.length === 0 ? '0 2px 8px rgba(128, 0, 128, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  transition: 'all 0.3s ease',
+                  opacity: 1
+                }}
+              >
+                Discount
+              </button>
+            </ProtectedComponent>
+          </div>
         </div>
       </div>
 
         {/* Right Column - Product Search or Payment Form or Change Screen */}
         <div style={{
           flex: '1',
-          backgroundColor: '#fff',
-          borderRadius: '8px',
           padding: '20px',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          paddingLeft: '20px',
           minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
@@ -1036,7 +1078,7 @@ function POS({ employeeId, employeeName }) {
         {showChangeScreen ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0 }}>Change Due</h2>
+              <h2 style={{ marginTop: 0, marginBottom: 0, fontFamily: '"Product Sans", sans-serif' }}>Change Due</h2>
               <button
                 onClick={handleDismissChange}
                 style={{
@@ -1068,7 +1110,7 @@ function POS({ employeeId, employeeName }) {
                 fontWeight: 700,
                 color: '#2e7d32',
                 marginBottom: '20px',
-                fontFamily: 'monospace'
+                fontFamily: '"Product Sans", sans-serif'
               }}>
                 ${changeAmount.toFixed(2)}
               </div>
@@ -1103,7 +1145,7 @@ function POS({ employeeId, employeeName }) {
         ) : showPaymentForm ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0 }}>Payment</h2>
+              <h2 style={{ marginTop: 0, marginBottom: 0, fontFamily: '"Product Sans", sans-serif' }}>Payment</h2>
               <button
                 onClick={() => {
                   setShowPaymentForm(false)
@@ -1137,14 +1179,19 @@ function POS({ employeeId, employeeName }) {
                   style={{
                     flex: 1,
                     padding: '16px',
-                    border: paymentMethod === 'cash' ? '3px solid #000' : '2px solid #ddd',
-                    borderRadius: '4px',
+                    backgroundColor: paymentMethod === 'cash' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    color: '#fff',
+                    border: paymentMethod === 'cash' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
                     fontSize: '16px',
                     fontWeight: 600,
-                    backgroundColor: paymentMethod === 'cash' ? '#000' : '#fff',
-                    color: paymentMethod === 'cash' ? '#fff' : '#000',
                     cursor: 'pointer',
-                    transition: 'all 0.2s'
+                    boxShadow: paymentMethod === 'cash' 
+                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
+                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                    transition: 'all 0.3s ease'
                   }}
                 >
                   Cash
@@ -1157,14 +1204,19 @@ function POS({ employeeId, employeeName }) {
                   style={{
                     flex: 1,
                     padding: '16px',
-                    border: paymentMethod === 'credit_card' ? '3px solid #000' : '2px solid #ddd',
-                    borderRadius: '4px',
+                    backgroundColor: paymentMethod === 'credit_card' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    color: '#fff',
+                    border: paymentMethod === 'credit_card' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
                     fontSize: '16px',
                     fontWeight: 600,
-                    backgroundColor: paymentMethod === 'credit_card' ? '#000' : '#fff',
-                    color: paymentMethod === 'credit_card' ? '#fff' : '#000',
                     cursor: 'pointer',
-                    transition: 'all 0.2s'
+                    boxShadow: paymentMethod === 'credit_card' 
+                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
+                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                    transition: 'all 0.3s ease'
                   }}
                 >
                   Card
@@ -1183,7 +1235,7 @@ function POS({ employeeId, employeeName }) {
                     : '2px solid #ddd',
                   borderRadius: '4px',
                   fontSize: '24px',
-                  fontFamily: 'monospace',
+                  fontFamily: '"Product Sans", sans-serif',
                   fontWeight: 600,
                   marginBottom: '12px',
                   backgroundColor: amountPaid && parseFloat(amountPaid) > 0 && paymentMethod === 'cash'
@@ -1324,13 +1376,19 @@ function POS({ employeeId, employeeName }) {
               style={{
                 width: '100%',
                 padding: '16px',
-                backgroundColor: processing || cart.length === 0 ? '#ccc' : '#000',
+                marginTop: 'auto',
+                backgroundColor: processing || cart.length === 0 ? 'rgba(128, 0, 128, 0.4)' : 'rgba(128, 0, 128, 0.7)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
                 color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
+                border: processing || cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '8px',
                 fontSize: '18px',
                 fontWeight: 600,
-                cursor: processing || cart.length === 0 ? 'not-allowed' : 'pointer'
+                cursor: processing || cart.length === 0 ? 'not-allowed' : 'pointer',
+                boxShadow: processing || cart.length === 0 ? '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)' : '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                transition: 'all 0.3s ease',
+                opacity: 1
               }}
             >
               {processing ? 'Processing...' : 'Complete Payment'}
@@ -1338,58 +1396,51 @@ function POS({ employeeId, employeeName }) {
           </>
         ) : (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0 }}>Search Products</h2>
+            {/* Search Bar with Scan Button */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+              <input
+                type="text"
+                placeholder="Search by name, SKU, or scan barcode..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '8px 0',
+                  border: 'none',
+                  borderBottom: '2px solid #ddd',
+                  borderRadius: '0',
+                  fontSize: '16px',
+                  boxSizing: 'border-box',
+                  backgroundColor: 'transparent',
+                  outline: 'none'
+                }}
+                autoFocus
+              />
               <button
                 onClick={() => setShowBarcodeScanner(true)}
                 style={{
-                  padding: '10px 16px',
-                  backgroundColor: '#000',
-                  color: '#fff',
+                  padding: '8px',
+                  backgroundColor: 'transparent',
+                  color: '#000',
                   border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  fontWeight: 600,
+                  borderRadius: '0',
+                  fontSize: '24px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '8px'
+                  justifyContent: 'center',
+                  minWidth: '40px',
+                  height: '40px'
                 }}
+                title="Scan Barcode"
               >
-                <span>📷</span>
-                <span>Scan Barcode</span>
+                📷
               </button>
             </div>
-            
-            {/* Search Bar */}
-            <input
-              type="text"
-              placeholder="Search by name, SKU, or scan barcode..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '2px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '16px',
-                marginBottom: '20px',
-                boxSizing: 'border-box'
-              }}
-              autoFocus
-            />
 
             {/* Category Navigation - Show when not searching */}
             {searchTerm.length < 2 && (
               <div style={{ marginBottom: '20px' }}>
-                <div style={{ 
-                  fontSize: '14px', 
-                  fontWeight: 600, 
-                  color: '#666', 
-                  marginBottom: '12px' 
-                }}>
-                  Browse by Category
-                </div>
                 <div style={{
                   display: 'flex',
                   flexWrap: 'wrap',
@@ -1401,24 +1452,17 @@ function POS({ employeeId, employeeName }) {
                       onClick={() => handleCategorySelect(category)}
                       style={{
                         padding: '10px 16px',
-                        border: selectedCategory === category ? '2px solid #000' : '2px solid #ddd',
-                        borderRadius: '6px',
+                        backgroundColor: selectedCategory === category ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+                        backdropFilter: 'blur(10px)',
+                        WebkitBackdropFilter: 'blur(10px)',
+                        border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+                        borderRadius: '8px',
                         fontSize: '14px',
                         fontWeight: selectedCategory === category ? 600 : 500,
-                        backgroundColor: selectedCategory === category ? '#000' : '#fff',
-                        color: selectedCategory === category ? '#fff' : '#000',
+                        color: '#fff',
                         cursor: 'pointer',
-                        transition: 'all 0.2s'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (selectedCategory !== category) {
-                          e.currentTarget.style.backgroundColor = '#f5f5f5'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (selectedCategory !== category) {
-                          e.currentTarget.style.backgroundColor = '#fff'
-                        }
+                        transition: 'all 0.3s ease',
+                        boxShadow: selectedCategory === category ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
                       }}
                     >
                       {category}
@@ -1441,13 +1485,13 @@ function POS({ employeeId, employeeName }) {
                     No products found
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {searchResults.map(product => (
                       <div
                         key={product.product_id}
                         onClick={() => addToCart(product)}
                         style={{
-                          padding: '16px',
+                          padding: '8px 12px',
                           border: '1px solid #eee',
                           borderRadius: '4px',
                           cursor: 'pointer',
@@ -1457,22 +1501,22 @@ function POS({ employeeId, employeeName }) {
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee'}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500, fontSize: '16px', marginBottom: '4px' }}>
+                            <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '2px' }}>
                               {product.product_name}
                             </div>
-                            <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '11px', color: '#999', display: 'inline-block', marginRight: '8px' }}>
                               SKU: {product.sku}
                             </div>
-                            <div style={{ fontSize: '12px', color: (product.current_quantity || 0) > 0 ? '#2e7d32' : '#d32f2f' }}>
+                            <div style={{ fontSize: '11px', color: (product.current_quantity || 0) > 0 ? '#800080' : '#d32f2f', display: 'inline-block' }}>
                               Stock: {product.current_quantity || 0}
                             </div>
                           </div>
                           <div style={{
-                            fontSize: '18px',
+                            fontSize: '16px',
                             fontWeight: 600,
-                            fontFamily: 'monospace',
+                            fontFamily: '"Product Sans", sans-serif',
                             color: '#000'
                           }}>
                             ${(product.product_price || 0).toFixed(2)}
@@ -1489,13 +1533,13 @@ function POS({ employeeId, employeeName }) {
                     No products in this category
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {categoryProducts.map(product => (
                       <div
                         key={product.product_id}
                         onClick={() => addToCart(product)}
                         style={{
-                          padding: '16px',
+                          padding: '8px 12px',
                           border: '1px solid #eee',
                           borderRadius: '4px',
                           cursor: 'pointer',
@@ -1505,22 +1549,22 @@ function POS({ employeeId, employeeName }) {
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee'}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500, fontSize: '16px', marginBottom: '4px' }}>
+                            <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '2px' }}>
                               {product.product_name}
                             </div>
-                            <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '11px', color: '#999', display: 'inline-block', marginRight: '8px' }}>
                               SKU: {product.sku}
                             </div>
-                            <div style={{ fontSize: '12px', color: (product.current_quantity || 0) > 0 ? '#2e7d32' : '#d32f2f' }}>
+                            <div style={{ fontSize: '11px', color: (product.current_quantity || 0) > 0 ? '#800080' : '#d32f2f', display: 'inline-block' }}>
                               Stock: {product.current_quantity || 0}
                             </div>
                           </div>
                           <div style={{
-                            fontSize: '18px',
+                            fontSize: '16px',
                             fontWeight: 600,
-                            fontFamily: 'monospace',
+                            fontFamily: '"Product Sans", sans-serif',
                             color: '#000'
                           }}>
                             ${(product.product_price || 0).toFixed(2)}

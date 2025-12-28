@@ -3,7 +3,7 @@ import { io } from 'socket.io-client'
 import './CustomerDisplay.css'
 
 function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymentMethod, amountPaid, onClose, onPaymentMethodSelect, onTipSelect, onReceiptSelect, onProceedToPayment, showSummary, employeeId, paymentCompleted, transactionId: propTransactionId }) {
-  const [currentScreen, setCurrentScreen] = useState('transaction') // transaction, tip, payment, card, receipt, success
+  const [currentScreen, setCurrentScreen] = useState('transaction') // transaction, tip, payment, card, cash_confirmation, receipt, success
   const [paymentMethods, setPaymentMethods] = useState([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null)
   const [selectedTip, setSelectedTip] = useState(propTip || 0)
@@ -78,7 +78,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
   // Sync props to state when used inline (not as popup)
   useEffect(() => {
     // Don't interfere if we're already in payment flow
-    if (currentScreen === 'payment' || currentScreen === 'card' || currentScreen === 'receipt' || currentScreen === 'success') {
+    if (currentScreen === 'card' || currentScreen === 'receipt' || currentScreen === 'success' || currentScreen === 'cash_confirmation') {
       return
     }
     
@@ -102,17 +102,14 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
 
   useEffect(() => {
     // Only show payment screens for card payments
-    // Don't interfere if we're already on payment screen or in payment flow
-    if (currentScreen === 'payment' || currentScreen === 'card' || currentScreen === 'receipt' || currentScreen === 'success') {
+    // Don't interfere if we're already in payment flow
+    if (currentScreen === 'card' || currentScreen === 'receipt' || currentScreen === 'success' || currentScreen === 'cash_confirmation') {
       return
     }
     
     if (paymentMethod === 'credit_card' && currentScreen === 'transaction' && !showSummary) {
-      // Payment form opened for card, move to payment screen
-      setCurrentScreen('payment')
-    } else if (!paymentMethod && currentScreen === 'payment' && cart && cart.length > 0 && !showSummary) {
-      // Payment form closed, go back to transaction (only if not in summary flow)
-      setCurrentScreen('transaction')
+      // Payment form opened for card, move to card screen
+      setCurrentScreen('card')
     }
     // For cash payments, don't show customer display during payment - only at end for receipt
   }, [paymentMethod, currentScreen, cart, showSummary])
@@ -130,7 +127,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
         setTimeout(() => {
           setCurrentScreen('receipt')
         }, 2000)
-      } else if (currentScreen === 'transaction' || currentScreen === 'payment' || currentScreen === 'tip') {
+      } else if (currentScreen === 'transaction' || currentScreen === 'tip') {
         // Otherwise go straight to receipt
         setCurrentScreen('receipt')
       }
@@ -240,22 +237,24 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
 
   const selectPaymentMethod = async (method) => {
     setSelectedPaymentMethod(method)
-    if (onPaymentMethodSelect) {
-      onPaymentMethodSelect(method)
-    }
     
-    if (method.requires_terminal || method.method_type === 'card') {
+    if (method.method_type === 'cash') {
+      // Show cash confirmation screen
+      setCurrentScreen('cash_confirmation')
+    } else if (method.method_type === 'card' || method.requires_terminal) {
+      // For card, trigger calculator directly
+      if (onPaymentMethodSelect) {
+        onPaymentMethodSelect(method)
+      }
       setCurrentScreen('card')
       setCardStatus('waiting')
-      
-      // For card payments, wait for POS to process
-      // The POS will trigger payment processing
-    } else if (method.method_type === 'cash') {
-      setCurrentScreen('card')
-      setCardStatus('waiting')
-      // For cash, hide customer display - cashier handles everything
-      // Customer display will show again at end for receipt
-      // The onPaymentMethodSelect callback will handle hiding the display
+    }
+  }
+
+  const handleContinueFromCash = () => {
+    // Continue from cash confirmation - trigger calculator
+    if (onPaymentMethodSelect && selectedPaymentMethod) {
+      onPaymentMethodSelect(selectedPaymentMethod)
     }
   }
 
@@ -308,7 +307,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
         }, 2000)
       }
       // If we're still on transaction or payment screen, skip to receipt
-      else if (currentScreen === 'transaction' || currentScreen === 'payment' || currentScreen === 'tip') {
+      else if (currentScreen === 'transaction' || currentScreen === 'tip') {
         setCurrentScreen('receipt')
       }
     }
@@ -407,14 +406,13 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
           <div className="transaction-screen-popup">
             <div className="screen-header">
               <h2>Review Your Order</h2>
-              <p style={{ fontSize: '18px', opacity: 0.9, marginTop: '10px' }}>Please review your items before proceeding to payment</p>
             </div>
             
             <div className="items-list">
               {cart.map((item, idx) => (
                 <div key={idx} className="item-row">
                   <span className="item-name">{item.product_name}</span>
-                  <span className="item-quantity">× {item.quantity}</span>
+                  {item.quantity > 1 && <span className="item-quantity">× {item.quantity}</span>}
                   <span className="item-price">${(item.unit_price * item.quantity).toFixed(2)}</span>
                 </div>
               ))}
@@ -430,7 +428,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                 <span>${tax.toFixed(2)}</span>
               </div>
               {selectedTip > 0 && (
-                <div className="total-row" style={{ color: '#2e7d32' }}>
+                <div className="total-row">
                   <span>Tip:</span>
                   <span>${selectedTip.toFixed(2)}</span>
                 </div>
@@ -441,9 +439,37 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
               </div>
             </div>
 
-            <button className="btn-primary" onClick={showPaymentScreen} style={{ marginTop: '20px' }}>
-              Proceed to Payment
-            </button>
+            <div style={{ display: 'flex', gap: '20px', width: '100%', marginTop: '20px' }}>
+              {paymentMethods
+                .filter(method => method.method_type === 'cash' || method.method_type === 'card')
+                .map((method) => (
+                  <button
+                    key={method.payment_method_id}
+                    onClick={() => selectPaymentMethod(method)}
+                    style={{
+                      flex: 1,
+                      height: '100px',
+                      padding: '16px',
+                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      color: '#fff',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '8px',
+                      fontSize: '24px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      transition: 'all 0.3s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {method.method_type === 'cash' ? 'Cash' : 'Card'}
+                  </button>
+                ))}
+            </div>
           </div>
         )}
 
@@ -456,26 +482,69 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
             
             {!showCustomTip ? (
               <>
-                <div className="tip-options">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', width: '100%', maxWidth: '600px' }}>
                   {tipSuggestions.map((percent) => {
                     const tipAmount = (total * percent / 100).toFixed(2)
+                    const isSelected = selectedTip > 0 && Math.abs(selectedTip - (total * percent / 100)) < 0.01
                     return (
                       <div
                         key={percent}
-                        className="tip-option"
                         onClick={() => selectTip(percent)}
+                        style={{
+                          padding: '32px 20px',
+                          backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                          backdropFilter: 'blur(10px)',
+                          WebkitBackdropFilter: 'blur(10px)',
+                          color: '#fff',
+                          border: '1px solid rgba(255, 255, 255, 0.2)',
+                          borderRadius: '8px',
+                          textAlign: 'center',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                          transition: 'all 0.3s ease'
+                        }}
                       >
-                        <div className="tip-percentage">{percent}%</div>
-                        <div className="tip-amount">${tipAmount}</div>
+                        <div style={{ fontSize: '40px', fontWeight: 600, marginBottom: '10px' }}>{percent}%</div>
+                        <div style={{ fontSize: '24px', opacity: 0.9 }}>${tipAmount}</div>
                       </div>
                     )
                   })}
-                  <div className="tip-option" onClick={() => setShowCustomTip(true)}>
-                    <div className="tip-percentage">Custom</div>
-                    <div className="tip-amount" style={{ fontSize: '20px' }}>Enter Amount</div>
+                  <div 
+                    onClick={() => setShowCustomTip(true)}
+                    style={{
+                      padding: '32px 20px',
+                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      color: '#fff',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      transition: 'all 0.3s ease'
+                    }}
+                  >
+                    <div style={{ fontSize: '40px', fontWeight: 600, marginBottom: '10px' }}>Custom</div>
+                    <div style={{ fontSize: '20px', opacity: 0.9 }}>Enter Amount</div>
                   </div>
-                  <div className="tip-option" onClick={skipTip}>
-                    <div className="tip-percentage">No Tip</div>
+                  <div 
+                    onClick={skipTip}
+                    style={{
+                      padding: '32px 20px',
+                      backgroundColor: selectedTip === 0 ? 'rgba(128, 0, 128, 0.5)' : 'rgba(128, 0, 128, 0.5)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      color: '#fff',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      transition: 'all 0.3s ease'
+                    }}
+                  >
+                    <div style={{ fontSize: '40px', fontWeight: 600 }}>No Tip</div>
                   </div>
                 </div>
               </>
@@ -569,36 +638,53 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
           </div>
         )}
 
-        {/* Payment Method Selection */}
-        {currentScreen === 'payment' && (
+
+        {/* Cash Confirmation Screen */}
+        {currentScreen === 'cash_confirmation' && (
           <div className="payment-screen-popup">
-            <div className="screen-header">
-              <h2>How would you like to pay?</h2>
-              <div style={{ marginTop: '10px', fontSize: '16px', opacity: 0.9 }}>
-                <div>Subtotal: ${subtotal.toFixed(2)}</div>
-                <div>Tax: ${tax.toFixed(2)}</div>
-                {selectedTip > 0 && (
-                  <div style={{ color: '#2e7d32' }}>Tip: ${selectedTip.toFixed(2)}</div>
-                )}
+            <div className="screen-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0 }}>Cash Payment</h2>
+              <button
+                onClick={handleContinueFromCash}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  color: '#666',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  opacity: 0.7
+                }}
+              >
+                Continue
+              </button>
+            </div>
+            
+            <div className="totals-section" style={{ marginBottom: '30px', background: 'rgba(102, 126, 234, 0.15)', borderRadius: '15px', padding: '20px', width: '100%' }}>
+              <div className="total-row">
+                <span>Subtotal:</span>
+                <span>${subtotal.toFixed(2)}</span>
               </div>
-              <div className="amount-due" style={{ marginTop: '15px', fontSize: '36px' }}>
-                Total: ${amountDue.toFixed(2)}
+              <div className="total-row">
+                <span>Tax:</span>
+                <span>${tax.toFixed(2)}</span>
+              </div>
+              {selectedTip > 0 && (
+                <div className="total-row">
+                  <span>Tip:</span>
+                  <span>${selectedTip.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="total-row final">
+                <span>Total:</span>
+                <span>${amountDue.toFixed(2)}</span>
               </div>
             </div>
             
-            <div className="payment-methods">
-              {paymentMethods.map((method) => (
-                <div
-                  key={method.payment_method_id}
-                  className={`payment-method ${selectedPaymentMethod?.payment_method_id === method.payment_method_id ? 'selected' : ''}`}
-                  onClick={() => selectPaymentMethod(method)}
-                >
-                  <div className="payment-method-icon">
-                    {paymentMethodIcons[method.method_type] || '💳'}
-                  </div>
-                  <div className="payment-method-name">{method.method_name}</div>
-                </div>
-              ))}
+            <div style={{ textAlign: 'center', fontSize: '28px', fontWeight: 600, marginTop: '60px' }}>
+              Please give the cash amount to the cashier
             </div>
           </div>
         )}
@@ -608,9 +694,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
           <div className="card-processing-screen-popup">
             <div className="card-animation">💳</div>
             <div className="card-instruction">
-              {selectedPaymentMethod?.method_type === 'cash' 
-                ? 'Please give cash to cashier'
-                : 'Please insert, tap, or swipe your card'}
+              Please insert, tap, or swipe your card
             </div>
             <div className="card-status">
               {cardStatus === 'waiting' && 'Waiting for card...'}
@@ -619,16 +703,6 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
               {cardStatus === 'approved' && 'Payment approved!'}
               {cardStatus === 'declined' && 'Payment declined. Please try again.'}
             </div>
-            {selectedPaymentMethod?.method_type === 'cash' && amountPaid && (
-              <div style={{ marginTop: '30px', fontSize: '24px', fontWeight: 600 }}>
-                Amount Paid: ${parseFloat(amountPaid || 0).toFixed(2)}
-                {calculateChange() >= 0 && (
-                  <div style={{ color: '#2e7d32', marginTop: '10px' }}>
-                    Change: ${calculateChange().toFixed(2)}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
@@ -636,40 +710,138 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
         {currentScreen === 'receipt' && (
           <div className="receipt-screen-popup">
             <div className="screen-header">
-              <h2>Would you like a receipt?</h2>
+              <h2>Sign Below</h2>
             </div>
             
-            <div className="receipt-options">
-              <div className="receipt-option" onClick={() => selectReceipt('printed')}>
-                <div className="receipt-icon">🖨️</div>
-                <div className="receipt-label">Print Receipt</div>
-              </div>
-              
-              <div className="receipt-option" onClick={() => selectReceipt('email')}>
-                <div className="receipt-icon">📧</div>
-                <div className="receipt-label">Email Receipt</div>
-              </div>
-              
-              <div className="receipt-option" onClick={() => selectReceipt('sms')}>
-                <div className="receipt-icon">📱</div>
-                <div className="receipt-label">Text Receipt</div>
-              </div>
-              
-              <div className="receipt-option" onClick={() => selectReceipt('none')}>
-                <div className="receipt-icon">🚫</div>
-                <div className="receipt-label">No Receipt</div>
-              </div>
+            {/* Signature Area */}
+            <div style={{
+              width: '100%',
+              height: '150px',
+              border: '2px solid #ddd',
+              borderRadius: '8px',
+              backgroundColor: '#fff',
+              marginBottom: '30px',
+              position: 'relative'
+            }}>
+              <canvas
+                id="signatureCanvas"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  borderRadius: '6px',
+                  cursor: 'crosshair'
+                }}
+              />
             </div>
             
-            {(receiptType === 'email' || receiptType === 'sms') && (
-              <div className="receipt-input">
+            {/* Receipt Options */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
+              <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+                <button
+                  onClick={() => selectReceipt('printed')}
+                  style={{
+                    flex: 1,
+                    padding: '16px',
+                    backgroundColor: receiptType === 'printed' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    color: '#fff',
+                    border: receiptType === 'printed' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    fontSize: '18px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: receiptType === 'printed' 
+                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
+                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  Print
+                </button>
+                
+                <button
+                  onClick={() => selectReceipt('none')}
+                  style={{
+                    flex: 1,
+                    padding: '16px',
+                    backgroundColor: receiptType === 'none' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    color: '#fff',
+                    border: receiptType === 'none' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    fontSize: '18px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: receiptType === 'none' 
+                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
+                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  No Receipt
+                </button>
+              </div>
+              
+              <button
+                onClick={() => selectReceipt('email')}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  backgroundColor: receiptType === 'email' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  color: '#fff',
+                  border: receiptType === 'email' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
+                  fontSize: '18px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: receiptType === 'email' 
+                    ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
+                    : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                Email
+              </button>
+            </div>
+            
+            {receiptType === 'email' && (
+              <div style={{ marginTop: '20px', width: '100%' }}>
                 <input
-                  type={receiptType === 'email' ? 'email' : 'tel'}
-                  placeholder={receiptType === 'email' ? 'Enter your email' : 'Enter your phone number'}
+                  type="email"
+                  placeholder="Enter your email"
                   value={receiptContact}
                   onChange={(e) => setReceiptContact(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    marginBottom: '12px'
+                  }}
                 />
-                <button className="btn-primary" onClick={() => submitReceiptPreference()}>
+                <button
+                  onClick={() => submitReceiptPreference()}
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    color: '#fff',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    fontSize: '18px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
                   Submit
                 </button>
               </div>

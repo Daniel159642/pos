@@ -597,20 +597,37 @@ def api_create_order():
         traceback.print_exc()
         return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
 
+# Get all tables endpoint
+@app.route('/api/tables/list')
+def api_list_tables():
+    """Get list of all tables in the database"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        tables = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return jsonify({'tables': tables})
+    except Exception as e:
+        print(f"Error listing tables: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'tables': [], 'error': str(e)}), 500
+
 # Generic table endpoints
 @app.route('/api/<table_name>')
 def api_table(table_name):
     """Generic endpoint for any table"""
-    # Whitelist of allowed tables for security
-    allowed_tables = [
-        'inventory', 'vendors', 'shipments', 'shipment_items', 'pending_shipments',
-        'pending_shipment_items', 'orders', 'order_items', 'payment_transactions',
-        'customers', 'employees', 'employee_schedule', 'employee_sessions',
-        'time_clock', 'chart_of_accounts', 'journal_entries', 'journal_entry_lines',
-        'fiscal_periods', 'retained_earnings', 'shipment_discrepancies',
-        'audit_log', 'master_calendar', 'image_identifications',
-        'pending_returns', 'pending_return_items'
-    ]
+    # Get all tables dynamically for security check
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        allowed_tables = [row[0] for row in cursor.fetchall()]
+        conn.close()
+    except Exception as e:
+        print(f"Error getting table list: {e}")
+        return jsonify({'columns': [], 'data': [], 'error': 'Database error'}), 500
     
     if table_name not in allowed_tables:
         return jsonify({'columns': [], 'data': [], 'error': 'Table not found'}), 404

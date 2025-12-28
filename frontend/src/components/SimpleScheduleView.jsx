@@ -1,11 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import './SimpleSchedule.css';
+import React, { useState, useEffect, useRef } from 'react';
+import FullCalendar from '@fullcalendar/react'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import timeGridPlugin from '@fullcalendar/timegrid'
+import interactionPlugin from '@fullcalendar/interaction'
 
 function SimpleScheduleView({ periodId }) {
+  const calendarRef = useRef(null)
   const [schedule, setSchedule] = useState(null);
-  const [view, setView] = useState('grid'); // 'grid', 'list', 'timeline', or 'gantt'
   const [loading, setLoading] = useState(true);
-  const [currentDayIndex, setCurrentDayIndex] = useState(0); // For Gantt view day navigation
+  const [selectedEvent, setSelectedEvent] = useState(null);
 
   useEffect(() => {
     loadSchedule();
@@ -24,6 +27,11 @@ function SimpleScheduleView({ periodId }) {
       }
       
       const data = await response.json();
+      console.log('SimpleScheduleView - Loaded schedule:', data);
+      console.log('Shifts count:', data.shifts?.length || 0);
+      if (data.shifts && data.shifts.length > 0) {
+        console.log('First shift:', data.shifts[0]);
+      }
       setSchedule(data);
     } catch (error) {
       console.error('Error loading schedule:', error);
@@ -31,29 +39,6 @@ function SimpleScheduleView({ periodId }) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const days = [
-    { short: 'Mon', full: 'Monday' },
-    { short: 'Tue', full: 'Tuesday' },
-    { short: 'Wed', full: 'Wednesday' },
-    { short: 'Thu', full: 'Thursday' },
-    { short: 'Fri', full: 'Friday' },
-    { short: 'Sat', full: 'Saturday' },
-    { short: 'Sun', full: 'Sunday' }
-  ];
-
-  const getShiftsForDay = (dayIndex) => {
-    if (!schedule || !schedule.shifts) return [];
-    
-    const weekStart = new Date(schedule.period.week_start_date);
-    const targetDate = new Date(weekStart);
-    targetDate.setDate(weekStart.getDate() + dayIndex);
-    const dateStr = targetDate.toISOString().split('T')[0];
-    
-    return schedule.shifts
-      .filter(shift => shift.shift_date === dateStr)
-      .sort((a, b) => a.start_time.localeCompare(b.start_time));
   };
 
   const formatTime = (time) => {
@@ -65,29 +50,108 @@ function SimpleScheduleView({ periodId }) {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
-  const getDate = (dayIndex) => {
-    if (!schedule) return new Date();
-    const weekStart = new Date(schedule.period.week_start_date);
-    const date = new Date(weekStart);
-    date.setDate(weekStart.getDate() + dayIndex);
-    return date;
+  // Convert schedule shifts to FullCalendar events
+  const getFullCalendarEvents = () => {
+    if (!schedule || !schedule.shifts) {
+      console.log('No schedule or shifts:', { schedule, hasShifts: schedule?.shifts?.length });
+      return [];
+    }
+
+    console.log('Converting shifts to events:', schedule.shifts.length);
+    const events = schedule.shifts.map(shift => {
+      // Ensure time has seconds if not present
+      const startTime = shift.start_time.includes(':') && shift.start_time.split(':').length === 2 
+        ? `${shift.start_time}:00` 
+        : shift.start_time;
+      const endTime = shift.end_time.includes(':') && shift.end_time.split(':').length === 2 
+        ? `${shift.end_time}:00` 
+        : shift.end_time;
+      
+      const start = new Date(`${shift.shift_date}T${startTime}`);
+      const end = new Date(`${shift.shift_date}T${endTime}`);
+      
+      console.log('Shift:', shift.shift_date, startTime, '->', start, end);
+
+      // Generate a color based on employee ID for visual distinction
+      const colors = [
+        '#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a',
+        '#fee140', '#30cfd0', '#a8edea', '#ff9a9e', '#ffecd2',
+        '#fcb69f', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4',
+        '#feca57', '#ff9ff3', '#54a0ff'
+      ];
+      const colorIndex = shift.employee_id % colors.length;
+      const backgroundColor = colors[colorIndex];
+
+      return {
+        id: `shift-${shift.scheduled_shift_id}`,
+        title: `${shift.first_name} ${shift.last_name}${shift.position ? ` - ${shift.position}` : ''}`,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        backgroundColor: backgroundColor,
+        borderColor: backgroundColor,
+        extendedProps: {
+          ...shift,
+          type: 'shift'
+        }
+      };
+    });
+    
+    console.log('Generated events:', events.length);
+    return events;
+  };
+
+  const handleEventClick = (clickInfo) => {
+    setSelectedEvent(clickInfo.event.extendedProps);
+  };
+
+  const handleDateClick = (dateClickInfo) => {
+    // Optional: handle date clicks for adding new shifts
+    console.log('Date clicked:', dateClickInfo.dateStr);
   };
 
   if (loading) {
-    return <div className="simple-schedule-loading">Loading schedule...</div>;
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+        Loading schedule...
+      </div>
+    );
   }
 
   if (!schedule) {
-    return <div className="simple-schedule-error">Schedule not found</div>;
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+        Schedule not found
+      </div>
+    );
   }
 
   return (
-    <div className="simple-schedule">
-      {/* Header with Week Info */}
-      <div className="schedule-header">
-        <div className="week-info">
-          <h1>Schedule</h1>
-          <h2>
+    <div style={{ padding: '0', maxWidth: '100%' }}>
+      {/* Schedule Header */}
+      <div style={{ 
+        marginBottom: '20px', 
+        padding: '16px', 
+        backgroundColor: '#f8f9fa', 
+        borderRadius: '4px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '16px'
+      }}>
+        <div>
+          <h2 style={{ 
+            margin: '0 0 5px 0', 
+            fontSize: '20px', 
+            fontWeight: 600 
+          }}>
+            Schedule
+          </h2>
+          <p style={{ 
+            margin: 0, 
+            fontSize: '14px', 
+            color: '#666' 
+          }}>
             {new Date(schedule.period.week_start_date).toLocaleDateString('en-US', { 
               month: 'short', 
               day: 'numeric' 
@@ -96,378 +160,155 @@ function SimpleScheduleView({ periodId }) {
               day: 'numeric',
               year: 'numeric'
             })}
-          </h2>
+          </p>
         </div>
-
-        {/* View Toggle */}
-        <div className="view-toggle">
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <span style={{ fontSize: '14px', color: '#666' }}>
+            {schedule.shifts?.length || 0} shifts scheduled
+          </span>
           <button 
-            className={view === 'grid' ? 'active' : ''}
-            onClick={() => setView('grid')}
+            onClick={() => window.print()}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#fff',
+              border: '1px solid #000',
+              borderRadius: '0',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontFamily: '"Roboto Mono", monospace'
+            }}
           >
-            Grid View
-          </button>
-          <button 
-            className={view === 'list' ? 'active' : ''}
-            onClick={() => setView('list')}
-          >
-            List View
-          </button>
-          <button 
-            className={view === 'timeline' ? 'active' : ''}
-            onClick={() => setView('timeline')}
-          >
-            Timeline View
-          </button>
-          <button 
-            className={view === 'gantt' ? 'active' : ''}
-            onClick={() => setView('gantt')}
-          >
-            Gantt View
+            Print
           </button>
         </div>
-
-        {/* Print Button */}
-        <button className="print-btn" onClick={() => window.print()}>
-          Print
-        </button>
       </div>
 
-      {/* Grid View - Best for at-a-glance */}
-      {view === 'grid' && (
-        <div className="schedule-grid-view">
-          {days.map((day, dayIndex) => (
-            <div key={day.short} className="day-column">
-              <div className="day-header">
-                <div className="day-name">{day.full}</div>
-                <div className="day-date">
-                  {getDate(dayIndex).toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })}
-                </div>
-              </div>
+      {/* FullCalendar */}
+      <div style={{ marginBottom: '20px' }}>
+        <FullCalendar
+          ref={calendarRef}
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView="timeGridWeek"
+          initialDate={schedule.period.week_start_date}
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridWeek,timeGridWeek,timeGridDay'
+          }}
+          events={getFullCalendarEvents()}
+          eventClick={handleEventClick}
+          dateClick={handleDateClick}
+          height="auto"
+          editable={false}
+          selectable={false}
+          slotMinTime="06:00:00"
+          slotMaxTime="22:00:00"
+          allDaySlot={false}
+          weekends={true}
+        />
+      </div>
 
-              <div className="shifts-container">
-                {getShiftsForDay(dayIndex).length === 0 ? (
-                  <div className="no-shifts">No shifts scheduled</div>
-                ) : (
-                  getShiftsForDay(dayIndex).map(shift => (
-                    <div key={shift.scheduled_shift_id} className="shift-box">
-                      <div className="employee-name">
-                        {shift.first_name} {shift.last_name}
-                      </div>
-                      <div className="shift-time">
-                        {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                      </div>
-                      {shift.position && (
-                        <div className="shift-position">{shift.position}</div>
-                      )}
+      {/* Selected Event Details */}
+      {selectedEvent && (
+        <div style={{
+          border: '3px solid black',
+          borderRadius: '0',
+          padding: '24px',
+          marginTop: '20px',
+          backgroundColor: 'white'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            marginBottom: '20px',
+            flexWrap: 'wrap',
+            gap: '16px'
+          }}>
+            <h3 style={{ 
+              margin: 0, 
+              fontSize: '20px',
+              fontWeight: 600
+            }}>
+              Shift Details
+            </h3>
+            <button
+              onClick={() => setSelectedEvent(null)}
+              style={{
+                padding: '6px 12px',
+                backgroundColor: 'white',
+                color: 'black',
+                border: '1px solid #000',
+                borderRadius: '0',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontFamily: '"Roboto Mono", monospace'
+              }}
+            >
+              Close
+            </button>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{
+              padding: '16px',
+              border: '1px solid #e0e0e0',
+              borderRadius: '0',
+              borderLeft: '4px solid #2196F3'
+            }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'start',
+                marginBottom: '8px'
+              }}>
+                <div>
+                  <div style={{ 
+                    fontSize: '16px', 
+                    fontWeight: 500, 
+                    marginBottom: '4px'
+                  }}>
+                    {selectedEvent.first_name} {selectedEvent.last_name}
+                  </div>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: '#666'
+                  }}>
+                    {formatTime(selectedEvent.start_time)} - {formatTime(selectedEvent.end_time)}
+                  </div>
+                  {selectedEvent.shift_date && (
+                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                      Date: {new Date(selectedEvent.shift_date).toLocaleDateString()}
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* List View - Good for detailed reading */}
-      {view === 'list' && (
-        <div className="schedule-list-view">
-          {days.map((day, dayIndex) => {
-            const dayShifts = getShiftsForDay(dayIndex);
-            if (dayShifts.length === 0) return null;
-
-            return (
-              <div key={day.short} className="day-section">
-                <h3 className="day-title">
-                  {day.full}, {getDate(dayIndex).toLocaleDateString('en-US', { 
-                    month: 'long', 
-                    day: 'numeric' 
-                  })}
-                </h3>
-
-                <div className="shifts-list">
-                  {dayShifts.map(shift => (
-                    <div key={shift.scheduled_shift_id} className="shift-row">
-                      <div className="shift-time-large">
-                        {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                      </div>
-                      <div className="shift-details">
-                        <div className="employee-name-large">
-                          {shift.first_name} {shift.last_name}
-                        </div>
-                        {shift.position && (
-                          <div className="position-badge">{shift.position}</div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                  )}
+                </div>
+                <div style={{
+                  padding: '4px 8px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  fontSize: '11px',
+                  borderRadius: '0',
+                  textTransform: 'capitalize'
+                }}>
+                  Shift
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Timeline View - Visual hour-by-hour */}
-      {view === 'timeline' && (() => {
-        // Get all unique employees from the schedule
-        const employees = [...new Map(
-          schedule.shifts?.map(shift => [
-            shift.employee_id,
-            { id: shift.employee_id, name: `${shift.first_name} ${shift.last_name}` }
-          ])
-        ).values()].sort((a, b) => a.name.localeCompare(b.name));
-
-        const hours = Array.from({ length: 16 }, (_, i) => i + 6); // 6 AM to 10 PM
-        const hourHeight = 40; // Height in pixels for each hour
-
-        const getShiftForEmployeeAndDay = (employeeId, dayIndex) => {
-          const dayShifts = getShiftsForDay(dayIndex);
-          return dayShifts.find(shift => shift.employee_id === employeeId);
-        };
-
-        const getShiftPosition = (startTime, endTime) => {
-          const startHour = parseInt(startTime.split(':')[0]);
-          const startMin = parseInt(startTime.split(':')[1]);
-          const endHour = parseInt(endTime.split(':')[0]);
-          const endMin = parseInt(endTime.split(':')[1]);
-
-          // Calculate top position (6 AM = 0)
-          const startPosition = ((startHour - 6) + startMin / 60) * hourHeight;
-          // Calculate height
-          const height = ((endHour - startHour) + (endMin - startMin) / 60) * hourHeight;
-
-          return { top: startPosition, height };
-        };
-
-        return (
-          <div className="schedule-timeline-view">
-            <div className="timeline-grid">
-              {/* Header row with hour labels */}
-              <div className="timeline-hour-header-row">
-                <div className="timeline-corner-cell"></div>
-                {days.map((day, dayIndex) => (
-                  <div key={day.short} className="timeline-day-header-cell">
-                    <div className="timeline-day-name">{day.short}</div>
-                    <div className="timeline-day-date">{getDate(dayIndex).getDate()}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Hour labels row */}
-              <div className="timeline-hour-labels-row">
-                <div className="timeline-hour-label-cell">Time</div>
-                {days.map((day) => (
-                  <div key={day.short} className="timeline-hour-markers-cell">
-                    {hours.map(hour => (
-                      <div key={hour} className="timeline-hour-label">
-                        {hour === 12 ? '12 PM' : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-
-              {/* Employee rows */}
-              {employees.map(emp => (
-                <div key={emp.id} className="timeline-employee-section">
-                  <div className="timeline-employee-name-cell">
-                    {emp.name}
-                  </div>
-                  <div className="timeline-employee-days">
-                    {days.map((day, dayIndex) => {
-                      const shift = getShiftForEmployeeAndDay(emp.id, dayIndex);
-                      return (
-                        <div key={day.short} className="timeline-day-shift-cell">
-                          {shift ? (() => {
-                            const pos = getShiftPosition(shift.start_time, shift.end_time);
-                            return (
-                              <div
-                                className="timeline-shift-bar"
-                                style={{
-                                  top: `${pos.top}px`,
-                                  height: `${pos.height}px`
-                                }}
-                                title={`${formatTime(shift.start_time)} - ${formatTime(shift.end_time)}`}
-                              >
-                                <span className="shift-bar-name">{emp.name}</span>
-                              </div>
-                            );
-                          })() : null}
-                        </div>
-                      );
-                    })}
-                  </div>
+              {selectedEvent.position && (
+                <div style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                  Position: {selectedEvent.position}
                 </div>
-              ))}
+              )}
+              {selectedEvent.notes && (
+                <div style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                  Notes: {selectedEvent.notes}
+                </div>
+              )}
             </div>
           </div>
-        );
-      })()}
-
-      {/* Gantt View - Single day view with navigation arrows */}
-      {view === 'gantt' && (() => {
-        // Get all unique employees from the schedule
-        const employees = [...new Map(
-          schedule.shifts?.map(shift => [
-            shift.employee_id,
-            { id: shift.employee_id, name: `${shift.first_name} ${shift.last_name}` }
-          ])
-        ).values()].sort((a, b) => a.name.localeCompare(b.name));
-
-        // Time range: 6 AM to 10 PM (16 hours)
-        const hours = Array.from({ length: 16 }, (_, i) => i + 6);
-        const hourWidth = 80; // Width per hour in pixels (expanded)
-        const dayWidth = hourWidth * 16; // Total width for one day
-
-        const getShiftForEmployeeAndDay = (employeeId, dayIndex) => {
-          const dayShifts = getShiftsForDay(dayIndex);
-          return dayShifts.find(shift => shift.employee_id === employeeId);
-        };
-
-        const getShiftBarPosition = (startTime, endTime) => {
-          const [startHour, startMin] = startTime.split(':').map(Number);
-          const [endHour, endMin] = endTime.split(':').map(Number);
-          
-          // Calculate left position (6 AM = 0)
-          const startPosition = ((startHour - 6) + startMin / 60) * hourWidth;
-          // Calculate width
-          const width = ((endHour - startHour) + (endMin - startMin) / 60) * hourWidth;
-          
-          return { left: startPosition, width: Math.max(width, 30) }; // Min width 30px
-        };
-
-        // Generate distinct colors for each employee
-        const getEmployeeColor = (index) => {
-          const colors = [
-            '#667eea', // Purple-blue
-            '#f093fb', // Pink
-            '#4facfe', // Blue
-            '#43e97b', // Green
-            '#fa709a', // Rose
-            '#fee140', // Yellow
-            '#30cfd0', // Cyan
-            '#a8edea', // Light cyan
-            '#ff9a9e', // Coral
-            '#ffecd2', // Peach
-            '#fcb69f', // Apricot
-            '#ff6b6b', // Red
-            '#4ecdc4', // Teal
-            '#45b7d1', // Sky blue
-            '#96ceb4', // Mint
-            '#feca57', // Orange
-            '#ff9ff3', // Magenta
-            '#54a0ff', // Bright blue
-          ];
-          return colors[index % colors.length];
-        };
-
-        const currentDay = days[currentDayIndex];
-        const currentDate = getDate(currentDayIndex);
-
-        const goToPreviousDay = () => {
-          setCurrentDayIndex(prev => Math.max(0, prev - 1));
-        };
-
-        const goToNextDay = () => {
-          setCurrentDayIndex(prev => Math.min(days.length - 1, prev + 1));
-        };
-
-        return (
-          <div className="schedule-gantt-view-single">
-            {/* Navigation header */}
-            <div className="gantt-navigation-header">
-              <button 
-                className="gantt-nav-button"
-                onClick={goToPreviousDay}
-                disabled={currentDayIndex === 0}
-              >
-                ← Previous Day
-              </button>
-              <div className="gantt-current-day-info">
-                <div className="gantt-current-day-name">{currentDay.full}</div>
-                <div className="gantt-current-day-date">
-                  {currentDate.toLocaleDateString('en-US', { 
-                    month: 'long', 
-                    day: 'numeric',
-                    year: 'numeric'
-                  })}
-                </div>
-              </div>
-              <button 
-                className="gantt-nav-button"
-                onClick={goToNextDay}
-                disabled={currentDayIndex === days.length - 1}
-              >
-                Next Day →
-              </button>
-            </div>
-
-            <div className="gantt-container-single">
-              {/* Header with hour labels */}
-              <div className="gantt-header-single">
-                <div className="gantt-employee-header-cell"></div>
-                <div className="gantt-day-column-single">
-                  {/* Hour labels */}
-                  <div className="gantt-hours-row-single">
-                    {hours.map(hour => (
-                      <div key={hour} className="gantt-hour-label-expanded">
-                        {hour === 12 ? '12 PM' : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Employee rows */}
-              <div className="gantt-body-single">
-                {employees.map((emp, empIndex) => {
-                  const shift = getShiftForEmployeeAndDay(emp.id, currentDayIndex);
-                  const borderColor = getEmployeeColor(empIndex);
-                  return (
-                    <div key={emp.id} className="gantt-employee-row-single">
-                      {/* Employee name */}
-                      <div className="gantt-employee-name-cell">
-                        {emp.name}
-                      </div>
-                      {/* Day column with shift bar */}
-                      <div className="gantt-day-shift-column-single">
-                        {shift ? (() => {
-                          const pos = getShiftBarPosition(shift.start_time, shift.end_time);
-                          return (
-                            <div
-                              className="gantt-shift-bar"
-                              style={{
-                                left: `${pos.left}px`,
-                                width: `${pos.width}px`,
-                                borderColor: borderColor,
-                                borderWidth: '3px',
-                                borderStyle: 'solid'
-                              }}
-                              title={`${formatTime(shift.start_time)} - ${formatTime(shift.end_time)}`}
-                            >
-                              <span className="gantt-shift-bar-name">{emp.name}</span>
-                              <span className="gantt-shift-bar-time">
-                                {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                              </span>
-                            </div>
-                          );
-                        })() : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+        </div>
+      )}
     </div>
   );
 }
 
 export default SimpleScheduleView;
-

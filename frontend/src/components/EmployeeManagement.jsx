@@ -32,7 +32,12 @@ function EmployeeManagement() {
   // Check if user has admin permissions
   if (!hasPermission('manage_permissions') && !hasPermission('add_employee')) {
     return (
-      <div style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
+      <div style={{ 
+        padding: '20px', 
+        textAlign: 'center', 
+        color: '#999',
+        fontFamily: '"Roboto Mono", monospace'
+      }}>
         You don't have permission to access Employee Management.
       </div>
     );
@@ -40,68 +45,61 @@ function EmployeeManagement() {
 
   return (
     <div style={{ 
-      display: 'flex', 
-      flexDirection: 'column', 
-      minHeight: 'calc(100vh - 100px)',
-      backgroundColor: '#fff',
-      padding: '20px',
+      padding: '24px', 
+      backgroundColor: 'white', 
+      minHeight: 'calc(100vh - 200px)',
       maxWidth: '1400px',
-      margin: '0 auto',
-      width: '100%'
+      margin: '0 auto'
     }}>
-      {/* Header */}
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 500, marginBottom: '8px' }}>
-          Employee Management
-        </h1>
-        <p style={{ margin: 0, color: '#666', fontSize: '14px' }}>
-          Manage employees and create schedules
-        </p>
-      </div>
-
       {/* Tabs */}
-      <div style={{
-        display: 'flex',
-        borderBottom: '2px solid #eee',
-        backgroundColor: '#fafafa',
-        borderRadius: '4px 4px 0 0'
-      }}>
-        <button
-          onClick={() => setActiveTab('employees')}
-          style={{
-            padding: '16px 24px',
-            border: 'none',
-            backgroundColor: 'transparent',
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'employees' ? 600 : 400,
-            color: activeTab === 'employees' ? '#000' : '#666',
-            borderBottom: activeTab === 'employees' ? '2px solid #000' : '2px solid transparent',
-            marginBottom: '-2px'
-          }}
-        >
-          Employees
-        </button>
-        <button
-          onClick={() => setActiveTab('schedule')}
-          style={{
-            padding: '16px 24px',
-            border: 'none',
-            backgroundColor: 'transparent',
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'schedule' ? 600 : 400,
-            color: activeTab === 'schedule' ? '#000' : '#666',
-            borderBottom: activeTab === 'schedule' ? '2px solid #000' : '2px solid transparent',
-            marginBottom: '-2px'
-          }}
-        >
-          Schedule Builder
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            onClick={() => setActiveTab('employees')}
+            style={{
+              padding: '10px 16px',
+              backgroundColor: activeTab === 'employees' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              border: activeTab === 'employees' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: activeTab === 'employees' ? 600 : 500,
+              color: '#fff',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              boxShadow: activeTab === 'employees' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+            }}
+          >
+            Employees
+          </button>
+          <button
+            onClick={() => setActiveTab('schedule')}
+            style={{
+              padding: '10px 16px',
+              backgroundColor: activeTab === 'schedule' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.2)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              border: activeTab === 'schedule' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(128, 0, 128, 0.3)',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: activeTab === 'schedule' ? 600 : 500,
+              color: '#fff',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              boxShadow: activeTab === 'schedule' ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' : '0 2px 8px rgba(128, 0, 128, 0.1)'
+            }}
+          >
+            Schedule Builder
+          </button>
+        </div>
       </div>
 
       {/* Tab Content */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px', backgroundColor: '#fff', borderRadius: '0 0 4px 4px' }}>
+      <div style={{ 
+        padding: '24px', 
+        backgroundColor: 'white'
+      }}>
         {activeTab === 'employees' && (
           <EmployeeList 
             employees={employees} 
@@ -121,6 +119,7 @@ function EmployeeManagement() {
 function EmployeeList({ employees, loading, error, onRefresh }) {
   const [roles, setRoles] = useState([]);
   const [availability, setAvailability] = useState({});
+  const [expandedRow, setExpandedRow] = useState(null);
 
   useEffect(() => {
     loadRoles();
@@ -182,22 +181,24 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
   };
 
   if (loading) {
-    return <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Loading employees...</div>;
+    return <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontFamily: '"Roboto Mono", monospace' }}>Loading employees...</div>;
   }
 
   if (error) {
     return (
-      <div style={{ padding: '20px', textAlign: 'center', color: '#d32f2f' }}>
+      <div style={{ padding: '20px', textAlign: 'center', color: '#d32f2f', fontFamily: '"Roboto Mono", monospace' }}>
         {error}
         <button 
           onClick={onRefresh}
           style={{
             marginLeft: '16px',
             padding: '8px 16px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
+            border: '1px solid #000',
+            borderRadius: '0',
             cursor: 'pointer',
-            backgroundColor: '#fff'
+            backgroundColor: '#fff',
+            fontFamily: '"Roboto Mono", monospace',
+            fontSize: '14px'
           }}
         >
           Retry
@@ -208,92 +209,267 @@ function EmployeeList({ employees, loading, error, onRefresh }) {
 
   return (
     <div>
-      <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500 }}>Employee List</h2>
-        <button
-          onClick={onRefresh}
-          style={{
-            padding: '8px 16px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            backgroundColor: '#fff',
-            fontSize: '14px'
-          }}
-        >
-          Refresh
-        </button>
-      </div>
-
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '2px solid #eee', backgroundColor: '#fafafa' }}>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>ID</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Name</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Username</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Email</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Position</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Role</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Department</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>This Week</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {employees.map((employee, idx) => (
-              <tr 
-                key={employee.employee_id}
-                style={{ 
-                  borderBottom: '1px solid #eee',
-                  backgroundColor: idx % 2 === 0 ? '#fff' : '#fafafa'
-                }}
-              >
-                <td style={{ padding: '12px', fontSize: '14px' }}>{employee.employee_id}</td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>
-                  {employee.first_name} {employee.last_name}
-                </td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>
-                  {employee.username || employee.employee_code || 'N/A'}
-                </td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>
-                  {employee.email || 'N/A'}
-                </td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>{employee.position}</td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>{getRoleName(employee.role_id)}</td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>{employee.department || 'N/A'}</td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>
-                  {availability[employee.employee_id] ? (
-                    <div>
-                      <div style={{ fontSize: '13px', fontWeight: 500 }}>
-                        {availability[employee.employee_id].hours.toFixed(1)}h
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#666' }}>
-                        {availability[employee.employee_id].days} day{availability[employee.employee_id].days !== 1 ? 's' : ''}
-                      </div>
-                    </div>
-                  ) : (
-                    <span style={{ color: '#999', fontSize: '13px' }}>Not scheduled</span>
-                  )}
-                </td>
-                <td style={{ padding: '12px', fontSize: '14px' }}>
-                  <span style={{
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    backgroundColor: employee.active ? '#e8f5e9' : '#ffebee',
-                    color: employee.active ? '#2e7d32' : '#c62828'
-                  }}>
-                    {employee.active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
+        <div style={{ 
+          backgroundColor: '#fff', 
+          borderRadius: '4px', 
+          overflowX: 'auto',
+          overflowY: 'visible',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          width: '100%'
+        }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f8f9fa' }}>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>ID</th>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>Name</th>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>Username</th>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>Position</th>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>Role</th>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'left', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>This Week</th>
+                <th style={{ 
+                  padding: '12px', 
+                  textAlign: 'center', 
+                  fontWeight: 600, 
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}></th>
               </tr>
+            </thead>
+            <tbody>
+              {employees.map((employee, idx) => (
+                <React.Fragment key={employee.employee_id}>
+                  <tr 
+                    onClick={() => setExpandedRow(expandedRow === employee.employee_id ? null : employee.employee_id)}
+                    style={{ 
+                      backgroundColor: idx % 2 === 0 ? '#fff' : '#fafafa',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      fontSize: '14px'
+                    }}>{employee.employee_id}</td>
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      fontSize: '14px'
+                    }}>
+                      {employee.first_name} {employee.last_name}
+                    </td>
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      fontSize: '14px'
+                    }}>
+                      {employee.username || employee.employee_code || 'N/A'}
+                    </td>
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      fontSize: '14px'
+                    }}>{employee.position}</td>
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      fontSize: '14px'
+                    }}>{getRoleName(employee.role_id)}</td>
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      fontSize: '14px'
+                    }}>
+                      {availability[employee.employee_id] ? (
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 500 }}>
+                            {availability[employee.employee_id].hours.toFixed(1)}h
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#666' }}>
+                            {availability[employee.employee_id].days} day{availability[employee.employee_id].days !== 1 ? 's' : ''}
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ color: '#999', fontSize: '13px' }}>Not scheduled</span>
+                      )}
+                    </td>
+                    <td style={{ 
+                      padding: '8px 12px', 
+                      borderBottom: '1px solid #eee',
+                      textAlign: 'center'
+                    }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Action button handler - can be customized
+                          console.log('Action for employee:', employee.employee_id);
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                          backdropFilter: 'blur(10px)',
+                          WebkitBackdropFilter: 'blur(10px)',
+                          color: '#fff',
+                          border: '1px solid rgba(255, 255, 255, 0.2)',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                          transition: 'all 0.3s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.8)'
+                          e.target.style.boxShadow = '0 4px 20px rgba(128, 0, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.backgroundColor = 'rgba(128, 0, 128, 0.7)'
+                          e.target.style.boxShadow = '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                        }}
+                      >
+                        Actions
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedRow === employee.employee_id && (
+                    <tr>
+                      <td colSpan={7} style={{ 
+                        padding: '0', 
+                        borderBottom: '1px solid #eee'
+                      }}>
+                        <div style={{
+                          padding: '20px',
+                          backgroundColor: '#f8f9fa',
+                          borderTop: '2px solid #dee2e6'
+                        }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Email</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.email || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Department</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.department || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Status</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                            <span style={{
+                              padding: '4px 8px',
+                              borderRadius: '0',
+                              fontSize: '12px',
+                              fontWeight: 500,
+                              backgroundColor: employee.active ? '#e8f5e9' : '#ffebee',
+                              color: employee.active ? '#2e7d32' : '#c62828',
+                              border: '1px solid #000'
+                            }}>
+                              {employee.active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Phone</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.phone || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Date Started</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                            {employee.date_started ? new Date(employee.date_started).toLocaleDateString() : 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Hourly Rate</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                            {employee.hourly_rate ? `$${employee.hourly_rate.toFixed(2)}` : 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Employment Type</div>
+                          <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                            {employee.employment_type ? employee.employment_type.replace('_', ' ').toUpperCase() : 'N/A'}
+                          </div>
+                        </div>
+                        {employee.address && (
+                          <div style={{ gridColumn: 'span 2' }}>
+                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Address</div>
+                            <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.address}</div>
+                          </div>
+                        )}
+                        {employee.notes && (
+                          <div style={{ gridColumn: 'span 2' }}>
+                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Notes</div>
+                            <div style={{ fontSize: '14px', fontWeight: 500 }}>{employee.notes}</div>
+                          </div>
+                        )}
+                      </div>
+                        </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>
+        </div>
         {employees.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>
+          <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontFamily: '"Roboto Mono", monospace' }}>
             No employees found
           </div>
         )}
@@ -513,118 +689,136 @@ function ScheduleBuilder({ employees }) {
 
       {/* Schedule Grid */}
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
-          <thead>
-            <tr style={{ borderBottom: '2px solid #eee', backgroundColor: '#fafafa' }}>
-              <th style={{ 
-                padding: '12px', 
-                textAlign: 'left', 
-                fontSize: '14px', 
-                fontWeight: 600,
-                position: 'sticky',
-                left: 0,
-                backgroundColor: '#fafafa',
-                zIndex: 10
-              }}>
-                Employee
-              </th>
-              {days.map((day, idx) => (
-                <th 
-                  key={idx}
-                  style={{ 
-                    padding: '12px', 
-                    textAlign: 'center', 
-                    fontSize: '14px', 
-                    fontWeight: 600,
-                    minWidth: '120px'
-                  }}
-                >
-                  <div>{weekDays[idx]}</div>
-                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                    {day.getDate()}
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {activeEmployees.map((employee, empIdx) => (
-              <tr 
-                key={employee.employee_id}
-                style={{ 
-                  borderBottom: '1px solid #eee',
-                  backgroundColor: empIdx % 2 === 0 ? '#fff' : '#fafafa'
-                }}
-              >
-                <td style={{ 
+        <div style={{ 
+          backgroundColor: '#fff', 
+          borderRadius: '4px', 
+          overflowX: 'auto',
+          overflowY: 'visible',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          width: '100%'
+        }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f8f9fa' }}>
+                <th style={{ 
                   padding: '12px', 
-                  fontSize: '14px',
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  borderBottom: '2px solid #dee2e6',
+                  color: '#495057',
+                  fontSize: '13px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
                   position: 'sticky',
                   left: 0,
-                  backgroundColor: empIdx % 2 === 0 ? '#fff' : '#fafafa',
-                  zIndex: 5,
-                  fontWeight: 500
+                  backgroundColor: '#f8f9fa',
+                  zIndex: 10
                 }}>
-                  {employee.first_name} {employee.last_name}
-                </td>
-                {days.map((day, dayIdx) => {
-                  const daySchedules = getSchedulesForDay(day, employee.employee_id);
-                  const isToday = day.toDateString() === new Date().toDateString();
-                  
-                  return (
-                    <td
-                      key={dayIdx}
-                      onClick={() => handleCellClick(employee, day)}
-                      style={{
-                        padding: '8px',
-                        minHeight: '80px',
-                        border: isToday ? '2px solid #000' : '1px solid #eee',
-                        cursor: 'pointer',
-                        backgroundColor: daySchedules.length > 0 ? '#e3f2fd' : 'transparent',
-                        position: 'relative'
-                      }}
-                      title="Click to add/edit schedule"
-                    >
-                      {daySchedules.map((schedule, sIdx) => (
-                        <div
-                          key={schedule.schedule_id}
-                          style={{
-                            fontSize: '11px',
-                            padding: '4px',
-                            marginBottom: '4px',
-                            backgroundColor: '#2196F3',
-                            color: '#fff',
-                            borderRadius: '2px',
-                            cursor: 'pointer'
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm(`Delete schedule: ${formatTime(schedule.start_time)} - ${formatTime(schedule.end_time)}?`)) {
-                              handleDeleteSchedule(schedule.schedule_id);
-                            }
-                          }}
-                          title={`${formatTime(schedule.start_time)} - ${formatTime(schedule.end_time)} (Click to delete)`}
-                        >
-                          {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
-                        </div>
-                      ))}
-                      {daySchedules.length === 0 && (
-                        <div style={{ 
-                          fontSize: '10px', 
-                          color: '#999', 
-                          textAlign: 'center',
-                          padding: '8px'
-                        }}>
-                          Click to add
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
+                  Employee
+                </th>
+                {days.map((day, idx) => (
+                  <th 
+                    key={idx}
+                    style={{ 
+                      padding: '12px', 
+                      textAlign: 'center', 
+                      fontWeight: 600,
+                      borderBottom: '2px solid #dee2e6',
+                      color: '#495057',
+                      fontSize: '13px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                      minWidth: '120px'
+                    }}
+                  >
+                    <div>{weekDays[idx]}</div>
+                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                      {day.getDate()}
+                    </div>
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {activeEmployees.map((employee, empIdx) => (
+                <tr 
+                  key={employee.employee_id}
+                  style={{ 
+                    backgroundColor: empIdx % 2 === 0 ? '#fff' : '#fafafa'
+                  }}
+                >
+                  <td style={{ 
+                    padding: '8px 12px', 
+                    borderBottom: '1px solid #eee',
+                    fontSize: '14px',
+                    position: 'sticky',
+                    left: 0,
+                    backgroundColor: empIdx % 2 === 0 ? '#fff' : '#fafafa',
+                    zIndex: 5,
+                    fontWeight: 500
+                  }}>
+                    {employee.first_name} {employee.last_name}
+                  </td>
+                  {days.map((day, dayIdx) => {
+                    const daySchedules = getSchedulesForDay(day, employee.employee_id);
+                    const isToday = day.toDateString() === new Date().toDateString();
+                    
+                    return (
+                      <td
+                        key={dayIdx}
+                        onClick={() => handleCellClick(employee, day)}
+                        style={{
+                          padding: '8px',
+                          borderBottom: '1px solid #eee',
+                          minHeight: '80px',
+                          border: isToday ? '2px solid #000' : 'none',
+                          cursor: 'pointer',
+                          backgroundColor: daySchedules.length > 0 ? '#e3f2fd' : 'transparent',
+                          position: 'relative'
+                        }}
+                        title="Click to add/edit schedule"
+                      >
+                        {daySchedules.map((schedule, sIdx) => (
+                          <div
+                            key={schedule.schedule_id}
+                            style={{
+                              fontSize: '11px',
+                              padding: '4px',
+                              marginBottom: '4px',
+                              backgroundColor: '#2196F3',
+                              color: '#fff',
+                              borderRadius: '2px',
+                              cursor: 'pointer'
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Delete schedule: ${formatTime(schedule.start_time)} - ${formatTime(schedule.end_time)}?`)) {
+                                handleDeleteSchedule(schedule.schedule_id);
+                              }
+                            }}
+                            title={`${formatTime(schedule.start_time)} - ${formatTime(schedule.end_time)} (Click to delete)`}
+                          >
+                            {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
+                          </div>
+                        ))}
+                        {daySchedules.length === 0 && (
+                          <div style={{ 
+                            fontSize: '10px', 
+                            color: '#999', 
+                            textAlign: 'center',
+                            padding: '8px'
+                          }}>
+                            Click to add
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Schedule Form Modal */}
