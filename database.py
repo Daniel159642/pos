@@ -26,6 +26,66 @@ def get_connection():
     except sqlite3.Error as e:
         raise ConnectionError(f"Database connection failed: {str(e)}") from e
 
+def extract_metadata_for_product(product_id: int, auto_sync_category: bool = True):
+    """
+    Automatically extract metadata for a product
+    Called automatically when products are created or updated
+    
+    Args:
+        product_id: ID of the product to extract metadata for
+        auto_sync_category: If True, sync category to inventory.category field
+    """
+    try:
+        from metadata_extraction import FreeMetadataSystem
+        
+        # Get product
+        product = get_product(product_id)
+        if not product:
+            return False
+        
+        # Extract metadata
+        metadata_system = FreeMetadataSystem()
+        metadata = metadata_system.extract_metadata_from_product(
+            product_name=product['product_name'],
+            barcode=product.get('barcode'),
+            description=None
+        )
+        
+        # Save metadata
+        metadata_system.save_product_metadata(
+            product_id=product_id,
+            metadata=metadata,
+            extraction_method='auto_on_create'
+        )
+        
+        # Optionally sync category to inventory.category field
+        if auto_sync_category:
+            try:
+                # Get category from metadata
+                category_suggestions = metadata.get('category_suggestions', [])
+                if category_suggestions and len(category_suggestions) > 0:
+                    suggested_category = category_suggestions[0].get('category_name')
+                    if suggested_category:
+                        # Update inventory.category if it's None or different
+                        if product.get('category') != suggested_category:
+                            conn = get_connection()
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                UPDATE inventory 
+                                SET category = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE product_id = ?
+                            """, (suggested_category, product_id))
+                            conn.commit()
+                            conn.close()
+            except Exception:
+                pass  # Don't fail if category sync fails
+        
+        return True
+    except Exception as e:
+        # Silently fail - metadata extraction is optional
+        # Uncomment for debugging: print(f"Metadata extraction failed for product {product_id}: {e}")
+        return False
+
 def add_product(
     product_name: str,
     sku: str,
@@ -36,9 +96,15 @@ def add_product(
     photo: Optional[str] = None,
     current_quantity: int = 0,
     category: Optional[str] = None,
-    barcode: Optional[str] = None
+    barcode: Optional[str] = None,
+    auto_extract_metadata: bool = True
 ) -> int:
-    """Add a new product to inventory"""
+    """
+    Add a new product to inventory
+    
+    Args:
+        auto_extract_metadata: If True, automatically extract metadata after creating product
+    """
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -51,12 +117,20 @@ def add_product(
         
         conn.commit()
         product_id = cursor.lastrowid
+        conn.close()
+        
+        # Automatically extract metadata if enabled
+        if auto_extract_metadata:
+            try:
+                extract_metadata_for_product(product_id, auto_sync_category=True)
+            except Exception:
+                pass  # Don't fail product creation if metadata extraction fails
+        
         return product_id
     except sqlite3.IntegrityError as e:
         conn.rollback()
-        raise ValueError(f"SKU '{sku}' already exists in database") from e
-    finally:
         conn.close()
+        raise ValueError(f"SKU '{sku}' already exists in database") from e
 
 def get_product(product_id: int) -> Optional[Dict[str, Any]]:
     """Get a product by ID"""
@@ -91,8 +165,13 @@ def get_product_by_barcode(barcode: str) -> Optional[Dict[str, Any]]:
     
     return dict(row) if row else None
 
-def update_product(product_id: int, employee_id: Optional[int] = None, **kwargs) -> bool:
-    """Update product information with optional audit logging"""
+def update_product(product_id: int, employee_id: Optional[int] = None, auto_extract_metadata: bool = False, **kwargs) -> bool:
+    """
+    Update product information with optional audit logging
+    
+    Args:
+        auto_extract_metadata: If True, automatically extract metadata after update (useful if product_name changed)
+    """
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -145,17 +224,28 @@ def update_product(product_id: int, employee_id: Optional[int] = None, **kwargs)
                 
                 # Only log if there are actual changes
                 if old_values_filtered != new_values_filtered:
-                    log_audit_action(
-                        table_name='inventory',
-                        record_id=product_id,
-                        action_type='UPDATE',
-                        employee_id=employee_id,
-                        old_values=old_values_filtered,
-                        new_values=new_values_filtered,
-                        notes=f"Product updated: {old_product.get('product_name', 'Unknown')}"
-                    )
+                    try:
+                        log_audit_action(
+                            table_name='inventory',
+                            record_id=product_id,
+                            action_type='UPDATE',
+                            employee_id=employee_id,
+                            old_values=old_values_filtered,
+                            new_values=new_values_filtered,
+                            notes=f"Product updated: {old_product.get('product_name', 'Unknown')}"
+                        )
+                    except:
+                        pass  # Don't fail if audit logging fails
         
         conn.close()
+        
+        # Automatically extract metadata if enabled and product name changed
+        if auto_extract_metadata and 'product_name' in kwargs:
+            try:
+                extract_metadata_for_product(product_id, auto_sync_category=True)
+            except Exception:
+                pass  # Don't fail update if metadata extraction fails
+        
         return success
     except sqlite3.IntegrityError as e:
         conn.rollback()
@@ -944,11 +1034,24 @@ def update_pending_item_verification(
     pending_item_id: int,
     quantity_verified: Optional[int] = None,
     product_id: Optional[int] = None,
-    discrepancy_notes: Optional[str] = None
+    discrepancy_notes: Optional[str] = None,
+    employee_id: Optional[int] = None
 ) -> bool:
     """Update verified quantity and product match for a pending item"""
     conn = get_connection()
     cursor = conn.cursor()
+    
+    # Get current item to determine new status
+    expected = None
+    if quantity_verified is not None:
+        cursor.execute("""
+            SELECT quantity_expected, quantity_verified
+            FROM pending_shipment_items
+            WHERE pending_item_id = ?
+        """, (pending_item_id,))
+        item = cursor.fetchone()
+        if item:
+            expected = item['quantity_expected']
     
     updates = []
     values = []
@@ -956,6 +1059,17 @@ def update_pending_item_verification(
     if quantity_verified is not None:
         updates.append("quantity_verified = ?")
         values.append(quantity_verified)
+        # Update verified_by and verified_at when quantity changes
+        if employee_id is not None:
+            updates.append("verified_by = ?")
+            values.append(employee_id)
+            updates.append("verified_at = CURRENT_TIMESTAMP")
+        # Update status
+        if expected is not None:
+            if quantity_verified >= expected:
+                updates.append("status = 'verified'")
+            elif quantity_verified > 0:
+                updates.append("status = 'pending'")
     
     if product_id is not None:
         updates.append("product_id = ?")
@@ -1052,6 +1166,29 @@ def approve_pending_shipment(
         """, (reviewed_by, notes, pending_shipment_id))
         
         conn.commit()
+        
+        # Extract metadata for products in this shipment (if they don't have metadata)
+        try:
+            # Get unique products from this shipment
+            cursor.execute("""
+                SELECT DISTINCT si.product_id, i.product_name, i.barcode
+                FROM shipment_items si
+                JOIN inventory i ON si.product_id = i.product_id
+                LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
+                WHERE si.shipment_id = ? 
+                AND pm.metadata_id IS NULL
+            """, (shipment_id,))
+            
+            products_needing_metadata = cursor.fetchall()
+            
+            # Extract metadata for each product
+            for product_row in products_needing_metadata:
+                try:
+                    extract_metadata_for_product(product_row['product_id'], auto_sync_category=True)
+                except Exception:
+                    pass  # Continue with other products if one fails
+        except Exception:
+            pass  # Don't fail shipment approval if metadata extraction fails
         
         # Log audit action
         try:
@@ -4878,6 +5015,59 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     
     approved_shipment_id = cursor.lastrowid
     
+    vendor_id = shipment['vendor_id']
+    
+    # Get vendor name for new products
+    cursor.execute("SELECT vendor_name FROM vendors WHERE vendor_id = ?", (vendor_id,))
+    vendor_row = cursor.fetchone()
+    vendor_name = vendor_row['vendor_name'] if vendor_row else None
+    
+    # First, ensure product_id is set for all items by matching with inventory
+    cursor.execute("""
+        UPDATE pending_shipment_items
+        SET product_id = (
+            SELECT product_id FROM inventory WHERE sku = pending_shipment_items.product_sku LIMIT 1
+        )
+        WHERE pending_shipment_id = ?
+        AND product_id IS NULL
+        AND product_sku IS NOT NULL
+    """, (pending_shipment_id,))
+    
+    # Create products for items that don't exist in inventory yet
+    cursor.execute("""
+        SELECT DISTINCT product_sku, product_name, unit_cost
+        FROM pending_shipment_items
+        WHERE pending_shipment_id = ?
+        AND product_id IS NULL
+        AND product_sku IS NOT NULL
+        AND quantity_verified > 0
+    """, (pending_shipment_id,))
+    
+    items_to_create = cursor.fetchall()
+    
+    for item in items_to_create:
+        sku = item['product_sku']
+        product_name = item['product_name'] or f'Product {sku}'
+        unit_cost = item['unit_cost'] or 0.0
+        
+        # Create new product in inventory
+        cursor.execute("""
+            INSERT INTO inventory 
+            (product_name, sku, product_price, product_cost, vendor, vendor_id, current_quantity, category)
+            VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+        """, (product_name, sku, unit_cost, unit_cost, vendor_name, vendor_id))
+        
+        new_product_id = cursor.lastrowid
+        
+        # Update pending_shipment_items with the new product_id
+        cursor.execute("""
+            UPDATE pending_shipment_items
+            SET product_id = ?
+            WHERE pending_shipment_id = ?
+            AND product_sku = ?
+            AND product_id IS NULL
+        """, (new_product_id, pending_shipment_id, sku))
+    
     # Transfer verified items to approved shipment items
     cursor.execute("""
         INSERT INTO approved_shipment_items
@@ -4885,36 +5075,43 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
          lot_number, expiration_date, received_by)
         SELECT 
             ?,
-            i.product_id,
+            psi.product_id,
             psi.quantity_verified,
             psi.unit_cost,
             psi.lot_number,
             psi.expiration_date,
             ?
         FROM pending_shipment_items psi
-        JOIN inventory i ON (psi.product_sku = i.sku OR psi.barcode = i.barcode)
         WHERE psi.pending_shipment_id = ?
         AND psi.quantity_verified > 0
+        AND psi.product_id IS NOT NULL
     """, (approved_shipment_id, employee_id, pending_shipment_id))
     
-    # Update inventory quantities
+    # Update inventory quantities and vendor_id for all verified items
+    # Get all verified items with their product_ids
     cursor.execute("""
-        UPDATE inventory i
-        SET current_quantity = current_quantity + (
-            SELECT COALESCE(SUM(psi.quantity_verified), 0)
-            FROM pending_shipment_items psi
-            WHERE (psi.product_sku = i.sku OR psi.barcode = i.barcode)
-            AND psi.pending_shipment_id = ?
-            AND psi.quantity_verified > 0
-        ),
-        last_restocked = CURRENT_TIMESTAMP
-        WHERE EXISTS (
-            SELECT 1 FROM pending_shipment_items psi
-            WHERE (psi.product_sku = i.sku OR psi.barcode = i.barcode)
-            AND psi.pending_shipment_id = ?
-            AND psi.quantity_verified > 0
-        )
-    """, (pending_shipment_id, pending_shipment_id))
+        SELECT product_id, SUM(quantity_verified) as total_quantity
+        FROM pending_shipment_items
+        WHERE pending_shipment_id = ?
+        AND product_id IS NOT NULL
+        AND quantity_verified > 0
+        GROUP BY product_id
+    """, (pending_shipment_id,))
+    
+    items_to_update = cursor.fetchall()
+    
+    # Update inventory for each product - set vendor_id and update quantity
+    for item in items_to_update:
+        product_id = item['product_id']
+        quantity = item['total_quantity']
+        cursor.execute("""
+            UPDATE inventory
+            SET current_quantity = current_quantity + ?,
+                vendor_id = ?,
+                vendor = ?,
+                last_restocked = CURRENT_TIMESTAMP
+            WHERE product_id = ?
+        """, (quantity, vendor_id, vendor_name, product_id))
     
     # Update pending shipment status
     status = 'completed_with_issues' if shipment['issue_count'] > 0 else 'approved'

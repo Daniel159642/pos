@@ -26,7 +26,7 @@ from database import (
     start_verification_session, scan_item, report_shipment_issue,
     get_verification_progress, complete_verification,
     get_pending_shipments_with_progress, get_shipment_items,
-    create_shipment_from_document
+    create_shipment_from_document, update_pending_item_verification, add_vendor
 )
 from permission_manager import get_permission_manager
 import sqlite3
@@ -228,15 +228,41 @@ def api_update_inventory(product_id):
         traceback.print_exc()
         return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
 
-@app.route('/api/vendors')
+@app.route('/api/vendors', methods=['GET', 'POST'])
 def api_vendors():
-    """Get vendors data"""
-    vendors = list_vendors()
-    if not vendors:
-        return jsonify({'columns': [], 'data': []})
-    
-    columns = list(vendors[0].keys())
-    return jsonify({'columns': columns, 'data': vendors})
+    """Get vendors data or create a new vendor"""
+    if request.method == 'POST':
+        try:
+            data = request.json if request.is_json else request.form.to_dict()
+            vendor_name = data.get('vendor_name')
+            
+            if not vendor_name:
+                return jsonify({'success': False, 'message': 'vendor_name is required'}), 400
+            
+            vendor_id = add_vendor(
+                vendor_name=vendor_name,
+                contact_person=data.get('contact_person'),
+                email=data.get('email'),
+                phone=data.get('phone'),
+                address=data.get('address')
+            )
+            
+            return jsonify({
+                'success': True,
+                'vendor_id': vendor_id,
+                'message': 'Vendor created successfully'
+            })
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'success': False, 'message': str(e)}), 500
+    else:
+        # GET request
+        vendors = list_vendors()
+        if not vendors:
+            return jsonify({'columns': [], 'data': []})
+        
+        columns = list(vendors[0].keys())
+        return jsonify({'columns': columns, 'data': vendors})
 
 @app.route('/api/shipments')
 def api_shipments():
@@ -340,6 +366,48 @@ def api_get_progress(shipment_id):
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/pending_items/<int:item_id>/update', methods=['POST'])
+def api_update_item_verification(item_id):
+    """Update pending item verification quantity"""
+    try:
+        # Get employee ID from session
+        employee_id = None
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not session_token:
+            session_token = request.json.get('session_token') if request.is_json else None
+        if session_token:
+            session_data = verify_session(session_token)
+            if session_data and session_data.get('valid'):
+                employee_id = session_data.get('employee_id')
+        
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Employee ID required'}), 401
+        
+        data = request.json if request.is_json else {}
+        quantity_verified = data.get('quantity_verified')
+        
+        if quantity_verified is None:
+            return jsonify({'success': False, 'message': 'quantity_verified is required'}), 400
+        
+        success = update_pending_item_verification(
+            pending_item_id=item_id,
+            quantity_verified=quantity_verified,
+            employee_id=employee_id
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'quantity_verified': quantity_verified,
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update item'}), 400
+            
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/shipments/<int:shipment_id>/issues', methods=['POST'])
 def api_report_issue(shipment_id):
