@@ -95,7 +95,7 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       <Route path="/calendar" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
           <Layout employee={employee} onLogout={onLogout}>
-            <Calendar />
+            <Calendar employee={employee} />
           </Layout>
         </ProtectedRoute>
       } />

@@ -514,6 +514,27 @@ function POS({ employeeId, employeeName }) {
     setSelectedTip(tip)
   }
 
+  const generateReceipt = async (orderId, orderNumber) => {
+    try {
+      const response = await fetch(`/api/receipt/${orderId}`)
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `receipt_${orderNumber}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      } else {
+        console.error('Failed to generate receipt')
+      }
+    } catch (err) {
+      console.error('Error generating receipt:', err)
+    }
+  }
+
   const handleReceiptSelect = () => {
     // Clear cart if payment was completed
     if (paymentCompleted) {
@@ -684,6 +705,11 @@ function POS({ employeeId, employeeName }) {
           if (result.success) {
             setMessage({ type: 'success', text: `Order ${result.order_number} processed successfully!` })
             setPaymentCompleted(true)
+            
+            // Automatically generate and download receipt
+            if (result.order_id) {
+              generateReceipt(result.order_id, result.order_number)
+            }
             
             // Payment completed - show customer display for receipt selection
             // For cash payments, show customer display again for receipt
