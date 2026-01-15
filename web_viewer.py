@@ -805,6 +805,113 @@ def api_create_order():
         traceback.print_exc()
         return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
 
+@app.route('/api/receipt/<int:order_id>', methods=['GET'])
+def api_generate_receipt(order_id):
+    """Generate receipt PDF for an order"""
+    try:
+        from receipt_generator import generate_receipt_with_barcode
+        
+        pdf_bytes = generate_receipt_with_barcode(order_id)
+        
+        if pdf_bytes:
+            response = Response(pdf_bytes, mimetype='application/pdf')
+            response.headers['Content-Disposition'] = f'attachment; filename=receipt_{order_id}.pdf'
+            return response
+        else:
+            return jsonify({'success': False, 'message': 'Order not found or error generating receipt'}), 404
+    except ImportError as e:
+        return jsonify({'success': False, 'message': 'Receipt generation not available. Install reportlab: pip install reportlab qrcode'}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/receipt-settings', methods=['GET'])
+def api_get_receipt_settings():
+    """Get receipt settings"""
+    try:
+        from receipt_generator import get_receipt_settings
+        settings = get_receipt_settings()
+        return jsonify({'success': True, 'settings': settings})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/receipt-settings', methods=['POST'])
+def api_update_receipt_settings():
+    """Update receipt settings"""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
+        
+        data = request.json
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Check if settings exist
+        cursor.execute("SELECT COUNT(*) FROM receipt_settings")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            # Insert new settings
+            cursor.execute("""
+                INSERT INTO receipt_settings (
+                    store_name, store_address, store_city, store_state, store_zip,
+                    store_phone, store_email, store_website, footer_message,
+                    show_tax_breakdown, show_payment_method
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.get('store_name', 'Store'),
+                data.get('store_address', ''),
+                data.get('store_city', ''),
+                data.get('store_state', ''),
+                data.get('store_zip', ''),
+                data.get('store_phone', ''),
+                data.get('store_email', ''),
+                data.get('store_website', ''),
+                data.get('footer_message', 'Thank you for your business!'),
+                data.get('show_tax_breakdown', 1),
+                data.get('show_payment_method', 1)
+            ))
+        else:
+            # Update existing settings
+            cursor.execute("""
+                UPDATE receipt_settings SET
+                    store_name = ?,
+                    store_address = ?,
+                    store_city = ?,
+                    store_state = ?,
+                    store_zip = ?,
+                    store_phone = ?,
+                    store_email = ?,
+                    store_website = ?,
+                    footer_message = ?,
+                    show_tax_breakdown = ?,
+                    show_payment_method = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
+            """, (
+                data.get('store_name', 'Store'),
+                data.get('store_address', ''),
+                data.get('store_city', ''),
+                data.get('store_state', ''),
+                data.get('store_zip', ''),
+                data.get('store_phone', ''),
+                data.get('store_email', ''),
+                data.get('store_website', ''),
+                data.get('footer_message', 'Thank you for your business!'),
+                data.get('show_tax_breakdown', 1),
+                data.get('show_payment_method', 1)
+            ))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Receipt settings updated successfully'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 # Get all tables endpoint
 @app.route('/api/tables/list')
 def api_list_tables():
@@ -3449,7 +3556,7 @@ def api_submit_availability():
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/master_calendar')
+@app.route('/api/master_calendar', methods=['GET'])
 def api_master_calendar():
     """Get master calendar events"""
     try:
@@ -3468,6 +3575,73 @@ def api_master_calendar():
         return jsonify({
             'success': True,
             'data': events
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/master_calendar', methods=['POST'])
+def api_create_calendar_event():
+    """Create a new calendar event (admin only)"""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
+        
+        data = request.json
+        
+        # Verify session and get employee
+        session_token = data.get('session_token') or request.headers.get('X-Session-Token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        employee_id = session_result.get('employee_id')
+        position = session_result.get('position', '').lower()
+        
+        # Check if user is admin
+        if position not in ['admin', 'manager']:
+            return jsonify({'success': False, 'message': 'Admin access required'}), 403
+        
+        # Validate required fields
+        event_date = data.get('event_date')
+        event_type = data.get('event_type')
+        title = data.get('title')
+        
+        if not event_date or not event_type or not title:
+            return jsonify({'success': False, 'message': 'event_date, event_type, and title are required'}), 400
+        
+        # Validate event_type
+        valid_types = ['schedule', 'shipment', 'holiday', 'event', 'meeting', 'maintenance', 'other']
+        if event_type not in valid_types:
+            return jsonify({'success': False, 'message': f'event_type must be one of: {", ".join(valid_types)}'}), 400
+        
+        from database import add_calendar_event
+        
+        # Get employee_ids if provided (empty list means for everyone)
+        employee_ids = data.get('employee_ids')
+        if employee_ids is not None and len(employee_ids) == 0:
+            employee_ids = None  # Empty list means for everyone
+        
+        calendar_id = add_calendar_event(
+            event_date=event_date,
+            event_type=event_type,
+            title=title,
+            description=data.get('description'),
+            start_time=data.get('start_time'),
+            end_time=data.get('end_time'),
+            related_id=data.get('related_id'),
+            related_table=data.get('related_table'),
+            created_by=employee_id,
+            employee_ids=employee_ids
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Event created successfully',
+            'calendar_id': calendar_id
         })
     except Exception as e:
         traceback.print_exc()

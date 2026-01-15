@@ -3562,25 +3562,43 @@ def add_calendar_event(
     end_time: Optional[str] = None,
     related_id: Optional[int] = None,
     related_table: Optional[str] = None,
-    created_by: Optional[int] = None
+    created_by: Optional[int] = None,
+    employee_ids: Optional[List[int]] = None
 ) -> int:
-    """Add an event to the master calendar"""
+    """Add an event to the master calendar
+    
+    Args:
+        employee_ids: List of employee IDs. If None or empty, event is for everyone.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        INSERT INTO master_calendar (
-            event_date, event_type, title, description, start_time, end_time,
-            related_id, related_table, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (event_date, event_type, title, description, start_time, end_time,
-          related_id, related_table, created_by))
-    
-    conn.commit()
-    calendar_id = cursor.lastrowid
-    conn.close()
-    
-    return calendar_id
+    try:
+        cursor.execute("""
+            INSERT INTO master_calendar (
+                event_date, event_type, title, description, start_time, end_time,
+                related_id, related_table, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (event_date, event_type, title, description, start_time, end_time,
+              related_id, related_table, created_by))
+        
+        calendar_id = cursor.lastrowid
+        
+        # If employee_ids provided, assign event to specific employees
+        if employee_ids:
+            for employee_id in employee_ids:
+                cursor.execute("""
+                    INSERT INTO calendar_event_employees (calendar_id, employee_id)
+                    VALUES (?, ?)
+                """, (calendar_id, employee_id))
+        
+        conn.commit()
+        return calendar_id
+    except Exception as e:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def get_calendar_events(
     start_date: Optional[str] = None,

@@ -35,3 +35,7 @@ python-Levenshtein>=0.12.0  # Required by fuzzywuzzy for better performance
 requests>=2.28.0    # For free barcode lookup APIs (Open Food Facts)
 ollama>=0.1.0       # Optional: Local LLM for better category naming (hybrid approach)
 
+# Receipt generation dependencies:
+reportlab>=4.0.0   # PDF generation for receipts
+qrcode>=7.4.0       # QR code/barcode generation for receipts
+Pillow>=9.0.0       # Image processing (already listed above, but needed for qrcode)

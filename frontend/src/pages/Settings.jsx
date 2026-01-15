@@ -7,6 +7,20 @@ function Settings() {
     workflow_mode: 'simple',
     auto_add_to_inventory: 'true'
   })
+  const [receiptSettings, setReceiptSettings] = useState({
+    store_name: 'Store',
+    store_address: '',
+    store_city: '',
+    store_state: '',
+    store_zip: '',
+    store_phone: '',
+    store_email: '',
+    store_website: '',
+    footer_message: 'Thank you for your business!',
+    show_tax_breakdown: true,
+    show_payment_method: true
+  })
+  const [activeTab, setActiveTab] = useState('workflow') // 'workflow' or 'receipt'
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -22,6 +36,7 @@ function Settings() {
 
   useEffect(() => {
     loadSettings()
+    loadReceiptSettings()
   }, [])
 
   const loadSettings = async () => {
@@ -36,6 +51,22 @@ function Settings() {
       setMessage({ type: 'error', text: 'Failed to load settings' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadReceiptSettings = async () => {
+    try {
+      const response = await fetch('/api/receipt-settings')
+      const data = await response.json()
+      if (data.success && data.settings) {
+        setReceiptSettings({
+          ...data.settings,
+          show_tax_breakdown: data.settings.show_tax_breakdown === 1,
+          show_payment_method: data.settings.show_payment_method === 1
+        })
+      }
+    } catch (error) {
+      console.error('Error loading receipt settings:', error)
     }
   }
 
@@ -66,6 +97,37 @@ function Settings() {
     }
   }
 
+  const saveReceiptSettings = async () => {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const response = await fetch('/api/receipt-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ...receiptSettings,
+          show_tax_breakdown: receiptSettings.show_tax_breakdown ? 1 : 0,
+          show_payment_method: receiptSettings.show_payment_method ? 1 : 0
+        })
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        setMessage({ type: 'success', text: 'Receipt settings saved successfully!' })
+        setTimeout(() => setMessage(null), 3000)
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Failed to save receipt settings' })
+      }
+    } catch (error) {
+      console.error('Error saving receipt settings:', error)
+      setMessage({ type: 'error', text: 'Failed to save receipt settings' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#333' }}>
@@ -82,8 +144,53 @@ function Settings() {
         fontSize: '28px',
         fontWeight: 600
       }}>
-        Shipment Verification Settings
+        Settings
       </h1>
+
+      {/* Tabs */}
+      <div style={{
+        display: 'flex',
+        gap: '8px',
+        marginBottom: '24px',
+        borderBottom: `2px solid ${isDarkMode ? 'var(--border-light, #333)' : '#e0e0e0'}`
+      }}>
+        <button
+          onClick={() => setActiveTab('workflow')}
+          style={{
+            padding: '12px 24px',
+            backgroundColor: 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'workflow' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
+            color: activeTab === 'workflow' 
+              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
+              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'workflow' ? 600 : 400,
+            transition: 'all 0.2s ease'
+          }}
+        >
+          Shipment Verification
+        </button>
+        <button
+          onClick={() => setActiveTab('receipt')}
+          style={{
+            padding: '12px 24px',
+            backgroundColor: 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'receipt' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
+            color: activeTab === 'receipt' 
+              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
+              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'receipt' ? 600 : 400,
+            transition: 'all 0.2s ease'
+          }}
+        >
+          Receipt Settings
+        </button>
+      </div>
 
       {message && (
         <div style={{
@@ -100,6 +207,7 @@ function Settings() {
         </div>
       )}
 
+      {activeTab === 'workflow' && (
       <div style={{
         backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
         borderRadius: '8px',
@@ -268,7 +376,7 @@ function Settings() {
         {/* Save Button */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
           <button
-            onClick={saveSettings}
+            onClick={activeTab === 'workflow' ? saveSettings : saveReceiptSettings}
             disabled={saving}
             style={{
               padding: '12px 24px',
@@ -290,6 +398,236 @@ function Settings() {
           </button>
         </div>
       </div>
+      )}
+
+      {/* Receipt Settings Tab */}
+      {activeTab === 'receipt' && (
+        <div style={{
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+          borderRadius: '8px',
+          padding: '24px',
+          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h2 style={{
+            marginBottom: '24px',
+            fontSize: '20px',
+            fontWeight: 600,
+            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+          }}>
+            Receipt Customization
+          </h2>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Store Information */}
+            <div>
+              <h3 style={{
+                marginBottom: '12px',
+                fontSize: '16px',
+                fontWeight: 600,
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>
+                Store Information
+              </h3>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <input
+                  type="text"
+                  placeholder="Store Name"
+                  value={receiptSettings.store_name}
+                  onChange={(e) => setReceiptSettings({ ...receiptSettings, store_name: e.target.value })}
+                  style={{
+                    padding: '10px',
+                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                    borderRadius: '6px',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    fontSize: '14px'
+                  }}
+                />
+                <input
+                  type="text"
+                  placeholder="Street Address"
+                  value={receiptSettings.store_address}
+                  onChange={(e) => setReceiptSettings({ ...receiptSettings, store_address: e.target.value })}
+                  style={{
+                    padding: '10px',
+                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                    borderRadius: '6px',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    fontSize: '14px'
+                  }}
+                />
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                  <input
+                    type="text"
+                    placeholder="City"
+                    value={receiptSettings.store_city}
+                    onChange={(e) => setReceiptSettings({ ...receiptSettings, store_city: e.target.value })}
+                    style={{
+                      padding: '10px',
+                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '6px',
+                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      fontSize: '14px'
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="State"
+                    value={receiptSettings.store_state}
+                    onChange={(e) => setReceiptSettings({ ...receiptSettings, store_state: e.target.value })}
+                    style={{
+                      padding: '10px',
+                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '6px',
+                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      fontSize: '14px'
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="ZIP"
+                    value={receiptSettings.store_zip}
+                    onChange={(e) => setReceiptSettings({ ...receiptSettings, store_zip: e.target.value })}
+                    style={{
+                      padding: '10px',
+                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '6px',
+                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      fontSize: '14px'
+                    }}
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Phone"
+                  value={receiptSettings.store_phone}
+                  onChange={(e) => setReceiptSettings({ ...receiptSettings, store_phone: e.target.value })}
+                  style={{
+                    padding: '10px',
+                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                    borderRadius: '6px',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    fontSize: '14px'
+                  }}
+                />
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={receiptSettings.store_email}
+                  onChange={(e) => setReceiptSettings({ ...receiptSettings, store_email: e.target.value })}
+                  style={{
+                    padding: '10px',
+                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                    borderRadius: '6px',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    fontSize: '14px'
+                  }}
+                />
+                <input
+                  type="text"
+                  placeholder="Website"
+                  value={receiptSettings.store_website}
+                  onChange={(e) => setReceiptSettings({ ...receiptSettings, store_website: e.target.value })}
+                  style={{
+                    padding: '10px',
+                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                    borderRadius: '6px',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Footer Message */}
+            <div>
+              <h3 style={{
+                marginBottom: '12px',
+                fontSize: '16px',
+                fontWeight: 600,
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>
+                Footer Message
+              </h3>
+              <textarea
+                placeholder="Thank you for your business!"
+                value={receiptSettings.footer_message}
+                onChange={(e) => setReceiptSettings({ ...receiptSettings, footer_message: e.target.value })}
+                rows={3}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                  borderRadius: '6px',
+                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px',
+                  resize: 'vertical',
+                  fontFamily: 'inherit'
+                }}
+              />
+            </div>
+
+            {/* Display Options */}
+            <div>
+              <h3 style={{
+                marginBottom: '12px',
+                fontSize: '16px',
+                fontWeight: 600,
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>
+                Display Options
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  cursor: 'pointer'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={receiptSettings.show_tax_breakdown}
+                    onChange={(e) => setReceiptSettings({ ...receiptSettings, show_tax_breakdown: e.target.checked })}
+                  />
+                  <span style={{
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}>
+                    Show tax breakdown on receipt
+                  </span>
+                </label>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  cursor: 'pointer'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={receiptSettings.show_payment_method}
+                    onChange={(e) => setReceiptSettings({ ...receiptSettings, show_payment_method: e.target.checked })}
+                  />
+                  <span style={{
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}>
+                    Show payment method on receipt
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

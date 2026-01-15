@@ -5,7 +5,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { useTheme } from '../contexts/ThemeContext'
 
-function Calendar() {
+function Calendar({ employee }) {
   const { themeMode, themeColor } = useTheme()
   const calendarRef = useRef(null)
   const [events, setEvents] = useState([])
@@ -23,6 +23,49 @@ function Calendar() {
     maintenance: true
   })
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+  
+  // Event creation state
+  const [showEventModal, setShowEventModal] = useState(false)
+  const [newEventDate, setNewEventDate] = useState(null)
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    event_type: 'event',
+    description: '',
+    start_time: '00:00',
+    end_time: '12:00',
+    forEveryone: true,
+    selectedEmployees: []
+  })
+  const [creatingEvent, setCreatingEvent] = useState(false)
+  const [employees, setEmployees] = useState([])
+  const [loadingEmployees, setLoadingEmployees] = useState(false)
+  
+  // Check if user is admin
+  const isAdmin = employee?.position?.toLowerCase() === 'admin' || employee?.position?.toLowerCase() === 'manager'
+  
+  // Fetch employees when modal opens
+  useEffect(() => {
+    if (showEventModal && isAdmin) {
+      fetchEmployees()
+    }
+  }, [showEventModal, isAdmin])
+  
+  const fetchEmployees = async () => {
+    setLoadingEmployees(true)
+    try {
+      const response = await fetch('/api/employees')
+      const data = await response.json()
+      if (data.data) {
+        // Filter to only active employees
+        const activeEmployees = data.data.filter(emp => emp.active !== 0)
+        setEmployees(activeEmployees)
+      }
+    } catch (err) {
+      console.error('Error fetching employees:', err)
+    } finally {
+      setLoadingEmployees(false)
+    }
+  }
   
   useEffect(() => {
     const handleResize = () => {
@@ -205,6 +248,74 @@ function Calendar() {
     }
   }
   
+  const handleSelect = (selectInfo) => {
+    // Handle date range selection - just clear selection, don't open modal
+    if (selectInfo && calendarRef.current) {
+      const calendarApi = calendarRef.current.getApi()
+      calendarApi.unselect()
+    }
+  }
+  
+  const handleCreateEvent = async () => {
+    if (!newEvent.title.trim()) {
+      alert('Please enter an event title')
+      return
+    }
+    
+    if (!newEvent.forEveryone && newEvent.selectedEmployees.length === 0) {
+      alert('Please select at least one employee or choose "For Everyone"')
+      return
+    }
+    
+    setCreatingEvent(true)
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/master_calendar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': token
+        },
+        body: JSON.stringify({
+          session_token: token,
+          event_date: newEventDate,
+          event_type: newEvent.event_type,
+          title: newEvent.title,
+          description: newEvent.description || null,
+          start_time: newEvent.start_time || null,
+          end_time: newEvent.end_time || null,
+          employee_ids: newEvent.forEveryone ? [] : newEvent.selectedEmployees
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        // Reload calendar data
+        await loadCalendarData()
+        setShowEventModal(false)
+        setNewEvent({
+          title: '',
+          event_type: 'event',
+          description: '',
+          start_time: '00:00',
+          end_time: '12:00',
+          forEveryone: true,
+          selectedEmployees: []
+        })
+        setNewEventDate(null)
+        alert('Event created successfully!')
+      } else {
+        alert(data.message || 'Failed to create event')
+      }
+    } catch (err) {
+      console.error('Error creating event:', err)
+      alert('Error creating event')
+    } finally {
+      setCreatingEvent(false)
+    }
+  }
+  
   const handleEventFromDayClick = (event) => {
     // When clicking an event from the day view, show single event details
     setSelectedEvent(event)
@@ -313,7 +424,7 @@ function Calendar() {
           transition: 'flex 0.3s ease',
           minWidth: 0
         }}>
-          {/* Event Filters */}
+          {/* Event Filters and Add Event Button */}
           <div style={{ 
             marginBottom: '20px', 
             padding: '16px', 
@@ -324,16 +435,18 @@ function Calendar() {
             flexWrap: 'wrap',
             gap: '12px',
             alignItems: 'center',
+            justifyContent: 'space-between',
             boxShadow: '0 2px 4px var(--shadow)'
           }}>
-            <span style={{ 
-              fontWeight: 600, 
-              marginRight: '8px', 
-              color: 'var(--text-primary)',
-              fontSize: '14px'
-            }}>
-              Filter Events:
-            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+              <span style={{ 
+                fontWeight: 600, 
+                marginRight: '8px', 
+                color: 'var(--text-primary)',
+                fontSize: '14px'
+              }}>
+                Filter Events:
+              </span>
             {['holiday', 'event', 'meeting', 'shipment', 'schedule', 'maintenance'].map(type => (
               <label 
                 key={type}
@@ -367,6 +480,49 @@ function Calendar() {
                 </span>
               </label>
             ))}
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  const today = new Date().toISOString().split('T')[0]
+                  setNewEventDate(today)
+        setNewEvent({
+          title: '',
+          event_type: 'event',
+          description: '',
+          start_time: '00:00',
+          end_time: '12:00',
+          forEveryone: true,
+          selectedEmployees: []
+        })
+                  setShowEventModal(true)
+                }}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: themeColor,
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.opacity = '0.9'
+                  e.target.style.transform = 'translateY(-1px)'
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.opacity = '1'
+                  e.target.style.transform = 'translateY(0)'
+                }}
+              >
+                ➕ Add Event
+              </button>
+            )}
           </div>
 
           {/* FullCalendar */}
@@ -389,9 +545,11 @@ function Calendar() {
               events={getFullCalendarEvents()}
               eventClick={handleEventClick}
               dateClick={handleDateClick}
+              select={handleSelect}
               height="auto"
               editable={false}
               selectable={false}
+              selectMirror={false}
               dayMaxEvents={true}
               moreLinkClick="popover"
               themeSystem="standard"
@@ -811,6 +969,448 @@ function Calendar() {
               </div>
             </div>
       </div>
+
+      {/* Event Creation Modal */}
+      {showEventModal && isAdmin && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            animation: 'fadeIn 0.2s ease'
+          }}
+          onClick={() => setShowEventModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--bg-primary)',
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '500px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+              animation: 'slideInRight 0.3s ease'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '20px'
+            }}>
+              <h2 style={{
+                margin: 0,
+                fontSize: '20px',
+                fontWeight: 600,
+                color: 'var(--text-primary)'
+              }}>
+                Create New Event
+              </h2>
+              <button
+                onClick={() => setShowEventModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: 'var(--text-secondary)',
+                  padding: '0',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '4px'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = 'var(--bg-tertiary)'
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)'
+                }}>
+                  Event Date *
+                </label>
+                <input
+                  type="date"
+                  value={newEventDate || ''}
+                  onChange={(e) => setNewEventDate(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)'
+                  }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)'
+                }}>
+                  Event Type *
+                </label>
+                <select
+                  value={newEvent.event_type}
+                  onChange={(e) => setNewEvent({ ...newEvent, event_type: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)'
+                  }}
+                >
+                  <option value="event">Event</option>
+                  <option value="holiday">Holiday</option>
+                  <option value="meeting">Meeting</option>
+                  <option value="maintenance">Maintenance</option>
+                  <option value="shipment">Shipment</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)'
+                }}>
+                  Title *
+                </label>
+                <input
+                  type="text"
+                  value={newEvent.title}
+                  onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
+                  placeholder="Enter event title"
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)'
+                  }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '6px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: 'var(--text-primary)'
+                  }}>
+                    Start Time
+                  </label>
+                  <input
+                    type="time"
+                    value={newEvent.start_time || '00:00'}
+                    defaultValue="00:00"
+                    onChange={(e) => setNewEvent({ ...newEvent, start_time: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      border: `1px solid var(--border-color)`,
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '6px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: 'var(--text-primary)'
+                  }}>
+                    End Time
+                  </label>
+                  <input
+                    type="time"
+                    value={newEvent.end_time || '12:00'}
+                    defaultValue="12:00"
+                    onChange={(e) => setNewEvent({ ...newEvent, end_time: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      border: `1px solid var(--border-color)`,
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)'
+                }}>
+                  Description
+                </label>
+                <textarea
+                  value={newEvent.description}
+                  onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
+                  placeholder="Enter event description (optional)"
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    resize: 'vertical',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              {/* Employee Selection */}
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)'
+                }}>
+                  Event For
+                </label>
+                <div style={{
+                  padding: '12px',
+                  border: `1px solid var(--border-color)`,
+                  borderRadius: '6px',
+                  backgroundColor: 'var(--bg-secondary)'
+                }}>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: newEvent.forEveryone ? 0 : '12px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: 'var(--text-primary)'
+                  }}>
+                    <input
+                      type="radio"
+                      checked={newEvent.forEveryone}
+                      onChange={() => setNewEvent({ ...newEvent, forEveryone: true, selectedEmployees: [] })}
+                      style={{
+                        cursor: 'pointer',
+                        accentColor: themeColor
+                      }}
+                    />
+                    <span>Everyone</span>
+                  </label>
+                  
+                  {!newEvent.forEveryone && (
+                    <div style={{
+                      marginTop: '12px',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      border: `1px solid var(--border-light)`,
+                      borderRadius: '4px',
+                      padding: '8px'
+                    }}>
+                      {loadingEmployees ? (
+                        <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          Loading employees...
+                        </div>
+                      ) : employees.length === 0 ? (
+                        <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          No employees found
+                        </div>
+                      ) : (
+                        employees.map(emp => (
+                          <label
+                            key={emp.employee_id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '6px',
+                              cursor: 'pointer',
+                              fontSize: '14px',
+                              color: 'var(--text-primary)',
+                              borderRadius: '4px',
+                              transition: 'background-color 0.2s'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'transparent'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={newEvent.selectedEmployees.includes(emp.employee_id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewEvent({
+                                    ...newEvent,
+                                    selectedEmployees: [...newEvent.selectedEmployees, emp.employee_id]
+                                  })
+                                } else {
+                                  setNewEvent({
+                                    ...newEvent,
+                                    selectedEmployees: newEvent.selectedEmployees.filter(id => id !== emp.employee_id)
+                                  })
+                                }
+                              }}
+                              style={{
+                                cursor: 'pointer',
+                                accentColor: themeColor
+                              }}
+                            />
+                            <span>{emp.first_name} {emp.last_name} {emp.position ? `(${emp.position})` : ''}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginTop: '12px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: 'var(--text-primary)'
+                  }}>
+                    <input
+                      type="radio"
+                      checked={!newEvent.forEveryone}
+                      onChange={() => setNewEvent({ ...newEvent, forEveryone: false, selectedEmployees: [] })}
+                      style={{
+                        cursor: 'pointer',
+                        accentColor: themeColor
+                      }}
+                    />
+                    <span>Specific Employees</span>
+                  </label>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                <button
+                  onClick={handleCreateEvent}
+                  disabled={
+                    creatingEvent || 
+                    !newEvent.title.trim() || 
+                    !newEventDate ||
+                    (!newEvent.forEveryone && newEvent.selectedEmployees.length === 0)
+                  }
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: (
+                      creatingEvent || 
+                      !newEvent.title.trim() || 
+                      !newEventDate ||
+                      (!newEvent.forEveryone && newEvent.selectedEmployees.length === 0)
+                    ) ? 'var(--bg-tertiary)' : themeColor,
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    cursor: (
+                      creatingEvent || 
+                      !newEvent.title.trim() || 
+                      !newEventDate ||
+                      (!newEvent.forEveryone && newEvent.selectedEmployees.length === 0)
+                    ) ? 'not-allowed' : 'pointer',
+                    opacity: (
+                      creatingEvent || 
+                      !newEvent.title.trim() || 
+                      !newEventDate ||
+                      (!newEvent.forEveryone && newEvent.selectedEmployees.length === 0)
+                    ) ? 0.6 : 1,
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {creatingEvent ? 'Creating...' : 'Create Event'}
+                </button>
+                <button
+                  onClick={() => setShowEventModal(false)}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    color: 'var(--text-primary)',
+                    border: `1px solid var(--border-color)`,
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = 'var(--bg-secondary)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = 'var(--bg-tertiary)'
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CSS Animations */}
       <style>{`
