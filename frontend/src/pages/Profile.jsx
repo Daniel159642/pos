@@ -371,50 +371,64 @@ function Profile({ employeeId, employeeName }) {
 
   const verifyFace = async (descriptor) => {
     try {
-      setClockMessage({ type: 'info', text: 'Verifying face...' })
+      setClockMessage({ type: 'info', text: 'Identifying employee by face...' })
       
-      const token = localStorage.getItem('sessionToken')
-      const response = await fetch('/api/face/verify', {
+      // Use the new face recognition authentication service
+      // This identifies the employee and clocks them in/out automatically
+      const action = clockStatus?.clocked_in ? 'clock_out' : 'clock_in'
+      
+      const response = await fetch('/api/face/clock', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ face_descriptor: descriptor })
+        body: JSON.stringify({ 
+          face_descriptor: descriptor,
+          action: action,
+          threshold: 0.6
+        })
       })
       
       const data = await response.json()
       
-      if (data.success && data.verified) {
-        // Face verified, proceed with clock in/out
-        // NOTE: Both face recognition and button click use the same performClockIn/performClockOut
-        // functions, which call the same API endpoints and save to the same employee_schedule table.
-        // Face recognition is just an additional verification step before clocking in/out.
+      if (data.success) {
+        // Face recognized and clock in/out successful
         setFaceVerifying(false)
         setShowFaceRecognition(false)
         setVerificationAttempted(false)
         
-        // Determine action based on current clock status
-        const wasClockedIn = clockStatus?.clocked_in
-        if (wasClockedIn) {
-          // Calls same function as button click - saves to employee_schedule table
-          await performClockOut()
+        // Update clock status
+        if (action === 'clock_in') {
+          setClockStatus({ clocked_in: true, clock_in_time: data.clock_in_time })
+          setClockMessage({
+            type: 'success',
+            text: `Clocked in as ${data.employee_name}. ${data.face_identification?.confidence || ''}`,
+            comparison: data.schedule_comparison
+          })
         } else {
-          // Calls same function as button click - saves to employee_schedule table
-          await performClockIn()
+          setClockStatus({ clocked_in: false })
+          setClockMessage({
+            type: 'success',
+            text: `Clocked out as ${data.employee_name}. Hours worked: ${data.hours_worked ? data.hours_worked.toFixed(2) : 'N/A'}. ${data.face_identification?.confidence || ''}`
+          })
         }
-      } else if (data.success && !data.verified) {
+        setTimeout(() => setClockMessage(null), 5000)
+        
+        // Reload clock status to ensure sync
+        loadClockStatus()
+      } else {
+        // Face not recognized or clock in/out failed
         setClockMessage({
           type: 'error',
-          text: `Face verification failed. Match: ${(data.similarity * 100).toFixed(1)}% (needs ≥60%)`
+          text: data.message || 'Face recognition failed. You can close this and use the regular clock in button.'
         })
-        setTimeout(() => setClockMessage(null), 5000)
+        setTimeout(() => setClockMessage(null), 7000)
         setVerificationAttempted(false) // Allow retry
       }
     } catch (err) {
-      console.error('Error verifying face:', err)
-      setClockMessage({ type: 'error', text: 'Error verifying face' })
-      setTimeout(() => setClockMessage(null), 5000)
+      console.error('Error with face recognition clock:', err)
+      setClockMessage({ type: 'error', text: 'Error with face recognition. You can close this and use the regular clock in button.' })
+      setTimeout(() => setClockMessage(null), 7000)
       setVerificationAttempted(false) // Allow retry
     }
   }
@@ -538,23 +552,31 @@ function Profile({ employeeId, employeeName }) {
   }
 
   const handleClockIn = async () => {
+    // Always allow regular clock in to work
+    // Face recognition is optional - user can choose to use it via the "Skip" button or close modal
     if (faceRegistered) {
-      // Show face recognition for verification
+      // Face recognition is set up - offer face verification but allow skipping
       setFaceVerifying(true)
       setShowFaceRecognition(true)
+      setVerificationAttempted(false)
+      // Don't block - user can close modal or use skip button to use regular clock in
     } else {
-      // No face registered, proceed without verification
+      // No face registered - proceed with regular button click (no face verification)
       await performClockIn()
     }
   }
 
   const handleClockOut = async () => {
+    // Always allow regular clock out to work
+    // Face recognition is optional - user can choose to use it via the "Skip" button or close modal
     if (faceRegistered) {
-      // Show face recognition for verification
+      // Face recognition is set up - offer face verification but allow skipping
       setFaceVerifying(true)
       setShowFaceRecognition(true)
+      setVerificationAttempted(false)
+      // Don't block - user can close modal or use skip button to use regular clock out
     } else {
-      // No face registered, proceed without verification
+      // No face registered - proceed with regular button click (no face verification)
       await performClockOut()
     }
   }
@@ -716,6 +738,154 @@ function Profile({ employeeId, employeeName }) {
       {/* Tab Content */}
       {activeTab === 'profile' && (
         <>
+          {/* Face Recognition Setup Section - Shows when face is not registered */}
+          {!faceRegistered && (
+            <div style={{
+              marginBottom: '24px',
+              padding: '24px',
+              border: `2px solid ${isDarkMode ? 'rgba(255, 152, 0, 0.5)' : 'rgba(255, 152, 0, 0.3)'}`,
+              borderRadius: '12px',
+              backgroundColor: isDarkMode ? 'rgba(255, 152, 0, 0.1)' : 'rgba(255, 152, 0, 0.05)',
+              boxShadow: isDarkMode ? '0 2px 8px rgba(255, 152, 0, 0.2)' : '0 2px 8px rgba(255, 152, 0, 0.1)'
+            }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                flexWrap: 'wrap',
+                gap: '16px'
+              }}>
+                <div style={{ flex: 1, minWidth: '250px' }}>
+                  <div style={{
+                    fontSize: '18px',
+                    fontWeight: 600,
+                    color: isDarkMode ? '#ffb74d' : '#f57c00',
+                    marginBottom: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <span>🔐</span>
+                    <span>Set Up Face Recognition</span>
+                  </div>
+                  <div style={{
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666',
+                    marginBottom: '12px',
+                    lineHeight: '1.5'
+                  }}>
+                    Register your face to enable secure face verification for clock in/out. Once set up, your face will be used to verify your identity when clocking in or out.
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#888',
+                    fontStyle: 'italic'
+                  }}>
+                    Note: Face recognition is optional. You can still clock in/out using the button below.
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowFaceRecognition(true)
+                    setFaceVerifying(false)
+                    setRegistrationStatus('idle')
+                    setCurrentFaceDescriptor(null)
+                  }}
+                  style={{
+                    padding: '12px 24px',
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    color: '#fff',
+                    backgroundColor: isDarkMode ? 'rgba(255, 152, 0, 0.8)' : '#ff9800',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease',
+                    boxShadow: isDarkMode ? '0 2px 8px rgba(255, 152, 0, 0.3)' : '0 2px 8px rgba(255, 152, 0, 0.2)',
+                    whiteSpace: 'nowrap'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.boxShadow = isDarkMode ? '0 4px 12px rgba(255, 152, 0, 0.4)' : '0 4px 12px rgba(255, 152, 0, 0.3)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.boxShadow = isDarkMode ? '0 2px 8px rgba(255, 152, 0, 0.3)' : '0 2px 8px rgba(255, 152, 0, 0.2)'
+                  }}
+                >
+                  Set Up Now
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Face Recognition Status - Shows when face is registered */}
+          {faceRegistered && (
+            <div style={{
+              marginBottom: '24px',
+              padding: '16px 20px',
+              border: isDarkMode ? '1px solid rgba(76, 175, 80, 0.5)' : '1px solid rgba(76, 175, 80, 0.3)',
+              borderRadius: '12px',
+              backgroundColor: isDarkMode ? 'rgba(76, 175, 80, 0.1)' : 'rgba(76, 175, 80, 0.05)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <span style={{ fontSize: '20px' }}>✓</span>
+                <div>
+                  <div style={{
+                    fontSize: '15px',
+                    fontWeight: 600,
+                    color: isDarkMode ? '#81c784' : '#2e7d32',
+                    marginBottom: '2px'
+                  }}>
+                    Face Recognition Enabled
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666'
+                  }}>
+                    The system will automatically identify you by your face when clocking in/out
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowFaceRecognition(true)
+                  setFaceVerifying(false)
+                  setRegistrationStatus('idle')
+                  setCurrentFaceDescriptor(null)
+                }}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: isDarkMode ? '#81c784' : '#2e7d32',
+                  backgroundColor: 'transparent',
+                  border: `1px solid ${isDarkMode ? 'rgba(76, 175, 80, 0.5)' : 'rgba(76, 175, 80, 0.3)'}`,
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(76, 175, 80, 0.2)' : 'rgba(76, 175, 80, 0.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent'
+                }}
+              >
+                Update Face
+              </button>
+            </div>
+          )}
+
           {/* Clock In/Out Button */}
           <div style={{
             marginBottom: '24px',
@@ -838,27 +1008,6 @@ function Profile({ employeeId, employeeName }) {
               >
                 {clockLoading ? 'Processing...' : (clockStatus?.clocked_in ? 'Clock Out' : 'Clock In')}
               </button>
-              {!faceRegistered && (
-                <button
-                  onClick={() => {
-                    setShowFaceRecognition(true)
-                    setFaceVerifying(false)
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: '#fff',
-                    backgroundColor: `rgba(${themeColorRgb}, 0.6)`,
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease'
-                  }}
-                >
-                  Register Face
-                </button>
-              )}
             </div>
           </div>
 
@@ -877,9 +1026,10 @@ function Profile({ employeeId, employeeName }) {
               zIndex: 1000
             }}
             onClick={() => {
-              if (!faceVerifying) {
-                setShowFaceRecognition(false)
-              }
+              // Allow closing the modal at any time
+              setShowFaceRecognition(false)
+              setFaceVerifying(false)
+              setVerificationAttempted(false)
             }}
             >
               <div style={{
@@ -899,18 +1049,42 @@ function Profile({ employeeId, employeeName }) {
                   alignItems: 'center',
                   marginBottom: '20px'
                 }}>
-                  <h2 style={{
-                    margin: 0,
-                    fontSize: '20px',
-                    fontWeight: 600,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
-                    {faceVerifying ? 'Face Verification' : 'Face Registration'}
-                  </h2>
+                  <div>
+                    <h2 style={{
+                      margin: 0,
+                      fontSize: '20px',
+                      fontWeight: 600,
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      marginBottom: '4px'
+                    }}>
+                      {faceVerifying ? 'Face Recognition - Clock In/Out' : 'Face Recognition Setup'}
+                    </h2>
+                    <p style={{
+                      margin: 0,
+                      fontSize: '13px',
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666'
+                    }}>
+                      {faceVerifying 
+                        ? 'The system will identify you by your face and clock you in/out automatically' 
+                        : 'Register your face to enable automatic employee identification for clock in/out'
+                      }
+                    </p>
+                  </div>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      // Close modal and allow regular clock in/out
                       setShowFaceRecognition(false)
                       setFaceVerifying(false)
+                      setVerificationAttempted(false)
+                      
+                      // If they close during verification, fall back to regular method
+                      if (faceVerifying) {
+                        if (clockStatus?.clocked_in) {
+                          await performClockOut()
+                        } else {
+                          await performClockIn()
+                        }
+                      }
                     }}
                     style={{
                       background: 'none',
@@ -943,7 +1117,7 @@ function Profile({ employeeId, employeeName }) {
                   <div style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '10px',
+                    gap: '12px',
                     alignItems: 'center'
                   }}>
                     {currentFaceDescriptor ? (
@@ -955,15 +1129,25 @@ function Profile({ employeeId, employeeName }) {
                           borderRadius: '8px',
                           fontSize: '14px',
                           fontWeight: 500,
-                          textAlign: 'center'
+                          textAlign: 'center',
+                          border: `1px solid ${isDarkMode ? 'rgba(76, 175, 80, 0.3)' : 'rgba(76, 175, 80, 0.2)'}`
                         }}>
-                          ✓ Face detected! Ready to register.
+                          ✓ Face detected! Your face will be registered to your account.
+                        </div>
+                        <div style={{
+                          fontSize: '12px',
+                          color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                          textAlign: 'center',
+                          maxWidth: '400px',
+                          lineHeight: '1.5'
+                        }}>
+                          After registration, this face will be used to automatically identify you when clocking in or out. The system recognizes different employees by their unique face patterns.
                         </div>
                         <button
                           onClick={() => registerFace(currentFaceDescriptor)}
                           disabled={registrationStatus === 'registering'}
                           style={{
-                            padding: '12px 24px',
+                            padding: '12px 32px',
                             fontSize: '16px',
                             fontWeight: 600,
                             color: '#fff',
@@ -973,7 +1157,23 @@ function Profile({ employeeId, employeeName }) {
                             border: 'none',
                             borderRadius: '8px',
                             cursor: registrationStatus === 'registering' ? 'not-allowed' : 'pointer',
-                            opacity: registrationStatus === 'registering' ? 0.6 : 1
+                            opacity: registrationStatus === 'registering' ? 0.6 : 1,
+                            transition: 'all 0.3s ease',
+                            boxShadow: registrationStatus === 'registering' 
+                              ? 'none' 
+                              : `0 2px 8px rgba(${themeColorRgb}, 0.3)`
+                          }}
+                          onMouseEnter={(e) => {
+                            if (registrationStatus !== 'registering') {
+                              e.currentTarget.style.transform = 'translateY(-2px)'
+                              e.currentTarget.style.boxShadow = `0 4px 12px rgba(${themeColorRgb}, 0.4)`
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.transform = 'translateY(0)'
+                            e.currentTarget.style.boxShadow = registrationStatus === 'registering' 
+                              ? 'none' 
+                              : `0 2px 8px rgba(${themeColorRgb}, 0.3)`
                           }}
                         >
                           {registrationStatus === 'registering' ? 'Registering...' : 'Register This Face'}
@@ -986,9 +1186,10 @@ function Profile({ employeeId, employeeName }) {
                         color: isDarkMode ? '#ffb74d' : '#f57c00',
                         borderRadius: '8px',
                         fontSize: '14px',
-                        textAlign: 'center'
+                        textAlign: 'center',
+                        border: `1px solid ${isDarkMode ? 'rgba(255, 152, 0, 0.3)' : 'rgba(255, 152, 0, 0.2)'}`
                       }}>
-                        Position your face in front of the camera...
+                        Position your face in front of the camera and make sure your face is clearly visible...
                       </div>
                     )}
                   </div>
@@ -1006,10 +1207,53 @@ function Profile({ employeeId, employeeName }) {
                       borderRadius: '8px',
                       fontSize: '14px',
                       fontWeight: 500,
-                      marginBottom: '12px'
+                      marginBottom: '12px',
+                      border: `1px solid ${isDarkMode ? 'rgba(33, 150, 243, 0.3)' : 'rgba(33, 150, 243, 0.2)'}`
                     }}>
-                      {verificationAttempted ? 'Verifying your face...' : 'Please look at the camera'}
+                      {verificationAttempted ? 'Identifying employee by face...' : 'Please look at the camera. The system will identify you and clock you in/out automatically.'}
                     </div>
+                    <div style={{
+                      fontSize: '12px',
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      marginTop: '8px',
+                      marginBottom: '16px'
+                    }}>
+                      Your face will be compared against all registered employee faces to identify you
+                    </div>
+                    <button
+                      onClick={async () => {
+                        // Allow fallback to regular clock in/out
+                        setShowFaceRecognition(false)
+                        setFaceVerifying(false)
+                        setVerificationAttempted(false)
+                        
+                        // Use regular clock in/out method
+                        if (clockStatus?.clocked_in) {
+                          await performClockOut()
+                        } else {
+                          await performClockIn()
+                        }
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        backgroundColor: 'transparent',
+                        border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#e0e0e0'}`,
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent'
+                      }}
+                    >
+                      Skip Face Recognition - Use Regular Clock {clockStatus?.clocked_in ? 'Out' : 'In'}
+                    </button>
                   </div>
                 )}
               </div>

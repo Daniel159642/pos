@@ -1603,19 +1603,6 @@ def api_verify_face():
         
         # Calculate cosine similarity (face-api.js uses cosine distance)
         # Similarity = 1 - distance, so we want similarity > threshold
-        import math
-        
-        def cosine_similarity(vec1, vec2):
-            """Calculate cosine similarity between two vectors"""
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            magnitude1 = math.sqrt(sum(a * a for a in vec1))
-            magnitude2 = math.sqrt(sum(a * a for a in vec2))
-            
-            if magnitude1 == 0 or magnitude2 == 0:
-                return 0
-            
-            return dot_product / (magnitude1 * magnitude2)
-        
         similarity = cosine_similarity(input_descriptor, stored_descriptor)
         
         # Threshold for face recognition (0.6 is typical, but can be adjusted)
@@ -1667,6 +1654,339 @@ def api_face_status():
                 'success': True,
                 'has_face': False
             })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+def cosine_similarity(vec1, vec2):
+    """Calculate cosine similarity between two vectors"""
+    import math
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    magnitude1 = math.sqrt(sum(a * a for a in vec1))
+    magnitude2 = math.sqrt(sum(a * a for a in vec2))
+    
+    if magnitude1 == 0 or magnitude2 == 0:
+        return 0
+    
+    return dot_product / (magnitude1 * magnitude2)
+
+@app.route('/api/face/identify', methods=['POST'])
+def api_identify_face():
+    """
+    Identify which employee a face belongs to by comparing against all registered faces.
+    This is the core face recognition authentication service.
+    """
+    try:
+        data = request.json
+        if not data or 'face_descriptor' not in data:
+            return jsonify({'success': False, 'message': 'Face descriptor required'}), 400
+        
+        input_descriptor = data['face_descriptor']
+        
+        # Validate descriptor
+        if not isinstance(input_descriptor, list) or len(input_descriptor) != 128:
+            return jsonify({'success': False, 'message': 'Invalid face descriptor'}), 400
+        
+        # Get all registered face encodings with employee info
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                efe.employee_id,
+                efe.face_descriptor,
+                e.first_name,
+                e.last_name,
+                e.employee_code,
+                e.position,
+                e.active
+            FROM employee_face_encodings efe
+            JOIN employees e ON efe.employee_id = e.employee_id
+            WHERE e.active = 1
+        """)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return jsonify({
+                'success': False,
+                'message': 'No employees have registered faces',
+                'employee_id': None
+            }), 404
+        
+        # Compare against all registered faces and find best match
+        best_match = None
+        best_similarity = 0.0
+        threshold = data.get('threshold', 0.6)  # Default threshold for face recognition
+        
+        for row in rows:
+            stored_descriptor = json.loads(row['face_descriptor'])
+            similarity = cosine_similarity(input_descriptor, stored_descriptor)
+            
+            if similarity > best_similarity and similarity >= threshold:
+                best_similarity = similarity
+                best_match = {
+                    'employee_id': row['employee_id'],
+                    'first_name': row['first_name'],
+                    'last_name': row['last_name'],
+                    'employee_code': row['employee_code'],
+                    'position': row['position'],
+                    'similarity': similarity
+                }
+        
+        if best_match:
+            return jsonify({
+                'success': True,
+                'identified': True,
+                'employee_id': best_match['employee_id'],
+                'employee_name': f"{best_match['first_name']} {best_match['last_name']}",
+                'employee_code': best_match['employee_code'],
+                'position': best_match['position'],
+                'similarity': best_match['similarity'],
+                'confidence': f"{(best_match['similarity'] * 100):.1f}%",
+                'message': f"Face identified as {best_match['first_name']} {best_match['last_name']}"
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'identified': False,
+                'best_similarity': best_similarity,
+                'threshold': threshold,
+                'message': f'Face not recognized. Best match: {(best_similarity * 100):.1f}% (needs ≥{threshold * 100:.0f}%)'
+            })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/face/clock', methods=['POST'])
+def api_face_clock():
+    """
+    Clock in or out using face recognition.
+    First identifies the employee by face, then performs clock in/out.
+    This allows employees to clock in/out without being logged in.
+    """
+    try:
+        data = request.json
+        if not data or 'face_descriptor' not in data:
+            return jsonify({'success': False, 'message': 'Face descriptor required'}), 400
+        
+        action = data.get('action', 'clock_in')  # 'clock_in' or 'clock_out'
+        input_descriptor = data['face_descriptor']
+        
+        # Validate descriptor
+        if not isinstance(input_descriptor, list) or len(input_descriptor) != 128:
+            return jsonify({'success': False, 'message': 'Invalid face descriptor'}), 400
+        
+        # Step 1: Identify the employee by face
+        identify_data = request.json.copy()
+        identify_data['threshold'] = data.get('threshold', 0.6)
+        
+        # Call internal identify function (simulate by calling the logic)
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                efe.employee_id,
+                efe.face_descriptor,
+                e.first_name,
+                e.last_name,
+                e.employee_code,
+                e.position,
+                e.active
+            FROM employee_face_encodings efe
+            JOIN employees e ON efe.employee_id = e.employee_id
+            WHERE e.active = 1
+        """)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return jsonify({
+                'success': False,
+                'message': 'No employees have registered faces',
+            }), 404
+        
+        # Find best match
+        best_match = None
+        best_similarity = 0.0
+        threshold = data.get('threshold', 0.6)
+        
+        for row in rows:
+            stored_descriptor = json.loads(row['face_descriptor'])
+            similarity = cosine_similarity(input_descriptor, stored_descriptor)
+            
+            if similarity > best_similarity and similarity >= threshold:
+                best_similarity = similarity
+                best_match = {
+                    'employee_id': row['employee_id'],
+                    'first_name': row['first_name'],
+                    'last_name': row['last_name'],
+                    'employee_code': row['employee_code'],
+                    'similarity': similarity
+                }
+        
+        if not best_match:
+            return jsonify({
+                'success': False,
+                'message': f'Face not recognized. Best match: {(best_similarity * 100):.1f}% (needs ≥{threshold * 100:.0f}%)',
+                'best_similarity': best_similarity
+            }), 401
+        
+        employee_id = best_match['employee_id']
+        employee_name = f"{best_match['first_name']} {best_match['last_name']}"
+        
+        # Step 2: Perform clock in/out for identified employee
+        if action == 'clock_in':
+            # Get employee info
+            employee = get_employee(employee_id)
+            if not employee:
+                return jsonify({'success': False, 'message': 'Employee not found'}), 404
+            
+            clock_in_time = datetime.now()
+            today = clock_in_time.date().isoformat()
+            current_time = clock_in_time.time()
+            
+            # Get schedule for today
+            conn = sqlite3.connect(DB_NAME)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Check for schedule in employee_schedule table
+            cursor.execute("""
+                SELECT schedule_id, start_time, end_time, schedule_date
+                FROM employee_schedule
+                WHERE employee_id = ? 
+                  AND schedule_date = ?
+                  AND clock_in_time IS NULL
+                ORDER BY start_time ASC
+                LIMIT 1
+            """, (employee_id, today))
+            
+            schedule = cursor.fetchone()
+            schedule_dict = None
+            if schedule:
+                schedule_dict = dict(schedule)
+            
+            # If no schedule found, check Scheduled_Shifts
+            if not schedule:
+                cursor.execute("""
+                    SELECT ss.shift_id as schedule_id, ss.start_time, ss.end_time, ss.shift_date as schedule_date
+                    FROM Scheduled_Shifts ss
+                    JOIN Schedule_Periods sp ON ss.period_id = sp.period_id
+                    WHERE ss.employee_id = ?
+                      AND ss.shift_date = ?
+                      AND ss.published = 1
+                      AND NOT EXISTS (
+                          SELECT 1 FROM employee_schedule es
+                          WHERE es.schedule_id = ss.shift_id
+                      )
+                    ORDER BY ss.start_time ASC
+                    LIMIT 1
+                """, (employee_id, today))
+                
+                schedule = cursor.fetchone()
+                if schedule:
+                    schedule_dict = dict(schedule)
+            
+            conn.close()
+            
+            # Clock in using the database function
+            result = clock_in(employee_id)
+            
+            if not result['success']:
+                return jsonify({
+                    'success': False,
+                    'message': result.get('message', 'Failed to clock in')
+                }), 400
+            
+            # Compare with schedule if available
+            schedule_comparison = None
+            if schedule_dict:
+                schedule_start = datetime.strptime(schedule_dict['start_time'], '%H:%M:%S').time()
+                schedule_end = datetime.strptime(schedule_dict['end_time'], '%H:%M:%S').time() if schedule_dict.get('end_time') else None
+                
+                # Calculate time difference
+                time_diff_minutes = (current_time.hour * 60 + current_time.minute) - (schedule_start.hour * 60 + schedule_start.minute)
+                
+                status = 'on_time'
+                if time_diff_minutes > 5:
+                    status = 'late'
+                elif time_diff_minutes < -5:
+                    status = 'early'
+                
+                # Check if working at wrong hours
+                wrong_hours = False
+                if schedule_end:
+                    if current_time < schedule_start or current_time > schedule_end:
+                        # Check if it's close to scheduled hours (within 30 min before or after)
+                        start_minutes = schedule_start.hour * 60 + schedule_start.minute
+                        end_minutes = schedule_end.hour * 60 + schedule_end.minute
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        
+                        if abs(current_minutes - start_minutes) > 30 and abs(current_minutes - end_minutes) > 30:
+                            wrong_hours = True
+                
+                schedule_comparison = {
+                    'status': status,
+                    'minutes_late': time_diff_minutes if status == 'late' else 0,
+                    'wrong_hours': wrong_hours,
+                    'scheduled_start': schedule_start.strftime('%H:%M:%S'),
+                    'scheduled_end': schedule_end.strftime('%H:%M:%S') if schedule_end else None,
+                    'message': f"{status.replace('_', ' ').title()}" + (f" - {abs(time_diff_minutes)} minutes" if time_diff_minutes != 0 else "")
+                }
+            
+            return jsonify({
+                'success': True,
+                'employee_id': employee_id,
+                'employee_name': employee_name,
+                'clock_in_time': clock_in_time.isoformat(),
+                'schedule_comparison': schedule_comparison,
+                'face_identification': {
+                    'similarity': best_match['similarity'],
+                    'confidence': f"{(best_match['similarity'] * 100):.1f}%"
+                },
+                'message': f'Clocked in successfully for {employee_name}'
+            })
+            
+        elif action == 'clock_out':
+            # Get current clock status
+            clock_status = get_current_clock_status(employee_id)
+            if not clock_status:
+                return jsonify({'success': False, 'message': 'Not currently clocked in'}), 400
+            
+            schedule_id = clock_status.get('schedule_id')
+            if not schedule_id:
+                return jsonify({'success': False, 'message': 'Schedule ID not found'}), 400
+            
+            # Clock out using the database function
+            clock_result = clock_out(employee_id, schedule_id)
+            
+            if clock_result['success']:
+                return jsonify({
+                    'success': True,
+                    'employee_id': employee_id,
+                    'employee_name': employee_name,
+                    'hours_worked': clock_result.get('hours_worked'),
+                    'face_identification': {
+                        'similarity': best_match['similarity'],
+                        'confidence': f"{(best_match['similarity'] * 100):.1f}%"
+                    },
+                    'message': f'Clocked out successfully for {employee_name}'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': clock_result.get('message', 'Failed to clock out')
+                }), 400
+        else:
+            return jsonify({'success': False, 'message': 'Invalid action. Use "clock_in" or "clock_out"'}), 400
         
     except Exception as e:
         traceback.print_exc()
