@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { usePermissions } from '../contexts/PermissionContext'
 import { useTheme } from '../contexts/ThemeContext'
 import AdminDashboard from '../components/AdminDashboard'
+import FaceRecognition from '../components/FaceRecognition'
 
 function Profile({ employeeId, employeeName }) {
   const { hasPermission } = usePermissions()
@@ -69,13 +70,49 @@ function Profile({ employeeId, employeeName }) {
     language: 'en'
   })
   const [settingsSaved, setSettingsSaved] = useState(false)
+  const [clockStatus, setClockStatus] = useState(null)
+  const [clockLoading, setClockLoading] = useState(false)
+  const [clockMessage, setClockMessage] = useState(null)
+  const [showFaceRecognition, setShowFaceRecognition] = useState(false)
+  const [faceRegistered, setFaceRegistered] = useState(false)
+  const [faceVerifying, setFaceVerifying] = useState(false)
+  const [currentFaceDescriptor, setCurrentFaceDescriptor] = useState(null)
+  const [verificationAttempted, setVerificationAttempted] = useState(false)
+  const [registrationStatus, setRegistrationStatus] = useState('idle') // idle, detecting, ready, registering, registered
 
   useEffect(() => {
     if (employeeId) {
       loadProfileData(weekOffset)
       loadAppSettings()
+      loadClockStatus()
+      checkFaceRegistration()
     }
   }, [employeeId, weekOffset])
+
+  const checkFaceRegistration = async () => {
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/face/status', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setFaceRegistered(data.has_face || false)
+      }
+    } catch (err) {
+      console.error('Error checking face registration:', err)
+    }
+  }
+
+  useEffect(() => {
+    // Refresh clock status every 30 seconds
+    if (employeeId) {
+      const interval = setInterval(() => {
+        loadClockStatus()
+      }, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [employeeId])
 
   const loadProfileData = async (weekOffsetParam = 0) => {
     setLoading(true)
@@ -295,6 +332,233 @@ function Profile({ employeeId, employeeName }) {
     }
   }
 
+  const loadClockStatus = async () => {
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/clock/status', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setClockStatus(data)
+      }
+    } catch (err) {
+      console.error('Error loading clock status:', err)
+    }
+  }
+
+  const handleFaceDetected = async (faceData) => {
+    if (!faceData || !faceData.descriptor) {
+      setRegistrationStatus('idle')
+      return
+    }
+    
+    setCurrentFaceDescriptor(faceData.descriptor)
+    
+    // Update registration status
+    if (!faceVerifying) {
+      setRegistrationStatus('ready') // Face detected and ready to register
+    }
+    
+    // If verifying, verify the face (but throttle to avoid spamming API)
+    if (faceVerifying && !verificationAttempted) {
+      setVerificationAttempted(true)
+      await verifyFace(faceData.descriptor)
+      // Reset after 2 seconds to allow retry
+      setTimeout(() => setVerificationAttempted(false), 2000)
+    }
+  }
+
+  const verifyFace = async (descriptor) => {
+    try {
+      setClockMessage({ type: 'info', text: 'Verifying face...' })
+      
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/face/verify', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ face_descriptor: descriptor })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success && data.verified) {
+        // Face verified, proceed with clock in/out
+        // NOTE: Both face recognition and button click use the same performClockIn/performClockOut
+        // functions, which call the same API endpoints and save to the same employee_schedule table.
+        // Face recognition is just an additional verification step before clocking in/out.
+        setFaceVerifying(false)
+        setShowFaceRecognition(false)
+        setVerificationAttempted(false)
+        
+        // Determine action based on current clock status
+        const wasClockedIn = clockStatus?.clocked_in
+        if (wasClockedIn) {
+          // Calls same function as button click - saves to employee_schedule table
+          await performClockOut()
+        } else {
+          // Calls same function as button click - saves to employee_schedule table
+          await performClockIn()
+        }
+      } else if (data.success && !data.verified) {
+        setClockMessage({
+          type: 'error',
+          text: `Face verification failed. Match: ${(data.similarity * 100).toFixed(1)}% (needs ≥60%)`
+        })
+        setTimeout(() => setClockMessage(null), 5000)
+        setVerificationAttempted(false) // Allow retry
+      }
+    } catch (err) {
+      console.error('Error verifying face:', err)
+      setClockMessage({ type: 'error', text: 'Error verifying face' })
+      setTimeout(() => setClockMessage(null), 5000)
+      setVerificationAttempted(false) // Allow retry
+    }
+  }
+
+  const registerFace = async (descriptor) => {
+    if (!descriptor) {
+      setClockMessage({ type: 'error', text: 'No face detected. Please position yourself in front of the camera.' })
+      setTimeout(() => setClockMessage(null), 5000)
+      return
+    }
+    
+    try {
+      setRegistrationStatus('registering')
+      setClockMessage({ type: 'info', text: 'Registering face...' })
+      
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/face/register', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ face_descriptor: descriptor })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        setFaceRegistered(true)
+        setRegistrationStatus('registered')
+        setShowFaceRecognition(false)
+        setCurrentFaceDescriptor(null)
+        setClockMessage({
+          type: 'success',
+          text: 'Face registered successfully! You can now use face verification for clock in/out.'
+        })
+        setTimeout(() => setClockMessage(null), 5000)
+        checkFaceRegistration() // Refresh status
+      } else {
+        setRegistrationStatus('ready')
+        setClockMessage({ type: 'error', text: data.message || 'Failed to register face' })
+        setTimeout(() => setClockMessage(null), 5000)
+      }
+    } catch (err) {
+      console.error('Error registering face:', err)
+      setRegistrationStatus('ready')
+      setClockMessage({ type: 'error', text: 'Error registering face' })
+      setTimeout(() => setClockMessage(null), 5000)
+    }
+  }
+
+  const performClockIn = async () => {
+    setClockLoading(true)
+    setClockMessage(null)
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/clock/in', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setClockStatus({ clocked_in: true, clock_in_time: data.clock_in_time })
+        setClockMessage({
+          type: 'success',
+          text: data.schedule_comparison ? data.schedule_comparison.message : 'Clocked in successfully',
+          comparison: data.schedule_comparison
+        })
+        setTimeout(() => setClockMessage(null), 5000)
+      } else {
+        setClockMessage({ type: 'error', text: data.message || 'Failed to clock in' })
+        setTimeout(() => setClockMessage(null), 5000)
+      }
+    } catch (err) {
+      console.error('Error clocking in:', err)
+      setClockMessage({ type: 'error', text: 'Error clocking in' })
+      setTimeout(() => setClockMessage(null), 5000)
+    } finally {
+      setClockLoading(false)
+      loadClockStatus()
+    }
+  }
+
+  // This function is used by BOTH button click and face recognition methods
+  // Both methods save identical data to the employee_schedule table
+  const performClockOut = async () => {
+    setClockLoading(true)
+    setClockMessage(null)
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const response = await fetch('/api/clock/out', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setClockStatus({ clocked_in: false })
+        setClockMessage({
+          type: 'success',
+          text: `Clocked out successfully. Hours worked: ${data.hours_worked ? data.hours_worked.toFixed(2) : 'N/A'}`
+        })
+        setTimeout(() => setClockMessage(null), 5000)
+      } else {
+        setClockMessage({ type: 'error', text: data.message || 'Failed to clock out' })
+        setTimeout(() => setClockMessage(null), 5000)
+      }
+    } catch (err) {
+      console.error('Error clocking out:', err)
+      setClockMessage({ type: 'error', text: 'Error clocking out' })
+      setTimeout(() => setClockMessage(null), 5000)
+    } finally {
+      setClockLoading(false)
+      loadClockStatus()
+    }
+  }
+
+  const handleClockIn = async () => {
+    if (faceRegistered) {
+      // Show face recognition for verification
+      setFaceVerifying(true)
+      setShowFaceRecognition(true)
+    } else {
+      // No face registered, proceed without verification
+      await performClockIn()
+    }
+  }
+
+  const handleClockOut = async () => {
+    if (faceRegistered) {
+      // Show face recognition for verification
+      setFaceVerifying(true)
+      setShowFaceRecognition(true)
+    } else {
+      // No face registered, proceed without verification
+      await performClockOut()
+    }
+  }
+
   const saveAppSettings = () => {
     try {
       localStorage.setItem(`app_settings_${employeeId}`, JSON.stringify(appSettings))
@@ -452,6 +716,306 @@ function Profile({ employeeId, employeeName }) {
       {/* Tab Content */}
       {activeTab === 'profile' && (
         <>
+          {/* Clock In/Out Button */}
+          <div style={{
+            marginBottom: '24px',
+            padding: '20px',
+            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #e0e0e0',
+            borderRadius: '12px',
+            backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+            boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)'
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '16px'
+            }}>
+              <div style={{ flex: 1, minWidth: '200px' }}>
+                <div style={{
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  marginBottom: '8px'
+                }}>
+                  Time Clock
+                </div>
+                {clockStatus?.clocked_in ? (
+                  <div style={{
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666'
+                  }}>
+                    Clocked in since {clockStatus.clock_in_time ? new Date(clockStatus.clock_in_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''}
+                  </div>
+                ) : (
+                  <div style={{
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666'
+                  }}>
+                    Currently clocked out
+                  </div>
+                )}
+                {clockMessage && (
+                  <div style={{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    backgroundColor: clockMessage.type === 'success' 
+                      ? (isDarkMode ? 'rgba(76, 175, 80, 0.2)' : 'rgba(76, 175, 80, 0.1)')
+                      : clockMessage.type === 'info'
+                      ? (isDarkMode ? 'rgba(33, 150, 243, 0.2)' : 'rgba(33, 150, 243, 0.1)')
+                      : (isDarkMode ? 'rgba(244, 67, 54, 0.2)' : 'rgba(244, 67, 54, 0.1)'),
+                    color: clockMessage.type === 'success'
+                      ? (isDarkMode ? '#81c784' : '#2e7d32')
+                      : clockMessage.type === 'info'
+                      ? (isDarkMode ? '#64b5f6' : '#1976d2')
+                      : (isDarkMode ? '#ef5350' : '#c62828'),
+                    border: `1px solid ${clockMessage.type === 'success'
+                      ? (isDarkMode ? 'rgba(76, 175, 80, 0.3)' : 'rgba(76, 175, 80, 0.2)')
+                      : clockMessage.type === 'info'
+                      ? (isDarkMode ? 'rgba(33, 150, 243, 0.3)' : 'rgba(33, 150, 243, 0.2)')
+                      : (isDarkMode ? 'rgba(244, 67, 54, 0.3)' : 'rgba(244, 67, 54, 0.2)')}`
+                  }}>
+                    {clockMessage.text}
+                    {clockMessage.comparison && clockMessage.comparison.status !== 'no_schedule' && (
+                      <div style={{ marginTop: '4px', fontSize: '12px' }}>
+                        {clockMessage.comparison.status === 'late' && (
+                          <span style={{ color: isDarkMode ? '#ff9800' : '#f57c00' }}>
+                            ⚠ Late by {clockMessage.comparison.minutes_late} minutes
+                          </span>
+                        )}
+                        {clockMessage.comparison.status === 'early' && (
+                          <span style={{ color: isDarkMode ? '#2196f3' : '#1976d2' }}>
+                            ✓ Early by {Math.abs(clockMessage.comparison.minutes_late || 0)} minutes
+                          </span>
+                        )}
+                        {clockMessage.comparison.wrong_hours && (
+                          <span style={{ color: isDarkMode ? '#f44336' : '#c62828' }}>
+                            ⚠ Working at wrong hours
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={clockStatus?.clocked_in ? handleClockOut : handleClockIn}
+                disabled={clockLoading}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  color: '#fff',
+                  backgroundColor: clockStatus?.clocked_in 
+                    ? (isDarkMode ? 'rgba(244, 67, 54, 0.8)' : '#f44336')
+                    : `rgba(${themeColorRgb}, 0.8)`,
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: clockLoading ? 'not-allowed' : 'pointer',
+                  opacity: clockLoading ? 0.6 : 1,
+                  transition: 'all 0.3s ease',
+                  boxShadow: `0 2px 8px ${clockStatus?.clocked_in 
+                    ? (isDarkMode ? 'rgba(244, 67, 54, 0.3)' : 'rgba(244, 67, 54, 0.2)')
+                    : `rgba(${themeColorRgb}, 0.3)`}`
+                }}
+                onMouseEnter={(e) => {
+                  if (!clockLoading) {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.boxShadow = clockStatus?.clocked_in
+                      ? (isDarkMode ? '0 4px 12px rgba(244, 67, 54, 0.4)' : '0 4px 12px rgba(244, 67, 54, 0.3)')
+                      : `0 4px 12px rgba(${themeColorRgb}, 0.4)`
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)'
+                  e.currentTarget.style.boxShadow = clockStatus?.clocked_in
+                    ? (isDarkMode ? 'rgba(244, 67, 54, 0.3)' : 'rgba(244, 67, 54, 0.2)')
+                    : `rgba(${themeColorRgb}, 0.3)`
+                }}
+              >
+                {clockLoading ? 'Processing...' : (clockStatus?.clocked_in ? 'Clock Out' : 'Clock In')}
+              </button>
+              {!faceRegistered && (
+                <button
+                  onClick={() => {
+                    setShowFaceRecognition(true)
+                    setFaceVerifying(false)
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: '#fff',
+                    backgroundColor: `rgba(${themeColorRgb}, 0.6)`,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  Register Face
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Face Recognition Modal */}
+          {showFaceRecognition && (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1000
+            }}
+            onClick={() => {
+              if (!faceVerifying) {
+                setShowFaceRecognition(false)
+              }
+            }}
+            >
+              <div style={{
+                backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+                borderRadius: '12px',
+                padding: '24px',
+                maxWidth: '640px',
+                width: '90%',
+                maxHeight: '90vh',
+                overflow: 'auto'
+              }}
+              onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '20px'
+                }}>
+                  <h2 style={{
+                    margin: 0,
+                    fontSize: '20px',
+                    fontWeight: 600,
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}>
+                    {faceVerifying ? 'Face Verification' : 'Face Registration'}
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowFaceRecognition(false)
+                      setFaceVerifying(false)
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      fontSize: '24px',
+                      cursor: 'pointer',
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      padding: '0',
+                      width: '30px',
+                      height: '30px'
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                
+                <div style={{ marginBottom: '20px' }}>
+                  <FaceRecognition
+                    isActive={showFaceRecognition}
+                    onFaceDetected={handleFaceDetected}
+                    onError={(err) => {
+                      console.error('Face recognition error:', err)
+                      setClockMessage({ type: 'error', text: 'Face recognition error' })
+                    }}
+                    threshold={0.6}
+                  />
+                </div>
+
+                {!faceVerifying && (
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    alignItems: 'center'
+                  }}>
+                    {currentFaceDescriptor ? (
+                      <>
+                        <div style={{
+                          padding: '12px 20px',
+                          backgroundColor: isDarkMode ? 'rgba(76, 175, 80, 0.2)' : 'rgba(76, 175, 80, 0.1)',
+                          color: isDarkMode ? '#81c784' : '#2e7d32',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          textAlign: 'center'
+                        }}>
+                          ✓ Face detected! Ready to register.
+                        </div>
+                        <button
+                          onClick={() => registerFace(currentFaceDescriptor)}
+                          disabled={registrationStatus === 'registering'}
+                          style={{
+                            padding: '12px 24px',
+                            fontSize: '16px',
+                            fontWeight: 600,
+                            color: '#fff',
+                            backgroundColor: registrationStatus === 'registering' 
+                              ? '#999' 
+                              : `rgba(${themeColorRgb}, 0.8)`,
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: registrationStatus === 'registering' ? 'not-allowed' : 'pointer',
+                            opacity: registrationStatus === 'registering' ? 0.6 : 1
+                          }}
+                        >
+                          {registrationStatus === 'registering' ? 'Registering...' : 'Register This Face'}
+                        </button>
+                      </>
+                    ) : (
+                      <div style={{
+                        padding: '12px 20px',
+                        backgroundColor: isDarkMode ? 'rgba(255, 152, 0, 0.2)' : 'rgba(255, 152, 0, 0.1)',
+                        color: isDarkMode ? '#ffb74d' : '#f57c00',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        textAlign: 'center'
+                      }}>
+                        Position your face in front of the camera...
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {faceVerifying && (
+                  <div style={{
+                    textAlign: 'center',
+                    padding: '16px'
+                  }}>
+                    <div style={{
+                      padding: '12px 20px',
+                      backgroundColor: isDarkMode ? 'rgba(33, 150, 243, 0.2)' : 'rgba(33, 150, 243, 0.1)',
+                      color: isDarkMode ? '#64b5f6' : '#1976d2',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      marginBottom: '12px'
+                    }}>
+                      {verificationAttempted ? 'Verifying your face...' : 'Please look at the camera'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Hours Summary */}
       <div style={{
         display: 'grid',

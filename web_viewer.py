@@ -26,13 +26,14 @@ from database import (
     start_verification_session, scan_item, report_shipment_issue,
     get_verification_progress, complete_verification,
     get_pending_shipments_with_progress, get_shipment_items,
-    create_shipment_from_document, update_pending_item_verification, add_vendor
+    create_shipment_from_document, update_pending_item_verification, add_vendor,
+    clock_in, clock_out, get_current_clock_status, get_schedule
 )
 from permission_manager import get_permission_manager
 import sqlite3
 import os
 import json
-from datetime import datetime
+from datetime import datetime, time
 import tempfile
 import traceback
 
@@ -1289,6 +1290,393 @@ def api_employee_sessions():
     
     conn.close()
     return jsonify({'columns': columns, 'data': data})
+
+@app.route('/api/clock/status', methods=['GET'])
+def api_clock_status():
+    """Get current clock status for the logged-in employee"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        clock_status = get_current_clock_status(employee_id)
+        
+        if clock_status:
+            return jsonify({
+                'success': True,
+                'clocked_in': True,
+                'clock_in_time': clock_status.get('clock_in_time'),
+                'schedule_id': clock_status.get('schedule_id'),
+                'employee_name': clock_status.get('employee_name'),
+                'schedule_date': clock_status.get('schedule_date'),
+                'start_time': clock_status.get('start_time'),
+                'end_time': clock_status.get('end_time')
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'clocked_in': False
+            })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/clock/in', methods=['POST'])
+def api_clock_in():
+    """
+    Clock in employee with schedule comparison
+    This endpoint is used by BOTH button click and face recognition methods.
+    Both methods save identical data to the employee_schedule table.
+    """
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        # Get employee info
+        employee = get_employee(employee_id)
+        if not employee:
+            return jsonify({'success': False, 'message': 'Employee not found'}), 404
+        
+        employee_name = f"{employee['first_name']} {employee['last_name']}"
+        clock_in_time = datetime.now()
+        today = clock_in_time.date().isoformat()
+        current_time = clock_in_time.time()
+        
+        # Get schedule for today
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Check for schedule in employee_schedule table
+        cursor.execute("""
+            SELECT schedule_id, start_time, end_time, schedule_date
+            FROM employee_schedule
+            WHERE employee_id = ? AND schedule_date = ?
+            ORDER BY start_time
+            LIMIT 1
+        """, (employee_id, today))
+        
+        schedule = cursor.fetchone()
+        
+        # Also check Scheduled_Shifts table
+        if not schedule:
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='Scheduled_Shifts'
+            """)
+            has_scheduled_shifts = cursor.fetchone()
+            
+            if has_scheduled_shifts:
+                cursor.execute("""
+                    SELECT ss.scheduled_shift_id, ss.shift_date, ss.start_time, ss.end_time
+                    FROM Scheduled_Shifts ss
+                    JOIN Schedule_Periods sp ON ss.period_id = sp.period_id
+                    WHERE ss.employee_id = ? 
+                      AND ss.shift_date = ?
+                      AND ss.is_draft = 0 
+                      AND sp.status = 'published'
+                    ORDER BY ss.start_time
+                    LIMIT 1
+                """, (employee_id, today))
+                schedule = cursor.fetchone()
+        
+        comparison_result = {
+            'has_schedule': False,
+            'status': 'no_schedule',
+            'message': 'No schedule found for today',
+            'scheduled_start_time': None,
+            'scheduled_end_time': None,
+            'minutes_late': 0,
+            'on_time': False,
+            'early': False,
+            'wrong_hours': False
+        }
+        
+        if schedule:
+            schedule_dict = dict(schedule)
+            scheduled_start = schedule_dict.get('start_time')
+            scheduled_end = schedule_dict.get('end_time')
+            
+            if scheduled_start:
+                comparison_result['has_schedule'] = True
+                comparison_result['scheduled_start_time'] = scheduled_start
+                comparison_result['scheduled_end_time'] = scheduled_end
+                
+                # Parse scheduled start time
+                start_parts = scheduled_start.split(':')
+                scheduled_hour = int(start_parts[0])
+                scheduled_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
+                scheduled_time_obj = datetime.combine(clock_in_time.date(), 
+                                                      time(scheduled_hour, scheduled_minute))
+                current_time_obj = clock_in_time.replace(second=0, microsecond=0)
+                
+                # Calculate time difference in minutes
+                time_diff_minutes = (current_time_obj - scheduled_time_obj).total_seconds() / 60
+                
+                # Determine status (5 minute grace period)
+                if time_diff_minutes <= 5 and time_diff_minutes >= -5:
+                    comparison_result['status'] = 'on_time'
+                    comparison_result['message'] = 'Clocked in on time'
+                    comparison_result['on_time'] = True
+                elif time_diff_minutes > 5:
+                    comparison_result['status'] = 'late'
+                    comparison_result['message'] = f'Clocked in {int(time_diff_minutes)} minutes late'
+                    comparison_result['minutes_late'] = int(time_diff_minutes)
+                else:
+                    comparison_result['status'] = 'early'
+                    comparison_result['message'] = f'Clocked in {int(abs(time_diff_minutes))} minutes early'
+                    comparison_result['early'] = True
+                
+                # Check if working at wrong hours (more than 2 hours early or late)
+                if abs(time_diff_minutes) > 120:
+                    comparison_result['wrong_hours'] = True
+                    comparison_result['message'] += ' (Working at wrong hours)'
+        
+        # Clock in using database function
+        schedule_id = None
+        if schedule:
+            schedule_dict = dict(schedule)
+            schedule_id = schedule_dict.get('schedule_id') or schedule_dict.get('scheduled_shift_id')
+        
+        clock_result = clock_in(employee_id, schedule_id=schedule_id, schedule_date=today)
+        
+        if clock_result['success']:
+            return jsonify({
+                'success': True,
+                'message': 'Clocked in successfully',
+                'employee_name': employee_name,
+                'clock_in_time': clock_in_time.isoformat(),
+                'schedule_comparison': comparison_result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': clock_result.get('message', 'Failed to clock in')
+            }), 400
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/clock/out', methods=['POST'])
+def api_clock_out():
+    """
+    Clock out employee
+    This endpoint is used by BOTH button click and face recognition methods.
+    Both methods save identical data to the employee_schedule table.
+    """
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        # Get current clock status
+        clock_status = get_current_clock_status(employee_id)
+        if not clock_status:
+            return jsonify({'success': False, 'message': 'Not currently clocked in'}), 400
+        
+        schedule_id = clock_status.get('schedule_id')
+        if not schedule_id:
+            return jsonify({'success': False, 'message': 'Schedule ID not found'}), 400
+        
+        # Clock out
+        clock_result = clock_out(employee_id, schedule_id)
+        
+        if clock_result['success']:
+            # Get employee info
+            employee = get_employee(employee_id)
+            employee_name = f"{employee['first_name']} {employee['last_name']}" if employee else 'Unknown'
+            
+            return jsonify({
+                'success': True,
+                'message': 'Clocked out successfully',
+                'employee_name': employee_name,
+                'clock_out_time': datetime.now().isoformat(),
+                'hours_worked': clock_result.get('hours_worked'),
+                'overtime_hours': clock_result.get('overtime_hours')
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': clock_result.get('message', 'Failed to clock out')
+            }), 400
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/face/register', methods=['POST'])
+def api_register_face():
+    """Register face encoding for an employee"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        data = request.json
+        if not data or 'face_descriptor' not in data:
+            return jsonify({'success': False, 'message': 'Face descriptor required'}), 400
+        
+        face_descriptor = data['face_descriptor']
+        
+        # Validate that face_descriptor is a list/array of numbers
+        if not isinstance(face_descriptor, list):
+            return jsonify({'success': False, 'message': 'Face descriptor must be an array'}), 400
+        
+        if len(face_descriptor) != 128:
+            return jsonify({'success': False, 'message': 'Face descriptor must have 128 values'}), 400
+        
+        # Store face encoding in database
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Check if face encoding already exists
+        cursor.execute("""
+            SELECT face_id FROM employee_face_encodings 
+            WHERE employee_id = ?
+        """, (employee_id,))
+        
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing encoding
+            cursor.execute("""
+                UPDATE employee_face_encodings
+                SET face_descriptor = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE employee_id = ?
+            """, (json.dumps(face_descriptor), employee_id))
+        else:
+            # Insert new encoding
+            cursor.execute("""
+                INSERT INTO employee_face_encodings (
+                    employee_id, face_descriptor
+                ) VALUES (?, ?)
+            """, (employee_id, json.dumps(face_descriptor)))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Face registered successfully'
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/face/verify', methods=['POST'])
+def api_verify_face():
+    """Verify face against stored encoding"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        data = request.json
+        if not data or 'face_descriptor' not in data:
+            return jsonify({'success': False, 'message': 'Face descriptor required'}), 400
+        
+        input_descriptor = data['face_descriptor']
+        
+        # Validate descriptor
+        if not isinstance(input_descriptor, list) or len(input_descriptor) != 128:
+            return jsonify({'success': False, 'message': 'Invalid face descriptor'}), 400
+        
+        # Get stored face encoding for this employee
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT face_descriptor FROM employee_face_encodings
+            WHERE employee_id = ?
+        """, (employee_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({
+                'success': False,
+                'message': 'No face registered for this employee',
+                'verified': False
+            }), 404
+        
+        # Parse stored descriptor
+        stored_descriptor = json.loads(row[0])
+        
+        # Calculate cosine similarity (face-api.js uses cosine distance)
+        # Similarity = 1 - distance, so we want similarity > threshold
+        import math
+        
+        def cosine_similarity(vec1, vec2):
+            """Calculate cosine similarity between two vectors"""
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            magnitude1 = math.sqrt(sum(a * a for a in vec1))
+            magnitude2 = math.sqrt(sum(a * a for a in vec2))
+            
+            if magnitude1 == 0 or magnitude2 == 0:
+                return 0
+            
+            return dot_product / (magnitude1 * magnitude2)
+        
+        similarity = cosine_similarity(input_descriptor, stored_descriptor)
+        
+        # Threshold for face recognition (0.6 is typical, but can be adjusted)
+        # face-api.js typically uses 0.6 as default threshold
+        threshold = data.get('threshold', 0.6)
+        verified = similarity >= threshold
+        
+        return jsonify({
+            'success': True,
+            'verified': verified,
+            'similarity': similarity,
+            'threshold': threshold,
+            'message': 'Face verified' if verified else 'Face does not match'
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/face/status', methods=['GET'])
+def api_face_status():
+    """Check if employee has registered face"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT face_id, registered_at, updated_at
+            FROM employee_face_encodings
+            WHERE employee_id = ?
+        """, (employee_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return jsonify({
+                'success': True,
+                'has_face': True,
+                'registered_at': row[1],
+                'updated_at': row[2]
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'has_face': False
+            })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/journal_entries')
 def api_journal_entries():
