@@ -660,6 +660,11 @@ def api_upload_shipment():
         
         purchase_order_number = request.form.get('purchase_order_number', '').strip()
         expected_delivery_date = request.form.get('expected_delivery_date', '').strip() or None
+        verification_mode = request.form.get('verification_mode', 'verify_whole_shipment').strip()
+        
+        # Validate verification_mode
+        if verification_mode not in ('auto_add', 'verify_whole_shipment'):
+            verification_mode = 'verify_whole_shipment'
         
         # Save uploaded file
         filename = secure_filename(f"{vendor_id}_{datetime.now().timestamp()}_{file.filename}")
@@ -674,7 +679,8 @@ def api_upload_shipment():
             vendor_id=vendor_id,
             purchase_order_number=purchase_order_number if purchase_order_number else None,
             expected_delivery_date=expected_delivery_date,
-            uploaded_by=employee_id
+            uploaded_by=employee_id,
+            verification_mode=verification_mode
         )
         
         if not result.get('success'):

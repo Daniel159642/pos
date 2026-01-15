@@ -1002,20 +1002,38 @@ def create_pending_shipment(
     purchase_order_number: Optional[str] = None,
     tracking_number: Optional[str] = None,
     notes: Optional[str] = None,
-    uploaded_by: Optional[int] = None
+    uploaded_by: Optional[int] = None,
+    verification_mode: str = 'verify_whole_shipment'
 ) -> int:
     """Create a new pending shipment record"""
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Ensure verification_mode column exists
+    try:
+        cursor.execute("PRAGMA table_info(pending_shipments)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'verification_mode' not in columns:
+            cursor.execute("""
+                ALTER TABLE pending_shipments 
+                ADD COLUMN verification_mode TEXT DEFAULT 'verify_whole_shipment'
+            """)
+            conn.commit()
+    except Exception:
+        pass  # Column might already exist
+    
     if expected_date is None:
         expected_date = datetime.now().date().isoformat()
     
+    # Validate verification_mode
+    if verification_mode not in ('auto_add', 'verify_whole_shipment'):
+        verification_mode = 'verify_whole_shipment'
+    
     cursor.execute("""
         INSERT INTO pending_shipments 
-        (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by))
+        (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by, verification_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by, verification_mode))
     
     conn.commit()
     pending_shipment_id = cursor.lastrowid
@@ -1173,6 +1191,196 @@ def list_pending_shipments(
     
     return [dict(row) for row in rows]
 
+def add_item_to_inventory_immediately(
+    pending_item_id: int,
+    employee_id: int
+) -> Dict[str, Any]:
+    """
+    Add a pending shipment item to inventory immediately (for auto-add mode)
+    Returns success status and details
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Get the pending item and shipment info
+        cursor.execute("""
+            SELECT psi.*, ps.vendor_id, ps.pending_shipment_id, v.vendor_name
+            FROM pending_shipment_items psi
+            JOIN pending_shipments ps ON psi.pending_shipment_id = ps.pending_shipment_id
+            JOIN vendors v ON ps.vendor_id = v.vendor_id
+            WHERE psi.pending_item_id = ?
+        """, (pending_item_id,))
+        
+        item = cursor.fetchone()
+        if not item:
+            conn.close()
+            return {'success': False, 'message': 'Item not found'}
+        
+        item = dict(item)
+        vendor_id = item['vendor_id']
+        vendor_name = item['vendor_name']
+        pending_shipment_id = item['pending_shipment_id']
+        quantity_verified = item.get('quantity_verified', 0)
+        
+        print(f"DEBUG add_item_to_inventory_immediately: pending_item_id={pending_item_id}, quantity_verified={quantity_verified}, product_id={item.get('product_id')}")
+        
+        if quantity_verified <= 0:
+            conn.close()
+            print(f"DEBUG: No quantity verified for item {pending_item_id}")
+            return {'success': False, 'message': 'No quantity verified'}
+        
+        # Get or create product
+        product_id = item.get('product_id')
+        if not product_id:
+            # Create product if it doesn't exist
+            product_name = item['product_name'] or f"Product {item['product_sku']}"
+            unit_cost = item.get('unit_cost', 0.0)
+            barcode = item.get('barcode')
+            sku = item['product_sku']
+            
+            if not sku or not sku.strip():
+                conn.close()
+                return {'success': False, 'message': 'SKU is required'}
+            
+            cursor.execute("SELECT product_id FROM inventory WHERE sku = ?", (sku,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                existing = dict(existing)
+                product_id = existing['product_id']
+            else:
+                # Create new product
+                cursor.execute("""
+                    INSERT INTO inventory 
+                    (product_name, sku, barcode, product_price, product_cost, vendor, vendor_id, current_quantity, category)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)
+                """, (product_name, sku, barcode, unit_cost, unit_cost, vendor_name, vendor_id))
+                product_id = cursor.lastrowid
+                
+                # Extract metadata
+                try:
+                    extract_metadata_for_product(product_id, auto_sync_category=True)
+                except Exception as e:
+                    print(f"Warning: Metadata extraction failed: {e}")
+                
+                # Update pending item with product_id
+                cursor.execute("""
+                    UPDATE pending_shipment_items
+                    SET product_id = ?
+                    WHERE pending_item_id = ?
+                """, (product_id, pending_item_id))
+        else:
+            # Update product barcode if missing
+            if item.get('barcode'):
+                cursor.execute("""
+                    UPDATE inventory 
+                    SET barcode = ?
+                    WHERE product_id = ? AND (barcode IS NULL OR barcode = '')
+                """, (item['barcode'], product_id))
+        
+        # Ensure approved_shipment exists for this pending shipment (for auto-add mode)
+        cursor.execute("""
+            SELECT shipment_id FROM approved_shipments
+            WHERE pending_shipment_id = ?
+        """, (pending_shipment_id,))
+        
+        approved_shipment = cursor.fetchone()
+        if not approved_shipment:
+            # Create approved shipment record
+            cursor.execute("""
+                INSERT INTO approved_shipments
+                (pending_shipment_id, vendor_id, purchase_order_number, 
+                 received_date, approved_by, total_items_received, total_cost,
+                 has_issues, issue_count)
+                SELECT 
+                    ?,
+                    vendor_id,
+                    purchase_order_number,
+                    DATE('now'),
+                    ?,
+                    0,
+                    0,
+                    0,
+                    0
+                FROM pending_shipments
+                WHERE pending_shipment_id = ?
+            """, (pending_shipment_id, employee_id, pending_shipment_id))
+            approved_shipment_id = cursor.lastrowid
+        else:
+            approved_shipment = dict(approved_shipment)
+            approved_shipment_id = approved_shipment['shipment_id']
+        
+        # Add quantity to inventory
+        cursor.execute("""
+            UPDATE inventory
+            SET current_quantity = current_quantity + ?,
+                vendor_id = ?,
+                vendor = ?,
+                last_restocked = CURRENT_TIMESTAMP
+            WHERE product_id = ?
+        """, (quantity_verified, vendor_id, vendor_name, product_id))
+        
+        # Check if item already in approved_shipment_items for this specific pending item
+        # In auto-add mode, we track by product_id only (one record per product per shipment)
+        cursor.execute("""
+            SELECT approved_item_id, quantity_received FROM approved_shipment_items
+            WHERE shipment_id = ? AND product_id = ?
+            LIMIT 1
+        """, (approved_shipment_id, product_id))
+        
+        existing_item = cursor.fetchone()
+        if existing_item:
+            # Update existing record - add to quantity
+            cursor.execute("""
+                UPDATE approved_shipment_items
+                SET quantity_received = quantity_received + ?,
+                    received_by = ?
+                WHERE approved_item_id = ?
+            """, (quantity_verified, employee_id, existing_item['approved_item_id']))
+        else:
+            # Insert new record
+            cursor.execute("""
+                INSERT INTO approved_shipment_items
+                (shipment_id, product_id, quantity_received, unit_cost, 
+                 lot_number, expiration_date, received_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (approved_shipment_id, product_id, quantity_verified, 
+                  item.get('unit_cost', 0.0), item.get('lot_number'), 
+                  item.get('expiration_date'), employee_id))
+        
+        # Update approved_shipment totals
+        cursor.execute("""
+            UPDATE approved_shipments
+            SET total_items_received = (
+                SELECT COALESCE(SUM(quantity_received), 0) FROM approved_shipment_items
+                WHERE shipment_id = ?
+            ),
+            total_cost = (
+                SELECT COALESCE(SUM(quantity_received * unit_cost), 0) FROM approved_shipment_items
+                WHERE shipment_id = ?
+            )
+            WHERE shipment_id = ?
+        """, (approved_shipment_id, approved_shipment_id, approved_shipment_id))
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            'success': True,
+            'product_id': product_id,
+            'quantity_added': quantity_verified
+        }
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+            conn.close()
+        print(f"ERROR in add_item_to_inventory_immediately: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': str(e)}
+
 def update_pending_item_verification(
     pending_item_id: int,
     quantity_verified: Optional[int] = None,
@@ -1190,19 +1398,27 @@ def update_pending_item_verification(
             conn = get_connection()
             cursor = conn.cursor()
             
-            # Get current item to determine new status
+            # Get current item to determine new status and check verification mode
             expected = None
             current_verified = None
+            verification_mode = 'verify_whole_shipment'
+            pending_shipment_id = None
+            
             if quantity_verified is not None:
                 cursor.execute("""
-                    SELECT quantity_expected, COALESCE(quantity_verified, 0) as quantity_verified
-                    FROM pending_shipment_items
-                    WHERE pending_item_id = ?
+                    SELECT psi.quantity_expected, COALESCE(psi.quantity_verified, 0) as quantity_verified,
+                           ps.verification_mode, ps.pending_shipment_id
+                    FROM pending_shipment_items psi
+                    JOIN pending_shipments ps ON psi.pending_shipment_id = ps.pending_shipment_id
+                    WHERE psi.pending_item_id = ?
                 """, (pending_item_id,))
                 item = cursor.fetchone()
                 if item:
+                    item = dict(item)
                     expected = item['quantity_expected']
                     current_verified = item['quantity_verified']
+                    verification_mode = item.get('verification_mode', 'verify_whole_shipment')
+                    pending_shipment_id = item['pending_shipment_id']
             
             updates = []
             values = []
@@ -1242,7 +1458,28 @@ def update_pending_item_verification(
             cursor.execute(query, values)
             conn.commit()
             success = cursor.rowcount > 0
-            conn.close()
+            
+            # If auto-add mode and quantity was updated, add to inventory immediately
+            if success and verification_mode == 'auto_add' and quantity_verified is not None and quantity_verified > 0 and employee_id:
+                conn.close()  # Close current connection first
+                try:
+                    # Add to inventory immediately
+                    result = add_item_to_inventory_immediately(pending_item_id, employee_id)
+                    if not result.get('success'):
+                        print(f"ERROR: Failed to add item to inventory in auto-add mode: {result.get('message', 'Unknown error')}")
+                        import traceback
+                        traceback.print_exc()
+                    else:
+                        print(f"SUCCESS: Added {result.get('quantity_added', 0)} units of product {result.get('product_id')} to inventory")
+                except Exception as e:
+                    print(f"ERROR: Exception adding item to inventory in auto-add mode: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Don't fail the update if auto-add fails
+            else:
+                if success:
+                    print(f"DEBUG: Not adding to inventory - mode={verification_mode}, qty={quantity_verified}, emp={employee_id}")
+                conn.close()
             
             return success
             
@@ -5259,19 +5496,44 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     
     shipment = dict(cursor.fetchone())
     
-    # Create approved shipment
+    # Check if approved shipment already exists (for auto-add mode)
     cursor.execute("""
-        INSERT INTO approved_shipments
-        (pending_shipment_id, vendor_id, purchase_order_number, 
-         received_date, approved_by, total_items_received, total_cost,
-         has_issues, issue_count)
-        VALUES (?, ?, ?, DATE('now'), ?, ?, ?, ?, ?)
-    """, (pending_shipment_id, shipment['vendor_id'], 
-          shipment.get('purchase_order_number'), employee_id,
-          shipment['total_received'], shipment['total_cost'],
-          1 if shipment['issue_count'] > 0 else 0, shipment['issue_count']))
+        SELECT shipment_id FROM approved_shipments
+        WHERE pending_shipment_id = ?
+    """, (pending_shipment_id,))
     
-    approved_shipment_id = cursor.lastrowid
+    existing_approved = cursor.fetchone()
+    if existing_approved:
+        existing_approved = dict(existing_approved)
+        approved_shipment_id = existing_approved['shipment_id']
+        # Update totals
+        cursor.execute("""
+            UPDATE approved_shipments
+            SET total_items_received = (
+                SELECT COALESCE(SUM(quantity_received), 0) FROM approved_shipment_items
+                WHERE shipment_id = ?
+            ),
+            total_cost = (
+                SELECT COALESCE(SUM(quantity_received * unit_cost), 0) FROM approved_shipment_items
+                WHERE shipment_id = ?
+            ),
+            approved_by = ?
+            WHERE shipment_id = ?
+        """, (approved_shipment_id, approved_shipment_id, employee_id, approved_shipment_id))
+    else:
+        # Create approved shipment
+        cursor.execute("""
+            INSERT INTO approved_shipments
+            (pending_shipment_id, vendor_id, purchase_order_number, 
+             received_date, approved_by, total_items_received, total_cost,
+             has_issues, issue_count)
+            VALUES (?, ?, ?, DATE('now'), ?, ?, ?, ?, ?)
+        """, (pending_shipment_id, shipment['vendor_id'], 
+              shipment.get('purchase_order_number'), employee_id,
+              shipment['total_received'], shipment['total_cost'],
+              1 if shipment['issue_count'] > 0 else 0, shipment['issue_count']))
+        
+        approved_shipment_id = cursor.lastrowid
     
     vendor_id = shipment['vendor_id']
     
@@ -5397,7 +5659,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             # Don't rollback here, just continue - other items might succeed
             continue
     
-    # Transfer verified items to approved shipment items
+    # Transfer verified items to approved shipment items (only if not already added in auto-add mode)
     cursor.execute("""
         INSERT INTO approved_shipment_items
         (shipment_id, product_id, quantity_received, unit_cost, 
@@ -5414,33 +5676,46 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         WHERE psi.pending_shipment_id = ?
         AND COALESCE(psi.quantity_verified, 0) > 0
         AND psi.product_id IS NOT NULL
-    """, (approved_shipment_id, employee_id, pending_shipment_id))
+        AND NOT EXISTS (
+            SELECT 1 FROM approved_shipment_items asi
+            WHERE asi.shipment_id = ? AND asi.product_id = psi.product_id
+        )
+    """, (approved_shipment_id, employee_id, pending_shipment_id, approved_shipment_id))
     
-    # Update inventory quantities and vendor_id for all verified items
-    # Get all verified items with their product_ids
+    # Check verification mode - in auto-add mode, items are already added to inventory
     cursor.execute("""
-        SELECT product_id, SUM(quantity_verified) as total_quantity
-        FROM pending_shipment_items
+        SELECT verification_mode FROM pending_shipments
         WHERE pending_shipment_id = ?
-        AND product_id IS NOT NULL
-        AND COALESCE(quantity_verified, 0) > 0
-        GROUP BY product_id
     """, (pending_shipment_id,))
+    mode_result = cursor.fetchone()
+    verification_mode = mode_result['verification_mode'] if mode_result else 'verify_whole_shipment'
     
-    items_to_update = cursor.fetchall()
-    
-    # Update inventory for each product - set vendor_id and update quantity
-    for item in items_to_update:
-        product_id = item['product_id']
-        quantity = item['total_quantity']
+    # Update inventory quantities and vendor_id for all verified items (only if not auto-add mode)
+    if verification_mode != 'auto_add':
+        # Get all verified items with their product_ids
         cursor.execute("""
-            UPDATE inventory
-            SET current_quantity = current_quantity + ?,
-                vendor_id = ?,
-                vendor = ?,
-                last_restocked = CURRENT_TIMESTAMP
-            WHERE product_id = ?
-        """, (quantity, vendor_id, vendor_name, product_id))
+            SELECT product_id, SUM(quantity_verified) as total_quantity
+            FROM pending_shipment_items
+            WHERE pending_shipment_id = ?
+            AND product_id IS NOT NULL
+            AND COALESCE(quantity_verified, 0) > 0
+            GROUP BY product_id
+        """, (pending_shipment_id,))
+        
+        items_to_update = cursor.fetchall()
+        
+        # Update inventory for each product - set vendor_id and update quantity
+        for item in items_to_update:
+            product_id = item['product_id']
+            quantity = item['total_quantity']
+            cursor.execute("""
+                UPDATE inventory
+                SET current_quantity = current_quantity + ?,
+                    vendor_id = ?,
+                    vendor = ?,
+                    last_restocked = CURRENT_TIMESTAMP
+                WHERE product_id = ?
+            """, (quantity, vendor_id, vendor_name, product_id))
     
     # Update pending shipment status
     status = 'completed_with_issues' if shipment['issue_count'] > 0 else 'approved'
@@ -5544,7 +5819,8 @@ def create_shipment_from_document(
     purchase_order_number: Optional[str] = None,
     expected_delivery_date: Optional[str] = None,
     uploaded_by: Optional[int] = None,
-    column_mapping: Optional[Dict[str, str]] = None
+    column_mapping: Optional[Dict[str, str]] = None,
+    verification_mode: str = 'verify_whole_shipment'
 ) -> Dict[str, Any]:
     """
     Create a pending shipment from a scraped vendor document
@@ -5556,6 +5832,7 @@ def create_shipment_from_document(
         expected_delivery_date: Optional expected delivery date
         uploaded_by: Employee ID who uploaded
         column_mapping: Optional column mapping for document scraping
+        verification_mode: 'auto_add' or 'verify_whole_shipment' (default)
     
     Returns:
         Dictionary with pending_shipment_id and items created
@@ -5584,7 +5861,8 @@ def create_shipment_from_document(
             file_path=file_path,
             expected_date=expected_delivery_date,
             purchase_order_number=purchase_order_number,
-            uploaded_by=uploaded_by
+            uploaded_by=uploaded_by,
+            verification_mode=verification_mode
         )
     except Exception as e:
         return {

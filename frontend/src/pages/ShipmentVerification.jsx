@@ -2082,7 +2082,8 @@ function UploadShipmentModal({ onClose, onSuccess }) {
     vendor_id: '',
     purchase_order_number: '',
     expected_delivery_date: '',
-    document: null
+    document: null,
+    verification_mode: 'verify_whole_shipment'
   })
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
@@ -2171,6 +2172,7 @@ function UploadShipmentModal({ onClose, onSuccess }) {
       uploadFormData.append('vendor_id', formData.vendor_id)
       uploadFormData.append('purchase_order_number', formData.purchase_order_number)
       uploadFormData.append('expected_delivery_date', formData.expected_delivery_date)
+      uploadFormData.append('verification_mode', formData.verification_mode)
       uploadFormData.append('session_token', sessionToken)
 
       const response = await fetch('/api/shipments/upload', {
@@ -2357,6 +2359,33 @@ function UploadShipmentModal({ onClose, onSuccess }) {
                 color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+              Verification Mode
+            </label>
+            <select
+              value={formData.verification_mode}
+              onChange={(e) => setFormData({ ...formData, verification_mode: e.target.value })}
+              style={{
+                width: '100%',
+                padding: '10px',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '14px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}
+            >
+              <option value="verify_whole_shipment">Verify Whole Shipment (Items added after completion)</option>
+              <option value="auto_add">Auto-Add Mode (Items added immediately on check-in)</option>
+            </select>
+            <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginTop: '4px' }}>
+              {formData.verification_mode === 'auto_add' 
+                ? 'Items will be added to inventory as soon as you check them in'
+                : 'Items will be added to inventory only after completing verification'}
+            </div>
           </div>
 
           <div style={{ marginBottom: '20px' }}>
