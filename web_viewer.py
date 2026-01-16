@@ -28,7 +28,10 @@ from database import (
     get_pending_shipments_with_progress, get_shipment_items,
     create_shipment_from_document, update_pending_item_verification, add_vendor,
     clock_in, clock_out, get_current_clock_status, get_schedule,
-    get_store_location_settings, update_store_location_settings
+    get_store_location_settings, update_store_location_settings,
+    get_employee_azure_face, save_employee_azure_face, delete_employee_azure_face,
+    log_face_enrollment, log_face_recognition, get_employees_with_face_enrollment,
+    get_face_recognition_stats
 )
 from permission_manager import get_permission_manager
 import sqlite3
@@ -2196,6 +2199,392 @@ def api_face_clock():
                 }), 400
         else:
             return jsonify({'success': False, 'message': 'Invalid action. Use "clock_in" or "clock_out"'}), 400
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# ============================================================================
+# Azure Face API Endpoints
+# ============================================================================
+
+@app.route('/api/azure-face/enroll', methods=['POST'])
+def api_azure_face_enroll():
+    """Enroll employee face using Azure Face API"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        # Get employee info
+        employee = get_employee(employee_id)
+        if not employee:
+            return jsonify({'success': False, 'message': 'Employee not found'}), 404
+        
+        # Check if image is provided
+        if 'image' not in request.files and 'image_data' not in request.json:
+            return jsonify({'success': False, 'message': 'Image required'}), 400
+        
+        # Get image data
+        if 'image' in request.files:
+            image_file = request.files['image']
+            image_data = image_file.read()
+        else:
+            # Base64 encoded image
+            import base64
+            image_data = base64.b64decode(request.json['image_data'].split(',')[-1])
+        
+        # Initialize Azure Face service
+        try:
+            from azure_face_service import AzureFaceService
+            face_service = AzureFaceService()
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 500
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'Azure Face API not configured: {str(e)}'}), 500
+        
+        # Perform liveness check
+        liveness_result = face_service.verify_liveness(image_data)
+        if not liveness_result['is_live']:
+            log_face_enrollment(employee_id, 'failed', f"Liveness check failed: {liveness_result['reason']}")
+            return jsonify({
+                'success': False,
+                'message': f"Liveness check failed: {liveness_result['reason']}",
+                'liveness': liveness_result
+            }), 400
+        
+        # Enroll employee
+        employee_name = f"{employee.get('first_name', '')} {employee.get('last_name', '')}".strip()
+        enrollment_result = face_service.enroll_employee(employee_id, employee_name, image_data)
+        
+        # Save to database
+        save_employee_azure_face(
+            employee_id,
+            enrollment_result['person_id'],
+            enrollment_images_count=1
+        )
+        
+        log_face_enrollment(employee_id, 'success')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Face enrolled successfully',
+            'person_id': enrollment_result['person_id'],
+            'liveness': liveness_result
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        if 'employee_id' in locals():
+            log_face_enrollment(employee_id, 'failed', str(e))
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/azure-face/recognize', methods=['POST'])
+def api_azure_face_recognize():
+    """Recognize employee from face image using Azure Face API"""
+    try:
+        # Check if image is provided
+        if 'image' not in request.files and 'image_data' not in request.json:
+            return jsonify({'success': False, 'message': 'Image required'}), 400
+        
+        # Get image data
+        if 'image' in request.files:
+            image_file = request.files['image']
+            image_data = image_file.read()
+        else:
+            # Base64 encoded image
+            import base64
+            image_data = base64.b64decode(request.json['image_data'].split(',')[-1])
+        
+        confidence_threshold = float(request.json.get('confidence_threshold', 0.5))
+        
+        # Initialize Azure Face service
+        try:
+            from azure_face_service import AzureFaceService
+            face_service = AzureFaceService()
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 500
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'Azure Face API not configured: {str(e)}'}), 500
+        
+        # Recognize employee
+        recognition_result = face_service.recognize_employee(image_data, confidence_threshold=confidence_threshold)
+        
+        if not recognition_result:
+            log_face_recognition(None, 'failed', error_message='Face not recognized')
+            return jsonify({
+                'success': False,
+                'message': 'Face not recognized'
+            }), 404
+        
+        # Get employee info
+        employee = get_employee(recognition_result['employee_id'])
+        if not employee:
+            log_face_recognition(None, 'failed', error_message='Employee not found')
+            return jsonify({'success': False, 'message': 'Employee not found'}), 404
+        
+        log_face_recognition(
+            recognition_result['employee_id'],
+            'success',
+            confidence=recognition_result['confidence']
+        )
+        
+        return jsonify({
+            'success': True,
+            'employee_id': recognition_result['employee_id'],
+            'employee_name': f"{employee.get('first_name', '')} {employee.get('last_name', '')}".strip(),
+            'confidence': recognition_result['confidence']
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        log_face_recognition(None, 'failed', error_message=str(e))
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/azure-face/clock', methods=['POST'])
+def api_azure_face_clock():
+    """Clock in/out using Azure Face API recognition"""
+    try:
+        data = request.json
+        action = data.get('action', 'clock_in')  # 'clock_in' or 'clock_out'
+        
+        # Get location data if provided
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        address = data.get('address')
+        
+        # Check if image is provided
+        if 'image' not in request.files and 'image_data' not in data:
+            return jsonify({'success': False, 'message': 'Image required'}), 400
+        
+        # Get image data
+        if 'image' in request.files:
+            image_file = request.files['image']
+            image_data = image_file.read()
+        else:
+            # Base64 encoded image
+            import base64
+            image_data = base64.b64decode(data['image_data'].split(',')[-1])
+        
+        confidence_threshold = float(data.get('confidence_threshold', 0.5))
+        
+        # Initialize Azure Face service
+        try:
+            from azure_face_service import AzureFaceService
+            face_service = AzureFaceService()
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 500
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'Azure Face API not configured: {str(e)}'}), 500
+        
+        # Recognize employee
+        recognition_result = face_service.recognize_employee(image_data, confidence_threshold=confidence_threshold)
+        
+        if not recognition_result:
+            log_face_recognition(None, 'failed', error_message='Face not recognized for clock')
+            return jsonify({
+                'success': False,
+                'message': 'Face not recognized. Please try again or use PIN code.'
+            }), 404
+        
+        employee_id = recognition_result['employee_id']
+        employee = get_employee(employee_id)
+        if not employee:
+            return jsonify({'success': False, 'message': 'Employee not found'}), 404
+        
+        # Perform clock in/out
+        if action == 'clock_in':
+            result = clock_in(employee_id, latitude=latitude, longitude=longitude, address=address)
+        else:
+            result = clock_out(employee_id, latitude=latitude, longitude=longitude, address=address)
+        
+        if result.get('success'):
+            log_face_recognition(employee_id, 'success', confidence=recognition_result['confidence'])
+            return jsonify({
+                'success': True,
+                'message': result.get('message', f'Clocked {action.replace("_", " ")} successfully'),
+                'employee_id': employee_id,
+                'employee_name': f"{employee.get('first_name', '')} {employee.get('last_name', '')}".strip(),
+                'confidence': recognition_result['confidence']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result.get('message', 'Failed to clock in/out')
+            }), 400
+        
+    except Exception as e:
+        traceback.print_exc()
+        log_face_recognition(None, 'failed', error_message=str(e))
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/azure-face/status', methods=['GET'])
+def api_azure_face_status():
+    """Check if employee has Azure Face enrollment"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        face_data = get_employee_azure_face(employee_id)
+        
+        if face_data:
+            return jsonify({
+                'success': True,
+                'has_face': True,
+                'enrolled_at': face_data.get('enrolled_at'),
+                'enrollment_images_count': face_data.get('enrollment_images_count', 0)
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'has_face': False
+            })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/azure-face/delete', methods=['POST'])
+def api_azure_face_delete():
+    """Delete Azure Face enrollment for employee"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        # Get Azure person ID
+        face_data = get_employee_azure_face(employee_id)
+        if not face_data:
+            return jsonify({'success': False, 'message': 'No face enrollment found'}), 404
+        
+        # Delete from Azure
+        try:
+            from azure_face_service import AzureFaceService
+            face_service = AzureFaceService()
+            face_service.delete_person(face_data['azure_person_id'])
+        except Exception as e:
+            print(f"Warning: Error deleting from Azure: {e}")
+        
+        # Delete from database
+        delete_employee_azure_face(employee_id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Face enrollment deleted successfully'
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/azure-face/enrolled-employees', methods=['GET'])
+def api_azure_face_enrolled_employees():
+    """Get list of employees with face enrollment (admin only)"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        # Check admin permission
+        employee = get_employee(employee_id)
+        if not employee or employee.get('position', '').lower() != 'admin':
+            pm = get_permission_manager()
+            if not pm.has_permission(employee_id, 'manage_employees'):
+                return jsonify({'success': False, 'message': 'Permission denied'}), 403
+        
+        employees = get_employees_with_face_enrollment()
+        
+        return jsonify({
+            'success': True,
+            'employees': employees
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/azure-face/stats', methods=['GET'])
+def api_azure_face_stats():
+    """Get face recognition statistics (admin only)"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        
+        # Check admin permission
+        employee = get_employee(employee_id)
+        if not employee or employee.get('position', '').lower() != 'admin':
+            pm = get_permission_manager()
+            if not pm.has_permission(employee_id, 'manage_employees'):
+                return jsonify({'success': False, 'message': 'Permission denied'}), 403
+        
+        days = int(request.args.get('days', 7))
+        stats = get_face_recognition_stats(days)
+        
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'days': days
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/clock/pin', methods=['POST'])
+def api_clock_pin():
+    """Clock in/out using PIN code as fallback"""
+    try:
+        data = request.json
+        pin_code = data.get('pin_code')
+        action = data.get('action', 'clock_in')  # 'clock_in' or 'clock_out'
+        
+        if not pin_code:
+            return jsonify({'success': False, 'message': 'PIN code required'}), 400
+        
+        # Find employee by PIN code
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT employee_id, first_name, last_name, pin_code
+            FROM employees
+            WHERE pin_code = ? AND active = 1
+        """, (pin_code,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({'success': False, 'message': 'Invalid PIN code'}), 401
+        
+        employee_id = row['employee_id']
+        
+        # Get location data if provided
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        address = data.get('address')
+        
+        # Perform clock in/out
+        if action == 'clock_in':
+            result = clock_in(employee_id, latitude=latitude, longitude=longitude, address=address)
+        else:
+            result = clock_out(employee_id, latitude=latitude, longitude=longitude, address=address)
+        
+        if result.get('success'):
+            return jsonify({
+                'success': True,
+                'message': result.get('message', f'Clocked {action.replace("_", " ")} successfully'),
+                'employee_id': employee_id,
+                'employee_name': f"{row['first_name']} {row['last_name']}"
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result.get('message', 'Failed to clock in/out')
+            }), 400
         
     except Exception as e:
         traceback.print_exc()

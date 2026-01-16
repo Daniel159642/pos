@@ -39,3 +39,6 @@ ollama>=0.1.0       # Optional: Local LLM for better category naming (hybrid app
 reportlab>=4.0.0   # PDF generation for receipts
 qrcode>=7.4.0       # QR code/barcode generation for receipts
 Pillow>=9.0.0       # Image processing (already listed above, but needed for qrcode)
+
+# Azure Face API dependencies:
+requests>=2.28.0    # HTTP requests for Azure Face API (already listed above)

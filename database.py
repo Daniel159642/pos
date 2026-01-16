@@ -6180,3 +6180,200 @@ def validate_location(latitude: float, longitude: float) -> Dict[str, Any]:
             'message': f'Location too far from store ({distance:.0f}m away, allowed: {allowed_radius:.0f}m)',
             'distance': distance
         }
+# ============================================================================
+# Azure Face API Functions
+# ============================================================================
+
+def get_employee_azure_face(employee_id: int) -> Optional[Dict[str, Any]]:
+    """Get Azure Face API enrollment info for an employee"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM employee_azure_faces 
+        WHERE employee_id = ? AND is_active = 1
+    """, (employee_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    return dict(row)
+
+def save_employee_azure_face(
+    employee_id: int,
+    azure_person_id: str,
+    enrollment_images_count: int = 1
+) -> bool:
+    """Save or update Azure Face API enrollment for an employee"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Check if enrollment exists
+        cursor.execute("""
+            SELECT face_id FROM employee_azure_faces 
+            WHERE employee_id = ?
+        """, (employee_id,))
+        
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing
+            cursor.execute("""
+                UPDATE employee_azure_faces
+                SET azure_person_id = ?,
+                    enrollment_images_count = ?,
+                    updated_at = CURRENT_TIMESTAMP,
+                    is_active = 1
+                WHERE employee_id = ?
+            """, (azure_person_id, enrollment_images_count, employee_id))
+        else:
+            # Insert new
+            cursor.execute("""
+                INSERT INTO employee_azure_faces (
+                    employee_id, azure_person_id, enrollment_images_count
+                ) VALUES (?, ?, ?)
+            """, (employee_id, azure_person_id, enrollment_images_count))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        print(f"Error saving Azure Face enrollment: {e}")
+        return False
+
+def delete_employee_azure_face(employee_id: int) -> bool:
+    """Delete Azure Face API enrollment for an employee"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE employee_azure_faces
+            SET is_active = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE employee_id = ?
+        """, (employee_id,))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        print(f"Error deleting Azure Face enrollment: {e}")
+        return False
+
+def log_face_enrollment(
+    employee_id: int,
+    enrollment_status: str,
+    error_message: Optional[str] = None
+) -> None:
+    """Log face enrollment attempt"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO face_enrollment_log (
+                employee_id, enrollment_status, error_message
+            ) VALUES (?, ?, ?)
+        """, (employee_id, enrollment_status, error_message))
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Error logging face enrollment: {e}")
+    finally:
+        conn.close()
+
+def log_face_recognition(
+    employee_id: Optional[int],
+    recognition_status: str,
+    confidence: Optional[float] = None,
+    error_message: Optional[str] = None
+) -> None:
+    """Log face recognition attempt"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO face_recognition_log (
+                employee_id, recognition_status, confidence, error_message
+            ) VALUES (?, ?, ?, ?)
+        """, (employee_id, recognition_status, confidence, error_message))
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Error logging face recognition: {e}")
+    finally:
+        conn.close()
+
+def get_employees_with_face_enrollment() -> List[Dict[str, Any]]:
+    """Get all employees who have face enrollment"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            e.employee_id,
+            e.first_name,
+            e.last_name,
+            e.username,
+            e.position,
+            af.azure_person_id,
+            af.enrolled_at,
+            af.enrollment_images_count,
+            af.is_active
+        FROM employees e
+        INNER JOIN employee_azure_faces af ON e.employee_id = af.employee_id
+        WHERE af.is_active = 1
+        ORDER BY e.last_name, e.first_name
+    """)
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+def get_face_recognition_stats(days: int = 7) -> Dict[str, Any]:
+    """Get face recognition statistics for the last N days"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_attempts,
+            SUM(CASE WHEN recognition_status = 'success' THEN 1 ELSE 0 END) as successful,
+            SUM(CASE WHEN recognition_status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN recognition_status = 'no_face' THEN 1 ELSE 0 END) as no_face,
+            AVG(CASE WHEN recognition_status = 'success' THEN confidence ELSE NULL END) as avg_confidence
+        FROM face_recognition_log
+        WHERE recognized_at >= datetime('now', '-' || ? || ' days')
+    """, (days,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return {
+            'total_attempts': 0,
+            'successful': 0,
+            'failed': 0,
+            'no_face': 0,
+            'avg_confidence': 0.0,
+            'success_rate': 0.0
+        }
+    
+    stats = dict(row)
+    stats['success_rate'] = (stats['successful'] / stats['total_attempts'] * 100) if stats['total_attempts'] > 0 else 0.0
+    stats['avg_confidence'] = float(stats['avg_confidence']) if stats['avg_confidence'] else 0.0
+    
+    return stats
