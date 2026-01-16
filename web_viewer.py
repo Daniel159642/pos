@@ -4555,7 +4555,7 @@ if __name__ == '__main__':
     print("Open your browser to: http://localhost:5001")
     if SOCKETIO_AVAILABLE and socketio:
         print("Socket.IO enabled - real-time features available")
-        socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+        socketio.run(app, debug=True, host='0.0.0.0', port=5001, allow_unsafe_werkzeug=True)
     else:
         print("Socket.IO disabled - using standard Flask server")
         app.run(debug=True, host='0.0.0.0', port=5001)
