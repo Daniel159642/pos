@@ -31,7 +31,14 @@ from database import (
     get_store_location_settings, update_store_location_settings,
     get_employee_azure_face, save_employee_azure_face, delete_employee_azure_face,
     log_face_enrollment, log_face_recognition, get_employees_with_face_enrollment,
-    get_face_recognition_stats
+    get_face_recognition_stats,
+    # Accounting functions
+    get_accounting_dashboard_summary, generate_balance_sheet, generate_income_statement,
+    generate_cash_flow_statement, generate_trial_balance,
+    create_payroll_record, get_payroll_records, get_tax_withholdings_summary,
+    record_sales_tax, get_sales_tax_summary,
+    add_contractor_payment, get_contractor_payments,
+    add_expense, get_expenses, get_expense_categories
 )
 from permission_manager import get_permission_manager
 import sqlite3
@@ -4929,6 +4936,718 @@ def api_update_store_location_settings():
 def customer_display():
     """Render customer display page"""
     return render_template('customer_display.html')
+
+# ============================================================================
+# ACCOUNTING API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/accounting/dashboard', methods=['GET'])
+def api_accounting_dashboard():
+    """Get accounting dashboard summary"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        # Check permissions - only managers/admins
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        summary = get_accounting_dashboard_summary(start_date, end_date)
+        return jsonify(summary)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/balance-sheet', methods=['GET'])
+def api_balance_sheet():
+    """Generate balance sheet"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        as_of_date = request.args.get('as_of_date')
+        balance_sheet = generate_balance_sheet(as_of_date)
+        return jsonify(balance_sheet)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/income-statement', methods=['GET'])
+def api_income_statement():
+    """Generate income statement"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        if not start_date or not end_date:
+            return jsonify({'error': 'start_date and end_date required'}), 400
+        
+        income_statement = generate_income_statement(start_date, end_date)
+        return jsonify(income_statement)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/cash-flow', methods=['GET'])
+def api_cash_flow():
+    """Generate cash flow statement"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        if not start_date or not end_date:
+            return jsonify({'error': 'start_date and end_date required'}), 400
+        
+        cash_flow = generate_cash_flow_statement(start_date, end_date)
+        return jsonify(cash_flow)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/payroll', methods=['GET'])
+def api_get_payroll():
+    """Get payroll records"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        filter_employee_id = request.args.get('employee_id', type=int)
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        payroll_records = get_payroll_records(filter_employee_id, start_date, end_date)
+        return jsonify(payroll_records)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/payroll', methods=['POST'])
+def api_create_payroll():
+    """Create a payroll record"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        data = request.json
+        result = create_payroll_record(
+            employee_id=data['employee_id'],
+            pay_period_start=data['pay_period_start'],
+            pay_period_end=data['pay_period_end'],
+            pay_date=data['pay_date'],
+            created_by=employee_id,
+            hours_worked=data.get('hours_worked'),
+            gross_pay=data.get('gross_pay'),
+            tax_rates=data.get('tax_rates'),
+            other_deductions=data.get('other_deductions', 0),
+            notes=data.get('notes')
+        )
+        
+        if result.get('success'):
+            return jsonify(result), 201
+        else:
+            return jsonify(result), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/expenses', methods=['GET'])
+def api_get_expenses():
+    """Get expenses"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        category_id = request.args.get('category_id', type=int)
+        vendor_id = request.args.get('vendor_id', type=int)
+        
+        expenses = get_expenses(start_date, end_date, category_id, vendor_id)
+        return jsonify(expenses)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/expenses', methods=['POST'])
+def api_add_expense():
+    """Add an expense"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        data = request.json
+        expense_id = add_expense(
+            expense_date=data['expense_date'],
+            description=data['description'],
+            amount=data['amount'],
+            created_by=employee_id,
+            category_id=data.get('category_id'),
+            vendor_id=data.get('vendor_id'),
+            payment_method=data.get('payment_method'),
+            receipt_path=data.get('receipt_path'),
+            account_id=data.get('account_id'),
+            notes=data.get('notes')
+        )
+        
+        return jsonify({'success': True, 'expense_id': expense_id}), 201
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/expense-categories', methods=['GET'])
+def api_get_expense_categories():
+    """Get expense categories"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        categories = get_expense_categories()
+        return jsonify(categories)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/sales-tax', methods=['GET'])
+def api_get_sales_tax():
+    """Get sales tax summary"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        jurisdiction = request.args.get('jurisdiction')
+        
+        if not start_date or not end_date:
+            return jsonify({'error': 'start_date and end_date required'}), 400
+        
+        tax_summary = get_sales_tax_summary(start_date, end_date, jurisdiction)
+        return jsonify(tax_summary)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/contractor-payments', methods=['GET'])
+def api_get_contractor_payments():
+    """Get contractor payments for 1099-NEC"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        tax_year = request.args.get('tax_year', type=int)
+        contractor_tin = request.args.get('contractor_tin')
+        
+        payments = get_contractor_payments(tax_year, contractor_tin)
+        return jsonify(payments)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/contractor-payments', methods=['POST'])
+def api_add_contractor_payment():
+    """Add contractor payment"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        data = request.json
+        payment_id = add_contractor_payment(
+            contractor_name=data['contractor_name'],
+            contractor_tin=data['contractor_tin'],
+            payment_date=data['payment_date'],
+            payment_amount=data['payment_amount'],
+            tax_year=data['tax_year'],
+            created_by=employee_id,
+            contractor_address=data.get('contractor_address'),
+            contractor_city=data.get('contractor_city'),
+            contractor_state=data.get('contractor_state'),
+            contractor_zip=data.get('contractor_zip'),
+            payment_description=data.get('payment_description'),
+            notes=data.get('notes')
+        )
+        
+        return jsonify({'success': True, 'payment_id': payment_id}), 201
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/tax-withholdings/<int:employee_id>/<int:tax_year>', methods=['GET'])
+def api_get_tax_withholdings(employee_id, tax_year):
+    """Get tax withholdings for W-2 generation"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        current_employee_id = session_data.get('employee_id')
+        employee = get_employee(current_employee_id)
+        
+        if employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        withholdings = get_tax_withholdings_summary(employee_id, tax_year)
+        if withholdings:
+            return jsonify(withholdings)
+        else:
+            return jsonify({'error': 'No withholdings found'}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/taxes', methods=['GET'])
+def api_get_all_taxes():
+    """Get comprehensive tax data (Sales Tax, Form 941, Form 940)"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        employee_id = session_data.get('employee_id')
+        employee = get_employee(employee_id)
+        
+        if not employee or employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        tax_year = request.args.get('tax_year', type=int, default=datetime.now().year)
+        quarter = request.args.get('quarter', type=int)
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        from database import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        result = {}
+        
+        # Sales Tax Summary
+        if start_date and end_date:
+            tax_summary = get_sales_tax_summary(start_date, end_date)
+            result['sales_tax'] = tax_summary
+        else:
+            # Full year
+            result['sales_tax'] = get_sales_tax_summary(f'{tax_year}-01-01', f'{tax_year}-12-31')
+        
+        # Form 941 Data (Quarterly)
+        if quarter:
+            q_start = {1: '01-01', 2: '04-01', 3: '07-01', 4: '10-01'}[quarter]
+            q_end = {1: '03-31', 2: '06-30', 3: '09-30', 4: '12-31'}[quarter]
+            quarter_start = f'{tax_year}-{q_start}'
+            quarter_end = f'{tax_year}-{q_end}'
+        else:
+            # Current quarter
+            quarter = (datetime.now().month - 1) // 3 + 1
+            q_start = {1: '01-01', 2: '04-01', 3: '07-01', 4: '10-01'}[quarter]
+            q_end = {1: '03-31', 2: '06-30', 3: '09-30', 4: '12-31'}[quarter]
+            quarter_start = f'{tax_year}-{q_start}'
+            quarter_end = f'{tax_year}-{q_end}'
+        
+        cursor.execute("""
+            SELECT 
+                COUNT(DISTINCT employee_id) as num_employees,
+                SUM(gross_pay) as total_wages,
+                SUM(federal_income_tax_withheld) as federal_tax,
+                SUM(social_security_tax_withheld + social_security_tax_employer) as ss_tax,
+                SUM(medicare_tax_withheld + medicare_tax_employer) as medicare_tax,
+                SUM(social_security_tax_withheld + social_security_tax_employer + 
+                    medicare_tax_withheld + medicare_tax_employer + 
+                    federal_income_tax_withheld) as total_tax_liability
+            FROM payroll_records
+            WHERE DATE(pay_date) BETWEEN ? AND ?
+        """, (quarter_start, quarter_end))
+        
+        form941 = cursor.fetchone()
+        result['form_941'] = {
+            'quarter': quarter,
+            'tax_year': tax_year,
+            'quarter_start': quarter_start,
+            'quarter_end': quarter_end,
+            'num_employees': form941['num_employees'] or 0,
+            'total_wages': float(form941['total_wages'] or 0),
+            'federal_tax_withheld': float(form941['federal_tax'] or 0),
+            'ss_tax_total': float(form941['ss_tax'] or 0),
+            'medicare_tax_total': float(form941['medicare_tax'] or 0),
+            'total_tax_liability': float(form941['total_tax_liability'] or 0)
+        } if form941 else None
+        
+        # Form 940 Data (Annual FUTA)
+        cursor.execute("""
+            SELECT 
+                COUNT(DISTINCT employee_id) as num_employees,
+                SUM(CASE WHEN gross_pay <= 7000 THEN gross_pay ELSE 7000 END) as futa_wages,
+                SUM(CASE WHEN gross_pay <= 7000 THEN gross_pay ELSE 7000 END) * 0.006 as futa_tax
+            FROM payroll_records
+            WHERE DATE(pay_date) BETWEEN ? AND ?
+        """, (f'{tax_year}-01-01', f'{tax_year}-12-31'))
+        
+        form940 = cursor.fetchone()
+        result['form_940'] = {
+            'tax_year': tax_year,
+            'num_employees': form940['num_employees'] or 0,
+            'futa_wages': float(form940['futa_wages'] or 0),
+            'futa_tax': float(form940['futa_tax'] or 0)
+        } if form940 else None
+        
+        # Contractor Payments Summary
+        contractor_payments = get_contractor_payments(tax_year=tax_year)
+        result['contractor_payments'] = contractor_payments
+        
+        # Total by contractor
+        contractor_totals = {}
+        for payment in contractor_payments:
+            contractor = payment.get('contractor_name', 'Unknown')
+            if contractor not in contractor_totals:
+                contractor_totals[contractor] = {
+                    'total': 0.0,
+                    'tin': payment.get('contractor_tin', ''),
+                    'count': 0
+                }
+            contractor_totals[contractor]['total'] += float(payment.get('payment_amount', 0))
+            contractor_totals[contractor]['count'] += 1
+        
+        result['contractor_totals'] = contractor_totals
+        
+        conn.close()
+        return jsonify(result)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/tax-forms/w2/<int:employee_id>/<int:tax_year>', methods=['GET'])
+def api_generate_w2_form(employee_id, tax_year):
+    """Generate W-2 form PDF"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        current_employee_id = session_data.get('employee_id')
+        employee = get_employee(current_employee_id)
+        
+        if not employee or employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        from tax_forms import generate_w2_form
+        from database import get_employee, get_tax_withholdings_summary
+        
+        emp = get_employee(employee_id)
+        if not emp:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        withholdings = get_tax_withholdings_summary(employee_id, tax_year)
+        if not withholdings:
+            return jsonify({'error': 'No payroll data found for this employee'}), 404
+        
+        output_path = os.path.join(tempfile.gettempdir(), f'w2_{employee_id}_{tax_year}.pdf')
+        
+        employee_data = {
+            'first_name': emp.get('first_name', ''),
+            'last_name': emp.get('last_name', ''),
+            'ssn': emp.get('ssn', 'XXX-XX-XXXX'),
+            'address': f"{emp.get('address', '')}, {emp.get('city', '')}, {emp.get('state', '')} {emp.get('zip_code', '')}"
+        }
+        
+        success = generate_w2_form(
+            employee_id=employee_id,
+            employee_data=employee_data,
+            payroll_summary=withholdings,
+            output_path=output_path
+        )
+        
+        if success and os.path.exists(output_path):
+            return send_from_directory(os.path.dirname(output_path), os.path.basename(output_path), as_attachment=True, mimetype='application/pdf')
+        else:
+            return jsonify({'error': 'Failed to generate W-2 form'}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/tax-forms/1099nec/<int:contractor_id>/<int:tax_year>', methods=['GET'])
+def api_generate_1099nec_form(contractor_id, tax_year):
+    """Generate 1099-NEC form PDF"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        current_employee_id = session_data.get('employee_id')
+        employee = get_employee(current_employee_id)
+        
+        if not employee or employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        from tax_forms import generate_1099nec_form
+        from database import get_contractor_payments
+        
+        # Get contractor payments
+        payments = get_contractor_payments(tax_year=tax_year)
+        
+        # Find contractor by getting unique contractors
+        contractors = {}
+        for payment in payments:
+            tin = payment.get('contractor_tin', '')
+            if tin and tin not in contractors:
+                contractors[tin] = payment
+        
+        contractor_keys = list(contractors.keys())
+        if contractor_id < 1 or contractor_id > len(contractor_keys):
+            return jsonify({'error': 'Contractor not found'}), 404
+        
+        contractor_payment = contractors[contractor_keys[contractor_id - 1]]
+        
+        payments_summary = {
+            'tax_year': tax_year,
+            'total_payments': sum(float(p.get('payment_amount', 0)) for p in payments 
+                                  if p.get('contractor_tin') == contractor_payment.get('contractor_tin'))
+        }
+        
+        output_path = os.path.join(tempfile.gettempdir(), f'1099nec_{contractor_id}_{tax_year}.pdf')
+        
+        contractor_address = f"{contractor_payment.get('contractor_address', '')}, {contractor_payment.get('contractor_city', '')}, {contractor_payment.get('contractor_state', '')} {contractor_payment.get('contractor_zip', '')}"
+        
+        success = generate_1099nec_form(
+            contractor_name=contractor_payment.get('contractor_name', ''),
+            contractor_tin=contractor_payment.get('contractor_tin', ''),
+            contractor_address=contractor_address,
+            payments_summary=payments_summary,
+            output_path=output_path
+        )
+        
+        if success and os.path.exists(output_path):
+            return send_from_directory(os.path.dirname(output_path), os.path.basename(output_path), as_attachment=True, mimetype='application/pdf')
+        else:
+            return jsonify({'error': 'Failed to generate 1099-NEC form'}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/tax-forms/form941/<int:quarter>/<int:tax_year>', methods=['GET'])
+def api_generate_form941(quarter, tax_year):
+    """Generate Form 941 summary PDF"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        current_employee_id = session_data.get('employee_id')
+        employee = get_employee(current_employee_id)
+        
+        if not employee or employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        from tax_forms import generate_form_941_summary
+        from database import get_payroll_records
+        
+        q_start = {1: '01-01', 2: '04-01', 3: '07-01', 4: '10-01'}[quarter]
+        q_end = {1: '03-31', 2: '06-30', 3: '09-30', 4: '12-31'}[quarter]
+        quarter_start = f'{tax_year}-{q_start}'
+        quarter_end = f'{tax_year}-{q_end}'
+        
+        payroll_data = get_payroll_records(None, quarter_start, quarter_end)
+        
+        output_path = os.path.join(tempfile.gettempdir(), f'form941_q{quarter}_{tax_year}.pdf')
+        
+        success = generate_form_941_summary(
+            quarter=quarter,
+            tax_year=tax_year,
+            payroll_data=payroll_data,
+            output_path=output_path
+        )
+        
+        if success and os.path.exists(output_path):
+            return send_from_directory(os.path.dirname(output_path), os.path.basename(output_path), as_attachment=True, mimetype='application/pdf')
+        else:
+            return jsonify({'error': 'Failed to generate Form 941'}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/tax-forms/form940/<int:tax_year>', methods=['GET'])
+def api_generate_form940(tax_year):
+    """Generate Form 940 summary PDF"""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        session_data = verify_session(session_token)
+        
+        if not session_data:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        current_employee_id = session_data.get('employee_id')
+        employee = get_employee(current_employee_id)
+        
+        if not employee or employee.get('position') not in ['admin', 'manager']:
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        from tax_forms import generate_form_940_summary
+        from database import get_payroll_records
+        
+        payroll_data = get_payroll_records(None, f'{tax_year}-01-01', f'{tax_year}-12-31')
+        
+        output_path = os.path.join(tempfile.gettempdir(), f'form940_{tax_year}.pdf')
+        
+        success = generate_form_940_summary(
+            tax_year=tax_year,
+            payroll_data=payroll_data,
+            output_path=output_path
+        )
+        
+        if success and os.path.exists(output_path):
+            return send_from_directory(os.path.dirname(output_path), os.path.basename(output_path), as_attachment=True, mimetype='application/pdf')
+        else:
+            return jsonify({'error': 'Failed to generate Form 940'}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/uploads/<path:filename>')
 def serve_upload(filename):

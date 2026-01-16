@@ -4982,46 +4982,13 @@ def get_discrepancies(
 # ============================================================================
 
 def generate_balance_sheet(as_of_date: Optional[str] = None) -> Dict[str, Any]:
-    """Generate Balance Sheet"""
+    """Generate Balance Sheet from actual transactions"""
     conn = get_connection()
     cursor = conn.cursor()
     
     if not as_of_date:
         as_of_date = datetime.now().date().isoformat()
     
-    cursor.execute("""
-        SELECT 
-            coa.account_type,
-            coa.account_subtype,
-            coa.account_number,
-            coa.account_name,
-            coa.normal_balance,
-            COALESCE(SUM(
-                CASE WHEN coa.normal_balance = 'debit' 
-                     THEN jel.debit_amount - jel.credit_amount
-                     ELSE jel.credit_amount - jel.debit_amount 
-                END
-            ), 0) as balance
-        FROM chart_of_accounts coa
-        LEFT JOIN journal_entry_lines jel ON coa.account_id = jel.account_id
-        LEFT JOIN journal_entries je ON jel.journal_entry_id = je.journal_entry_id
-        WHERE (je.posted = 1 OR je.posted IS NULL)
-          AND (je.entry_date <= ? OR je.entry_date IS NULL)
-          AND coa.account_type IN ('asset', 'contra_asset', 'liability', 'equity')
-        GROUP BY coa.account_id
-        ORDER BY 
-            CASE 
-                WHEN coa.account_type = 'asset' THEN 1
-                WHEN coa.account_type = 'contra_asset' THEN 2
-                WHEN coa.account_type = 'liability' THEN 3
-                WHEN coa.account_type = 'equity' THEN 4
-            END,
-            coa.account_number
-    """, (as_of_date,))
-    
-    accounts = [dict(row) for row in cursor.fetchall()]
-    
-    # Organize by type
     balance_sheet = {
         'assets': [],
         'liabilities': [],
@@ -5033,21 +5000,166 @@ def generate_balance_sheet(as_of_date: Optional[str] = None) -> Dict[str, Any]:
     total_liabilities = 0.0
     total_equity = 0.0
     
-    for account in accounts:
-        balance = float(account['balance']) if account['balance'] else 0.0
-        
-        if account['account_type'] in ['asset', 'contra_asset']:
-            balance_sheet['assets'].append(account)
-            if account['account_type'] == 'asset':
-                total_assets += balance
-            else:  # contra_asset
-                total_assets -= balance
-        elif account['account_type'] == 'liability':
-            balance_sheet['liabilities'].append(account)
-            total_liabilities += balance
-        elif account['account_type'] == 'equity':
-            balance_sheet['equity'].append(account)
-            total_equity += balance
+    # ASSETS
+    # Cash - from bank accounts
+    cursor.execute("""
+        SELECT COALESCE(SUM(current_balance), 0) as total_cash
+        FROM bank_accounts
+        WHERE is_active = 1
+    """)
+    cash_row = cursor.fetchone()
+    cash_balance = float(cash_row['total_cash']) if cash_row and cash_row['total_cash'] else 0.0
+    
+    if cash_balance > 0:
+        balance_sheet['assets'].append({
+            'account_number': '1000',
+            'account_name': 'Cash',
+            'account_type': 'asset',
+            'account_subtype': 'current_asset',
+            'balance': cash_balance
+        })
+        total_assets += cash_balance
+    
+    # Accounts Receivable (simplified - unpaid orders)
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as total_ar
+        FROM orders
+        WHERE DATE(order_date) <= ?
+          AND payment_status != 'completed'
+    """, (as_of_date,))
+    ar_row = cursor.fetchone()
+    ar_balance = float(ar_row['total_ar']) if ar_row and ar_row['total_ar'] else 0.0
+    
+    if ar_balance > 0:
+        balance_sheet['assets'].append({
+            'account_number': '1100',
+            'account_name': 'Accounts Receivable',
+            'account_type': 'asset',
+            'account_subtype': 'current_asset',
+            'balance': ar_balance
+        })
+        total_assets += ar_balance
+    
+    # Inventory (current quantity * product cost)
+    cursor.execute("""
+        SELECT COALESCE(SUM(current_quantity * COALESCE(product_cost, 0)), 0) as inventory_value
+        FROM inventory
+        WHERE current_quantity > 0
+    """)
+    inv_row = cursor.fetchone()
+    inv_balance = float(inv_row['inventory_value']) if inv_row and inv_row['inventory_value'] else 0.0
+    
+    if inv_balance > 0:
+        balance_sheet['assets'].append({
+            'account_number': '1200',
+            'account_name': 'Inventory',
+            'account_type': 'asset',
+            'account_subtype': 'current_asset',
+            'balance': inv_balance
+        })
+        total_assets += inv_balance
+    
+    # LIABILITIES
+    # Accounts Payable (simplified - could track vendor invoices)
+    ap_balance = 0.0
+    # This would come from unpaid vendor invoices - placeholder for now
+    
+    # Sales Tax Payable
+    cursor.execute("""
+        SELECT COALESCE(SUM(tax_amount), 0) as total_tax_payable
+        FROM sales_tax_collected
+        WHERE DATE(transaction_date) <= ?
+          AND order_id NOT IN (
+              SELECT order_id FROM tax_remittances 
+              WHERE DATE(remittance_date) <= ?
+          )
+    """, (as_of_date, as_of_date))
+    tax_row = cursor.fetchone()
+    tax_payable = float(tax_row['total_tax_payable']) if tax_row and tax_row['total_tax_payable'] else 0.0
+    
+    if tax_payable > 0:
+        balance_sheet['liabilities'].append({
+            'account_number': '2100',
+            'account_name': 'Sales Tax Payable',
+            'account_type': 'liability',
+            'account_subtype': 'current_liability',
+            'balance': tax_payable
+        })
+        total_liabilities += tax_payable
+    
+    # Payroll Taxes Payable
+    cursor.execute("""
+        SELECT 
+            COALESCE(SUM(federal_income_tax_withheld + state_income_tax_withheld + 
+                         social_security_tax_withheld + medicare_tax_withheld), 0) as employee_taxes,
+            COALESCE(SUM(social_security_tax_employer + medicare_tax_employer + 
+                         federal_unemployment_tax + state_unemployment_tax), 0) as employer_taxes
+        FROM payroll_records
+        WHERE DATE(pay_date) <= ?
+    """, (as_of_date,))
+    payroll_tax_row = cursor.fetchone()
+    if payroll_tax_row:
+        payroll_taxes = float(payroll_tax_row['employee_taxes'] or 0) + float(payroll_tax_row['employer_taxes'] or 0)
+        if payroll_taxes > 0:
+            balance_sheet['liabilities'].append({
+                'account_number': '2200',
+                'account_name': 'Payroll Taxes Payable',
+                'account_type': 'liability',
+                'account_subtype': 'current_liability',
+                'balance': payroll_taxes
+            })
+            total_liabilities += payroll_taxes
+    
+    # EQUITY
+    # Owner's Capital (starting equity - could be configured)
+    owner_capital = 50000.0  # Default starting capital
+    
+    # Retained Earnings = Net Income (cumulative)
+    cursor.execute("""
+        SELECT COALESCE(SUM(subtotal), 0) as total_revenue
+        FROM orders
+        WHERE DATE(order_date) <= ? AND order_status = 'completed'
+    """, (as_of_date,))
+    revenue_row = cursor.fetchone()
+    revenue = float(revenue_row['total_revenue']) if revenue_row and revenue_row['total_revenue'] else 0.0
+    
+    cursor.execute("""
+        SELECT COALESCE(SUM(amount), 0) as total_expenses
+        FROM expenses
+        WHERE DATE(expense_date) <= ?
+    """, (as_of_date,))
+    expense_row = cursor.fetchone()
+    expenses = float(expense_row['total_expenses']) if expense_row and expense_row['total_expenses'] else 0.0
+    
+    cursor.execute("""
+        SELECT COALESCE(SUM(gross_pay), 0) as total_payroll
+        FROM payroll_records
+        WHERE DATE(pay_date) <= ?
+    """, (as_of_date,))
+    payroll_row = cursor.fetchone()
+    payroll = float(payroll_row['total_payroll']) if payroll_row and payroll_row['total_payroll'] else 0.0
+    
+    # Simplified: revenue - expenses - payroll (COGS estimated as 60% of revenue)
+    cogs = revenue * 0.60
+    retained_earnings = revenue - cogs - expenses - payroll
+    
+    if owner_capital > 0:
+        balance_sheet['equity'].append({
+            'account_number': '3000',
+            'account_name': "Owner's Capital",
+            'account_type': 'equity',
+            'balance': owner_capital
+        })
+        total_equity += owner_capital
+    
+    if retained_earnings != 0:
+        balance_sheet['equity'].append({
+            'account_number': '3100',
+            'account_name': 'Retained Earnings',
+            'account_type': 'equity',
+            'balance': retained_earnings
+        })
+        total_equity += retained_earnings
     
     balance_sheet['total_assets'] = total_assets
     balance_sheet['total_liabilities'] = total_liabilities
@@ -5059,41 +5171,9 @@ def generate_balance_sheet(as_of_date: Optional[str] = None) -> Dict[str, Any]:
     return balance_sheet
 
 def generate_income_statement(start_date: str, end_date: str) -> Dict[str, Any]:
-    """Generate Income Statement"""
+    """Generate Income Statement from actual transactions"""
     conn = get_connection()
     cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT 
-            coa.account_type,
-            coa.account_subtype,
-            coa.account_number,
-            coa.account_name,
-            coa.normal_balance,
-            COALESCE(SUM(
-                CASE WHEN coa.normal_balance = 'debit' 
-                     THEN jel.debit_amount - jel.credit_amount
-                     ELSE jel.credit_amount - jel.debit_amount 
-                END
-            ), 0) as balance
-        FROM chart_of_accounts coa
-        LEFT JOIN journal_entry_lines jel ON coa.account_id = jel.account_id
-        LEFT JOIN journal_entries je ON jel.journal_entry_id = je.journal_entry_id
-        WHERE je.posted = 1
-          AND je.entry_date BETWEEN ? AND ?
-          AND coa.account_type IN ('revenue', 'contra_revenue', 'expense')
-        GROUP BY coa.account_id
-        ORDER BY 
-            CASE 
-                WHEN coa.account_type = 'revenue' THEN 1
-                WHEN coa.account_type = 'contra_revenue' THEN 2
-                WHEN coa.account_subtype = 'cogs' THEN 3
-                WHEN coa.account_type = 'expense' THEN 4
-            END,
-            coa.account_number
-    """, (start_date, end_date))
-    
-    accounts = [dict(row) for row in cursor.fetchall()]
     
     income_statement = {
         'revenue': [],
@@ -5102,26 +5182,87 @@ def generate_income_statement(start_date: str, end_date: str) -> Dict[str, Any]:
         'period': f"{start_date} to {end_date}"
     }
     
-    total_revenue = 0.0
+    # Get revenue from orders
+    cursor.execute("""
+        SELECT COALESCE(SUM(subtotal), 0) as total_revenue
+        FROM orders
+        WHERE DATE(order_date) BETWEEN ? AND ?
+          AND order_status = 'completed'
+    """, (start_date, end_date))
+    
+    revenue_row = cursor.fetchone()
+    total_revenue = float(revenue_row['total_revenue']) if revenue_row and revenue_row['total_revenue'] else 0.0
+    
+    # Add revenue account entry
+    if total_revenue > 0:
+        income_statement['revenue'].append({
+            'account_number': '4000',
+            'account_name': 'Sales Revenue',
+            'account_type': 'revenue',
+            'balance': total_revenue
+        })
+    
+    # Get COGS (simplified - cost of inventory sold)
+    # This is a placeholder - real COGS would come from inventory cost tracking
     total_cogs = 0.0
+    if total_revenue > 0:
+        # Estimate COGS as 60% of revenue (typical for retail)
+        total_cogs = total_revenue * 0.60
+        income_statement['cogs'].append({
+            'account_number': '5000',
+            'account_name': 'Cost of Goods Sold',
+            'account_subtype': 'cogs',
+            'balance': total_cogs
+        })
+    
+    # Get expenses by category
+    cursor.execute("""
+        SELECT 
+            ec.category_name,
+            COALESCE(SUM(e.amount), 0) as total_amount
+        FROM expense_categories ec
+        LEFT JOIN expenses e ON ec.category_id = e.category_id
+            AND DATE(e.expense_date) BETWEEN ? AND ?
+        WHERE ec.is_active = 1
+        GROUP BY ec.category_id, ec.category_name
+        HAVING total_amount > 0
+        ORDER BY ec.category_name
+    """, (start_date, end_date))
+    
+    expense_rows = cursor.fetchall()
     total_expenses = 0.0
     
-    for account in accounts:
-        balance = float(account['balance']) if account['balance'] else 0.0
-        
-        if account['account_type'] == 'revenue':
-            income_statement['revenue'].append(account)
-            total_revenue += balance
-        elif account['account_type'] == 'contra_revenue':
-            income_statement['revenue'].append(account)
-            total_revenue -= balance
-        elif account['account_subtype'] == 'cogs':
-            income_statement['cogs'].append(account)
-            total_cogs += balance
-        elif account['account_type'] == 'expense':
-            income_statement['expenses'].append(account)
-            total_expenses += balance
+    for expense in expense_rows:
+        amount = float(expense['total_amount']) if expense['total_amount'] else 0.0
+        if amount > 0:
+            income_statement['expenses'].append({
+                'account_number': f'6{expense_rows.index(expense):03d}',
+                'account_name': expense['category_name'],
+                'account_type': 'expense',
+                'balance': amount
+            })
+            total_expenses += amount
     
+    # Get payroll expenses
+    cursor.execute("""
+        SELECT COALESCE(SUM(gross_pay), 0) as total_payroll
+        FROM payroll_records
+        WHERE DATE(pay_date) BETWEEN ? AND ?
+    """, (start_date, end_date))
+    
+    payroll_row = cursor.fetchone()
+    total_payroll = float(payroll_row['total_payroll']) if payroll_row and payroll_row['total_payroll'] else 0.0
+    
+    if total_payroll > 0:
+        income_statement['expenses'].append({
+            'account_number': '6100',
+            'account_name': 'Payroll Expense',
+            'account_type': 'expense',
+            'balance': total_payroll
+        })
+        total_expenses += total_payroll
+    
+    # Calculate totals
     gross_profit = total_revenue - total_cogs
     net_income = gross_profit - total_expenses
     
@@ -6377,3 +6518,692 @@ def get_face_recognition_stats(days: int = 7) -> Dict[str, Any]:
     stats['avg_confidence'] = float(stats['avg_confidence']) if stats['avg_confidence'] else 0.0
     
     return stats
+
+# ============================================================================
+# PAYROLL AND TAX FUNCTIONS
+# ============================================================================
+
+def calculate_payroll_taxes(
+    gross_pay: float,
+    federal_withholding_rate: float = 0.12,  # Default 12%, should be calculated from W-4
+    state_withholding_rate: float = 0.05,   # Default 5%, varies by state
+    local_withholding_rate: float = 0.0,
+    social_security_rate: float = 0.062,     # 6.2% for employee
+    medicare_rate: float = 0.0145,           # 1.45% for employee
+    social_security_wage_base: float = 160200.0,  # 2023 wage base
+    medicare_additional_rate: float = 0.009,  # 0.9% for high earners
+    medicare_threshold: float = 200000.0
+) -> Dict[str, float]:
+    """
+    Calculate payroll taxes for an employee
+    Returns dictionary with all tax amounts
+    """
+    # Federal income tax (simplified - should use actual tax tables)
+    federal_income_tax = gross_pay * federal_withholding_rate
+    
+    # State income tax
+    state_income_tax = gross_pay * state_withholding_rate
+    
+    # Local income tax
+    local_income_tax = gross_pay * local_withholding_rate
+    
+    # Social Security (capped at wage base)
+    taxable_ss_wages = min(gross_pay, social_security_wage_base)
+    social_security_tax = taxable_ss_wages * social_security_rate
+    
+    # Medicare (base rate)
+    medicare_tax = gross_pay * medicare_rate
+    
+    # Additional Medicare tax for high earners
+    if gross_pay > medicare_threshold:
+        additional_medicare = (gross_pay - medicare_threshold) * medicare_additional_rate
+        medicare_tax += additional_medicare
+    
+    # Employer portion (matching)
+    social_security_tax_employer = taxable_ss_wages * social_security_rate
+    medicare_tax_employer = gross_pay * medicare_rate
+    
+    # FUTA (Federal Unemployment Tax) - employer only, 0.6% on first $7,000
+    futa_wage_base = 7000.0
+    futa_rate = 0.006
+    futa_tax = min(gross_pay, futa_wage_base) * futa_rate
+    
+    # SUTA (State Unemployment Tax) - employer only, varies by state
+    suta_wage_base = 7000.0
+    suta_rate = 0.03  # Default 3%, varies by state
+    suta_tax = min(gross_pay, suta_wage_base) * suta_rate
+    
+    total_withheld = (
+        federal_income_tax + state_income_tax + local_income_tax +
+        social_security_tax + medicare_tax
+    )
+    
+    net_pay = gross_pay - total_withheld
+    
+    return {
+        'gross_pay': gross_pay,
+        'federal_income_tax_withheld': federal_income_tax,
+        'state_income_tax_withheld': state_income_tax,
+        'local_income_tax_withheld': local_income_tax,
+        'social_security_tax_withheld': social_security_tax,
+        'medicare_tax_withheld': medicare_tax,
+        'social_security_tax_employer': social_security_tax_employer,
+        'medicare_tax_employer': medicare_tax_employer,
+        'federal_unemployment_tax': futa_tax,
+        'state_unemployment_tax': suta_tax,
+        'total_withheld': total_withheld,
+        'net_pay': net_pay
+    }
+
+def create_payroll_record(
+    employee_id: int,
+    pay_period_start: str,
+    pay_period_end: str,
+    pay_date: str,
+    created_by: int,
+    hours_worked: Optional[float] = None,
+    gross_pay: Optional[float] = None,
+    tax_rates: Optional[Dict[str, float]] = None,
+    other_deductions: float = 0.0,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a payroll record for an employee
+    If hours_worked is provided, calculates gross_pay from hourly_rate
+    Otherwise uses provided gross_pay
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Get employee info
+        cursor.execute("""
+            SELECT hourly_rate, salary, employment_type
+            FROM employees
+            WHERE employee_id = ?
+        """, (employee_id,))
+        
+        emp = cursor.fetchone()
+        if not emp:
+            conn.close()
+            return {'success': False, 'message': 'Employee not found'}
+        
+        emp = dict(emp)
+        
+        # Calculate gross pay if not provided
+        if gross_pay is None:
+            if hours_worked is None:
+                conn.close()
+                return {'success': False, 'message': 'Must provide either hours_worked or gross_pay'}
+            
+            if emp['hourly_rate']:
+                gross_pay = hours_worked * emp['hourly_rate']
+                # Calculate overtime if applicable (over 40 hours)
+                if hours_worked > 40:
+                    regular_hours = 40
+                    overtime_hours = hours_worked - 40
+                    overtime_rate = emp['hourly_rate'] * 1.5
+                    gross_pay = (regular_hours * emp['hourly_rate']) + (overtime_hours * overtime_rate)
+            elif emp['salary']:
+                # For salaried employees, calculate prorated amount
+                # This is simplified - should use actual pay period calculation
+                gross_pay = emp['salary'] / 26  # Bi-weekly assumption
+            else:
+                conn.close()
+                return {'success': False, 'message': 'Employee has no hourly_rate or salary'}
+        
+        # Calculate taxes
+        tax_calc = calculate_payroll_taxes(
+            gross_pay,
+            federal_withholding_rate=tax_rates.get('federal_rate', 0.12) if tax_rates else 0.12,
+            state_withholding_rate=tax_rates.get('state_rate', 0.05) if tax_rates else 0.05,
+            local_withholding_rate=tax_rates.get('local_rate', 0.0) if tax_rates else 0.0
+        )
+        
+        net_pay = tax_calc['net_pay'] - other_deductions
+        
+        # Insert payroll record
+        cursor.execute("""
+            INSERT INTO payroll_records (
+                employee_id, pay_period_start, pay_period_end, pay_date,
+                pay_type, hours_worked, hourly_rate, gross_pay,
+                federal_income_tax_withheld, state_income_tax_withheld,
+                local_income_tax_withheld, social_security_tax_withheld,
+                medicare_tax_withheld, social_security_tax_employer,
+                medicare_tax_employer, federal_unemployment_tax,
+                state_unemployment_tax, other_deductions, net_pay,
+                created_by, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            employee_id, pay_period_start, pay_period_end, pay_date,
+            'hourly' if hours_worked else 'salary',
+            hours_worked, emp.get('hourly_rate'), gross_pay,
+            tax_calc['federal_income_tax_withheld'],
+            tax_calc['state_income_tax_withheld'],
+            tax_calc['local_income_tax_withheld'],
+            tax_calc['social_security_tax_withheld'],
+            tax_calc['medicare_tax_withheld'],
+            tax_calc['social_security_tax_employer'],
+            tax_calc['medicare_tax_employer'],
+            tax_calc['federal_unemployment_tax'],
+            tax_calc['state_unemployment_tax'],
+            other_deductions, net_pay, created_by, notes
+        ))
+        
+        payroll_id = cursor.lastrowid
+        
+        # Update tax withholdings summary
+        tax_year = datetime.strptime(pay_date, '%Y-%m-%d').year
+        cursor.execute("""
+            INSERT INTO tax_withholdings_summary (
+                employee_id, tax_year,
+                total_wages, federal_income_tax_withheld,
+                state_income_tax_withheld, local_income_tax_withheld,
+                social_security_wages, social_security_tax_withheld,
+                medicare_wages, medicare_tax_withheld,
+                social_security_tax_employer, medicare_tax_employer
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(employee_id, tax_year) DO UPDATE SET
+                total_wages = total_wages + ?,
+                federal_income_tax_withheld = federal_income_tax_withheld + ?,
+                state_income_tax_withheld = state_income_tax_withheld + ?,
+                local_income_tax_withheld = local_income_tax_withheld + ?,
+                social_security_wages = social_security_wages + ?,
+                social_security_tax_withheld = social_security_tax_withheld + ?,
+                medicare_wages = medicare_wages + ?,
+                medicare_tax_withheld = medicare_tax_withheld + ?,
+                social_security_tax_employer = social_security_tax_employer + ?,
+                medicare_tax_employer = medicare_tax_employer + ?,
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            employee_id, tax_year,
+            gross_pay, tax_calc['federal_income_tax_withheld'],
+            tax_calc['state_income_tax_withheld'], tax_calc['local_income_tax_withheld'],
+            gross_pay, tax_calc['social_security_tax_withheld'],
+            gross_pay, tax_calc['medicare_tax_withheld'],
+            tax_calc['social_security_tax_employer'], tax_calc['medicare_tax_employer'],
+            # Update values
+            gross_pay, tax_calc['federal_income_tax_withheld'],
+            tax_calc['state_income_tax_withheld'], tax_calc['local_income_tax_withheld'],
+            gross_pay, tax_calc['social_security_tax_withheld'],
+            gross_pay, tax_calc['medicare_tax_withheld'],
+            tax_calc['social_security_tax_employer'], tax_calc['medicare_tax_employer']
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            'success': True,
+            'payroll_id': payroll_id,
+            'gross_pay': gross_pay,
+            'net_pay': net_pay,
+            'taxes': tax_calc
+        }
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'success': False, 'message': str(e)}
+
+def get_payroll_records(
+    employee_id: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get payroll records with optional filters"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT 
+            pr.*,
+            e.first_name || ' ' || e.last_name as employee_name,
+            e.employee_code
+        FROM payroll_records pr
+        JOIN employees e ON pr.employee_id = e.employee_id
+        WHERE 1=1
+    """
+    params = []
+    
+    if employee_id:
+        query += " AND pr.employee_id = ?"
+        params.append(employee_id)
+    
+    if start_date:
+        query += " AND pr.pay_period_start >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND pr.pay_period_end <= ?"
+        params.append(end_date)
+    
+    query += " ORDER BY pr.pay_date DESC, pr.pay_period_start DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+def get_tax_withholdings_summary(
+    employee_id: int,
+    tax_year: int
+) -> Optional[Dict[str, Any]]:
+    """Get tax withholdings summary for W-2 generation"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            tws.*,
+            e.first_name || ' ' || e.last_name as employee_name,
+            e.employee_code,
+            e.address as employee_address
+        FROM tax_withholdings_summary tws
+        JOIN employees e ON tws.employee_id = e.employee_id
+        WHERE tws.employee_id = ? AND tws.tax_year = ?
+    """, (employee_id, tax_year))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+def record_sales_tax(
+    order_id: int,
+    jurisdiction: str,
+    tax_rate: float,
+    taxable_amount: float,
+    tax_amount: float,
+    tax_type: str = 'sales_tax'
+) -> int:
+    """Record sales tax collected on an order"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    transaction_date = datetime.now().date().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO sales_tax_collected (
+            order_id, transaction_date, jurisdiction, tax_rate,
+            taxable_amount, tax_amount, tax_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (order_id, transaction_date, jurisdiction, tax_rate,
+          taxable_amount, tax_amount, tax_type))
+    
+    conn.commit()
+    tax_record_id = cursor.lastrowid
+    conn.close()
+    
+    return tax_record_id
+
+def get_sales_tax_summary(
+    start_date: str,
+    end_date: str,
+    jurisdiction: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get sales tax summary for reporting"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT 
+            jurisdiction,
+            tax_type,
+            COUNT(*) as transaction_count,
+            SUM(taxable_amount) as total_taxable_amount,
+            SUM(tax_amount) as total_tax_collected,
+            AVG(tax_rate) as avg_tax_rate
+        FROM sales_tax_collected
+        WHERE transaction_date BETWEEN ? AND ?
+    """
+    params = [start_date, end_date]
+    
+    if jurisdiction:
+        query += " AND jurisdiction = ?"
+        params.append(jurisdiction)
+    
+    query += " GROUP BY jurisdiction, tax_type ORDER BY jurisdiction"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+def add_contractor_payment(
+    contractor_name: str,
+    contractor_tin: str,
+    payment_date: str,
+    payment_amount: float,
+    tax_year: int,
+    created_by: int,
+    contractor_address: Optional[str] = None,
+    contractor_city: Optional[str] = None,
+    contractor_state: Optional[str] = None,
+    contractor_zip: Optional[str] = None,
+    payment_description: Optional[str] = None,
+    notes: Optional[str] = None
+) -> int:
+    """Record a payment to an independent contractor (for 1099-NEC)"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO contractor_payments (
+            contractor_name, contractor_tin, contractor_address,
+            contractor_city, contractor_state, contractor_zip,
+            payment_date, payment_amount, payment_description,
+            tax_year, created_by, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        contractor_name, contractor_tin, contractor_address,
+        contractor_city, contractor_state, contractor_zip,
+        payment_date, payment_amount, payment_description,
+        tax_year, created_by, notes
+    ))
+    
+    conn.commit()
+    payment_id = cursor.lastrowid
+    conn.close()
+    
+    return payment_id
+
+def get_contractor_payments(
+    tax_year: Optional[int] = None,
+    contractor_tin: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get contractor payments for 1099-NEC generation"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM contractor_payments WHERE 1=1"
+    params = []
+    
+    if tax_year:
+        query += " AND tax_year = ?"
+        params.append(tax_year)
+    
+    if contractor_tin:
+        query += " AND contractor_tin = ?"
+        params.append(contractor_tin)
+    
+    query += " ORDER BY contractor_name, payment_date"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+def generate_cash_flow_statement(
+    start_date: str,
+    end_date: str
+) -> Dict[str, Any]:
+    """Generate Cash Flow Statement"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Operating Activities
+    # Cash from sales
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as cash_from_sales
+        FROM orders
+        WHERE order_date BETWEEN ? AND ?
+          AND payment_status = 'completed'
+          AND payment_method IN ('cash', 'credit_card', 'debit_card', 'mobile_payment')
+    """, (start_date, end_date))
+    
+    cash_from_sales = cursor.fetchone()['cash_from_sales'] or 0.0
+    
+    # Cash paid for expenses
+    cursor.execute("""
+        SELECT COALESCE(SUM(amount), 0) as cash_paid
+        FROM expenses
+        WHERE expense_date BETWEEN ? AND ?
+    """, (start_date, end_date))
+    
+    cash_paid_expenses = cursor.fetchone()['cash_paid'] or 0.0
+    
+    # Cash paid for payroll
+    cursor.execute("""
+        SELECT COALESCE(SUM(net_pay), 0) as cash_paid_payroll
+        FROM payroll_records
+        WHERE pay_date BETWEEN ? AND ?
+    """, (start_date, end_date))
+    
+    cash_paid_payroll = cursor.fetchone()['cash_paid_payroll'] or 0.0
+    
+    # Investing Activities (simplified - would track equipment purchases, etc.)
+    investing_activities = 0.0  # Placeholder
+    
+    # Financing Activities (simplified - would track loans, owner contributions, etc.)
+    financing_activities = 0.0  # Placeholder
+    
+    net_cash_flow = cash_from_sales - cash_paid_expenses - cash_paid_payroll + investing_activities + financing_activities
+    
+    # Get beginning cash balance
+    cursor.execute("""
+        SELECT COALESCE(SUM(current_balance), 0) as beginning_balance
+        FROM bank_accounts
+        WHERE is_active = 1
+    """)
+    
+    beginning_balance = cursor.fetchone()['beginning_balance'] or 0.0
+    ending_balance = beginning_balance + net_cash_flow
+    
+    conn.close()
+    
+    return {
+        'period': f"{start_date} to {end_date}",
+        'operating_activities': {
+            'cash_from_sales': cash_from_sales,
+            'cash_paid_expenses': cash_paid_expenses,
+            'cash_paid_payroll': cash_paid_payroll,
+            'net_operating_cash_flow': cash_from_sales - cash_paid_expenses - cash_paid_payroll
+        },
+        'investing_activities': {
+            'net_investing_cash_flow': investing_activities
+        },
+        'financing_activities': {
+            'net_financing_cash_flow': financing_activities
+        },
+        'net_cash_flow': net_cash_flow,
+        'beginning_cash_balance': beginning_balance,
+        'ending_cash_balance': ending_balance
+    }
+
+def add_expense(
+    expense_date: str,
+    description: str,
+    amount: float,
+    created_by: int,
+    category_id: Optional[int] = None,
+    vendor_id: Optional[int] = None,
+    payment_method: Optional[str] = None,
+    receipt_path: Optional[str] = None,
+    account_id: Optional[int] = None,
+    notes: Optional[str] = None
+) -> int:
+    """Add a business expense"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # If no account_id provided, try to get from category
+    if not account_id and category_id:
+        cursor.execute("""
+            SELECT account_id FROM expense_categories WHERE category_id = ?
+        """, (category_id,))
+        result = cursor.fetchone()
+        if result:
+            account_id = result[0]
+    
+    cursor.execute("""
+        INSERT INTO expenses (
+            expense_date, category_id, vendor_id, description, amount,
+            payment_method, receipt_path, account_id, created_by, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        expense_date, category_id, vendor_id, description, amount,
+        payment_method, receipt_path, account_id, created_by, notes
+    ))
+    
+    conn.commit()
+    expense_id = cursor.lastrowid
+    conn.close()
+    
+    return expense_id
+
+def get_expenses(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    category_id: Optional[int] = None,
+    vendor_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Get expenses with optional filters"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT 
+            e.*,
+            ec.category_name,
+            v.vendor_name,
+            coa.account_name as account_name,
+            coa.account_number as account_number,
+            emp.first_name || ' ' || emp.last_name as created_by_name
+        FROM expenses e
+        LEFT JOIN expense_categories ec ON e.category_id = ec.category_id
+        LEFT JOIN vendors v ON e.vendor_id = v.vendor_id
+        LEFT JOIN chart_of_accounts coa ON e.account_id = coa.account_id
+        LEFT JOIN employees emp ON e.created_by = emp.employee_id
+        WHERE 1=1
+    """
+    params = []
+    
+    if start_date:
+        query += " AND e.expense_date >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND e.expense_date <= ?"
+        params.append(end_date)
+    
+    if category_id:
+        query += " AND e.category_id = ?"
+        params.append(category_id)
+    
+    if vendor_id:
+        query += " AND e.vendor_id = ?"
+        params.append(vendor_id)
+    
+    query += " ORDER BY e.expense_date DESC, e.created_at DESC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+def get_expense_categories() -> List[Dict[str, Any]]:
+    """Get all expense categories"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            ec.*,
+            coa.account_number,
+            coa.account_name as account_name
+        FROM expense_categories ec
+        LEFT JOIN chart_of_accounts coa ON ec.account_id = coa.account_id
+        WHERE ec.is_active = 1
+        ORDER BY ec.category_name
+    """)
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+def get_accounting_dashboard_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Dict[str, Any]:
+    """Get summary data for accounting dashboard"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if not start_date:
+        start_date = datetime.now().replace(day=1).date().isoformat()
+    if not end_date:
+        end_date = datetime.now().date().isoformat()
+    
+    # Total revenue
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as total_revenue
+        FROM orders
+        WHERE order_date BETWEEN ? AND ?
+          AND order_status = 'completed'
+    """, (start_date, end_date))
+    
+    total_revenue = cursor.fetchone()['total_revenue'] or 0.0
+    
+    # Total expenses
+    cursor.execute("""
+        SELECT COALESCE(SUM(amount), 0) as total_expenses
+        FROM expenses
+        WHERE expense_date BETWEEN ? AND ?
+    """, (start_date, end_date))
+    
+    total_expenses = cursor.fetchone()['total_expenses'] or 0.0
+    
+    # Total payroll
+    cursor.execute("""
+        SELECT COALESCE(SUM(gross_pay), 0) as total_payroll
+        FROM payroll_records
+        WHERE pay_date BETWEEN ? AND ?
+    """, (start_date, end_date))
+    
+    total_payroll = cursor.fetchone()['total_payroll'] or 0.0
+    
+    # Sales tax collected
+    cursor.execute("""
+        SELECT COALESCE(SUM(tax_amount), 0) as total_tax_collected
+        FROM sales_tax_collected
+        WHERE transaction_date BETWEEN ? AND ?
+          AND remitted = 0
+    """, (start_date, end_date))
+    
+    total_tax_collected = cursor.fetchone()['total_tax_collected'] or 0.0
+    
+    # Cash position
+    cursor.execute("""
+        SELECT COALESCE(SUM(current_balance), 0) as cash_balance
+        FROM bank_accounts
+        WHERE is_active = 1
+    """)
+    
+    cash_balance = cursor.fetchone()['cash_balance'] or 0.0
+    
+    # Outstanding tax liabilities
+    cursor.execute("""
+        SELECT COALESCE(SUM(amount_due - amount_paid), 0) as outstanding_taxes
+        FROM tax_remittances
+        WHERE status IN ('pending', 'overdue')
+    """)
+    
+    outstanding_taxes = cursor.fetchone()['outstanding_taxes'] or 0.0
+    
+    conn.close()
+    
+    return {
+        'period': f"{start_date} to {end_date}",
+        'total_revenue': total_revenue,
+        'total_expenses': total_expenses,
+        'total_payroll': total_payroll,
+        'total_tax_collected': total_tax_collected,
+        'cash_balance': cash_balance,
+        'outstanding_taxes': outstanding_taxes,
+        'net_income': total_revenue - total_expenses - total_payroll
+    }

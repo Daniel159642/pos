@@ -100,6 +100,13 @@ function Dashboard() {
       size: 'large',
       onClick: () => navigate('/employee-management')
     }] : []),
+    ...((hasPermission('manage_settings') || hasPermission('view_accounting')) ? [{
+      id: 'accounting',
+      title: 'Accounting',
+      description: 'Financial reports, payroll & taxes',
+      size: 'large',
+      onClick: () => navigate('/accounting')
+    }] : []),
     {
       id: 'tables',
       title: 'Tables',

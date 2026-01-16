@@ -16,6 +16,7 @@ import Profile from './pages/Profile'
 import ShipmentVerification from './pages/ShipmentVerification'
 import StatisticsPage from './pages/Statistics'
 import Settings from './pages/Settings'
+import Accounting from './pages/Accounting'
 import './index.css'
 
 function ProtectedRoute({ children, sessionToken, employee, onLogout }) {
@@ -148,6 +149,13 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
           </Layout>
         </ProtectedRoute>
       } />
+      <Route path="/accounting" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Accounting />
+          </Layout>
+        </ProtectedRoute>
+      } />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
@@ -187,20 +195,36 @@ function Layout({ children, employee, onLogout }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           {(hasPermission('manage_settings') || employee?.position?.toLowerCase() === 'admin') && (
-            <button
-              onClick={() => navigate('/settings')}
-              style={{
-                padding: '6px 12px',
-                backgroundColor: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '16px',
-                fontWeight: 500,
-                color: 'var(--text-tertiary, #666)'
-              }}
-            >
-              Settings
-            </button>
+            <>
+              <button
+                onClick={() => navigate('/accounting')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Accounting
+              </button>
+              <button
+                onClick={() => navigate('/settings')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Settings
+              </button>
+            </>
           )}
           <button
             onClick={() => navigate('/profile')}
