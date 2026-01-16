@@ -20,7 +20,8 @@ function Settings() {
     footer_message: 'Thank you for your business!',
     return_policy: '',
     show_tax_breakdown: true,
-    show_payment_method: true
+    show_payment_method: true,
+    show_signature: false
   })
   const [activeTab, setActiveTab] = useState('workflow') // 'workflow', 'receipt', or 'location'
   const [storeLocationSettings, setStoreLocationSettings] = useState({
@@ -75,7 +76,8 @@ function Settings() {
           receipt_type: data.settings.receipt_type || 'traditional',
           return_policy: data.settings.return_policy || '',
           show_tax_breakdown: data.settings.show_tax_breakdown === 1,
-          show_payment_method: data.settings.show_payment_method === 1
+          show_payment_method: data.settings.show_payment_method === 1,
+          show_signature: data.settings.show_signature === 1
         })
       }
     } catch (error) {
@@ -229,7 +231,8 @@ function Settings() {
           receipt_type: receiptSettings.receipt_type || 'traditional',
           return_policy: receiptSettings.return_policy || '',
           show_tax_breakdown: receiptSettings.show_tax_breakdown ? 1 : 0,
-          show_payment_method: receiptSettings.show_payment_method ? 1 : 0
+          show_payment_method: receiptSettings.show_payment_method ? 1 : 0,
+          show_signature: receiptSettings.show_signature ? 1 : 0
         })
       })
 
@@ -892,7 +895,55 @@ function Settings() {
                     Show payment method on receipt
                   </span>
                 </label>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  cursor: 'pointer'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={receiptSettings.show_signature}
+                    onChange={(e) => setReceiptSettings({ ...receiptSettings, show_signature: e.target.checked })}
+                  />
+                  <span style={{
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}>
+                    Show signature on receipt
+                  </span>
+                </label>
               </div>
+            </div>
+
+            {/* Save Button */}
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'flex-end', 
+              marginTop: '32px',
+              paddingTop: '24px',
+              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
+            }}>
+              <button
+                onClick={saveReceiptSettings}
+                disabled={saving}
+                style={{
+                  padding: '12px 32px',
+                  backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
+                  transition: 'all 0.3s ease',
+                  opacity: saving ? 0.6 : 1,
+                  minWidth: '150px'
+                }}
+              >
+                {saving ? 'Saving...' : 'Save Receipt Settings'}
+              </button>
             </div>
           </div>
         </div>

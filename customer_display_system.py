@@ -147,13 +147,34 @@ class CustomerDisplaySystem:
                 transaction_status = 'pending'
                 change = 0
             
+            # Get payment method type to check if cash
             cursor.execute("""
-                UPDATE transactions
-                SET payment_status = ?,
-                    status = ?,
-                    completed_at = CASE WHEN ? = 'completed' THEN datetime('now') ELSE NULL END
-                WHERE transaction_id = ?
-            """, (payment_status, transaction_status, transaction_status, transaction_id))
+                SELECT method_type FROM payment_methods WHERE payment_method_id = ?
+            """, (payment_method_id,))
+            method_row = cursor.fetchone()
+            is_cash = method_row and method_row[0] == 'cash' if method_row else False
+            
+            # Update transaction with payment info
+            # Try to add amount_paid and change columns if they don't exist (for backward compatibility)
+            try:
+                cursor.execute("""
+                    UPDATE transactions
+                    SET payment_status = ?,
+                        status = ?,
+                        completed_at = CASE WHEN ? = 'completed' THEN datetime('now') ELSE NULL END,
+                        amount_paid = ?,
+                        change_amount = ?
+                    WHERE transaction_id = ?
+                """, (payment_status, transaction_status, transaction_status, total_paid if is_cash else None, change if is_cash and change > 0 else 0, transaction_id))
+            except sqlite3.OperationalError:
+                # Columns don't exist, update without them
+                cursor.execute("""
+                    UPDATE transactions
+                    SET payment_status = ?,
+                        status = ?,
+                        completed_at = CASE WHEN ? = 'completed' THEN datetime('now') ELSE NULL END
+                    WHERE transaction_id = ?
+                """, (payment_status, transaction_status, transaction_status, transaction_id))
             
             # Update inventory
             if transaction_status == 'completed':

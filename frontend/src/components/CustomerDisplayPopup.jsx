@@ -1,8 +1,30 @@
 import { useState, useEffect } from 'react'
 import { io } from 'socket.io-client'
+import { useTheme } from '../contexts/ThemeContext'
 import './CustomerDisplay.css'
 
 function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymentMethod, amountPaid, onClose, onPaymentMethodSelect, onTipSelect, onReceiptSelect, onProceedToPayment, showSummary, employeeId, paymentCompleted, transactionId: propTransactionId }) {
+  const { themeColor, themeMode } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  const isDarkMode = document.documentElement.classList.contains('dark-theme')
+  
+  // Create gradient from theme color
+  const getGradientBackground = () => {
+    const rgb = hexToRgb(themeColor).split(', ')
+    // Create a darker shade for gradient end
+    const darkerR = Math.max(0, parseInt(rgb[0]) - 30)
+    const darkerG = Math.max(0, parseInt(rgb[1]) - 30)
+    const darkerB = Math.max(0, parseInt(rgb[2]) - 30)
+    return `linear-gradient(135deg, ${themeColor} 0%, rgb(${darkerR}, ${darkerG}, ${darkerB}) 100%)`
+  }
+  
   const [currentScreen, setCurrentScreen] = useState('transaction') // transaction, tip, payment, card, cash_confirmation, receipt, success
   const [paymentMethods, setPaymentMethods] = useState([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null)
@@ -17,6 +39,8 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
   const [transactionId, setTransactionId] = useState(propTransactionId || null)
   const [showCustomTip, setShowCustomTip] = useState(false)
   const [customTipAmount, setCustomTipAmount] = useState('')
+  const [signatureData, setSignatureData] = useState(null)
+  const [isDrawing, setIsDrawing] = useState(false)
 
   // Initialize Socket.IO connection
   useEffect(() => {
@@ -148,6 +172,146 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
       setTransactionId(propTransactionId)
     }
   }, [propTransactionId])
+
+  // Initialize signature canvas when receipt screen is shown
+  useEffect(() => {
+    if (currentScreen === 'receipt') {
+      // Small delay to ensure canvas is rendered
+      const timer = setTimeout(() => {
+        const canvas = document.getElementById('signatureCanvas')
+        if (!canvas) return
+
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+
+        // Set canvas size based on container
+        const container = canvas.parentElement
+        if (container) {
+          const rect = container.getBoundingClientRect()
+          canvas.width = rect.width
+          canvas.height = rect.height
+        } else {
+          canvas.width = 800
+          canvas.height = 250
+        }
+
+        // Clear canvas
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+        // Set drawing style
+        ctx.strokeStyle = '#000000'
+        ctx.lineWidth = 2
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+
+        let drawing = false
+        let lastX = 0
+        let lastY = 0
+
+        const getCoordinates = (e) => {
+          const rect = canvas.getBoundingClientRect()
+          const scaleX = canvas.width / rect.width
+          const scaleY = canvas.height / rect.height
+          return {
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top) * scaleY
+          }
+        }
+
+        const startDrawing = (e) => {
+          drawing = true
+          setIsDrawing(true)
+          const coords = getCoordinates(e)
+          lastX = coords.x
+          lastY = coords.y
+        }
+
+        const draw = (e) => {
+          if (!drawing) return
+          const coords = getCoordinates(e)
+          const currentX = coords.x
+          const currentY = coords.y
+
+          ctx.beginPath()
+          ctx.moveTo(lastX, lastY)
+          ctx.lineTo(currentX, currentY)
+          ctx.stroke()
+
+          lastX = currentX
+          lastY = currentY
+          
+          // Save signature data continuously
+          const dataURL = canvas.toDataURL('image/png')
+          setSignatureData(dataURL)
+        }
+
+        const stopDrawing = () => {
+          if (drawing) {
+            drawing = false
+            setIsDrawing(false)
+            // Save signature data
+            const dataURL = canvas.toDataURL('image/png')
+            setSignatureData(dataURL)
+          }
+        }
+
+        // Mouse events
+        canvas.addEventListener('mousedown', startDrawing)
+        canvas.addEventListener('mousemove', draw)
+        canvas.addEventListener('mouseup', stopDrawing)
+        canvas.addEventListener('mouseout', stopDrawing)
+
+        // Touch events
+        const handleTouchStart = (e) => {
+          e.preventDefault()
+          const touch = e.touches[0]
+          const mouseEvent = new MouseEvent('mousedown', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+          })
+          canvas.dispatchEvent(mouseEvent)
+        }
+
+        const handleTouchMove = (e) => {
+          e.preventDefault()
+          const touch = e.touches[0]
+          const mouseEvent = new MouseEvent('mousemove', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+          })
+          canvas.dispatchEvent(mouseEvent)
+        }
+
+        const handleTouchEnd = (e) => {
+          e.preventDefault()
+          const mouseEvent = new MouseEvent('mouseup', {})
+          canvas.dispatchEvent(mouseEvent)
+        }
+
+        canvas.addEventListener('touchstart', handleTouchStart)
+        canvas.addEventListener('touchmove', handleTouchMove)
+        canvas.addEventListener('touchend', handleTouchEnd)
+
+        return () => {
+          clearTimeout(timer)
+          canvas.removeEventListener('mousedown', startDrawing)
+          canvas.removeEventListener('mousemove', draw)
+          canvas.removeEventListener('mouseup', stopDrawing)
+          canvas.removeEventListener('mouseout', stopDrawing)
+          canvas.removeEventListener('touchstart', handleTouchStart)
+          canvas.removeEventListener('touchmove', handleTouchMove)
+          canvas.removeEventListener('touchend', handleTouchEnd)
+        }
+      }, 100)
+
+      return () => clearTimeout(timer)
+    } else {
+      // Clear signature when leaving receipt screen
+      setSignatureData(null)
+      setIsDrawing(false)
+    }
+  }, [currentScreen])
 
 
   const loadDisplaySettings = async () => {
@@ -330,6 +494,30 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
 
   const selectReceipt = async (type) => {
     setReceiptType(type)
+    
+    // Save signature first if available (before generating receipt)
+    if (signatureData && transactionId) {
+      try {
+        const sigResponse = await fetch('/api/transaction/signature', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transaction_id: transactionId,
+            signature: signatureData
+          })
+        })
+        const sigResult = await sigResponse.json()
+        if (sigResult.success) {
+          console.log('Signature saved successfully')
+          // Small delay to ensure database is updated
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      } catch (sigErr) {
+        console.error('Error saving signature:', sigErr)
+        // Continue even if signature save fails
+      }
+    }
+    
     if (type === 'printed') {
       // Generate and download receipt PDF
       if (transactionId) {
@@ -379,6 +567,23 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
     }
 
     try {
+      // Save signature if available (in case it wasn't saved earlier)
+      if (signatureData) {
+        try {
+          await fetch('/api/transaction/signature', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transaction_id: transactionId,
+              signature: signatureData
+            })
+          })
+        } catch (sigErr) {
+          console.error('Error saving signature:', sigErr)
+          // Continue even if signature save fails
+        }
+      }
+
       await fetch('/api/receipt/preference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -432,7 +637,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
       height: '100vh', 
       width: '100%', 
       overflow: 'auto',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      background: getGradientBackground(),
       display: 'flex',
       flexDirection: 'column'
     }}>
@@ -497,16 +702,16 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                         flex: 1,
                         height: '100px',
                         padding: '16px',
-                        backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                        backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                         backdropFilter: 'blur(10px)',
                         WebkitBackdropFilter: 'blur(10px)',
                         color: '#fff',
                         border: '1px solid rgba(255, 255, 255, 0.2)',
                         borderRadius: '8px',
-                        fontSize: '24px',
+                        fontSize: '36px',
                         fontWeight: 600,
                         cursor: 'pointer',
-                        boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                        boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                         transition: 'all 0.3s ease',
                         display: 'flex',
                         alignItems: 'center',
@@ -531,7 +736,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                       color: '#fff',
                       border: '1px solid rgba(255, 255, 255, 0.2)',
                       borderRadius: '8px',
-                      fontSize: '24px',
+                      fontSize: '36px',
                       fontWeight: 600,
                       cursor: 'pointer',
                       boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
@@ -555,7 +760,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                       color: '#fff',
                       border: '1px solid rgba(255, 255, 255, 0.2)',
                       borderRadius: '8px',
-                      fontSize: '24px',
+                      fontSize: '36px',
                       fontWeight: 600,
                       cursor: 'pointer',
                       boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
@@ -592,7 +797,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                         onClick={() => selectTip(percent)}
                         style={{
                           padding: '32px 20px',
-                          backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                          backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                           backdropFilter: 'blur(10px)',
                           WebkitBackdropFilter: 'blur(10px)',
                           color: '#fff',
@@ -600,7 +805,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                           borderRadius: '8px',
                           textAlign: 'center',
                           cursor: 'pointer',
-                          boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                          boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                           transition: 'all 0.3s ease'
                         }}
                       >
@@ -632,7 +837,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                     onClick={skipTip}
                     style={{
                       padding: '32px 20px',
-                      backgroundColor: selectedTip === 0 ? 'rgba(128, 0, 128, 0.5)' : 'rgba(128, 0, 128, 0.5)',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.5)`,
                       backdropFilter: 'blur(10px)',
                       WebkitBackdropFilter: 'blur(10px)',
                       color: '#fff',
@@ -640,7 +845,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                       borderRadius: '8px',
                       textAlign: 'center',
                       cursor: 'pointer',
-                      boxShadow: '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
                       transition: 'all 0.3s ease'
                     }}
                   >
@@ -679,7 +884,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                       fontSize: '32px',
                       fontFamily: 'monospace',
                       textAlign: 'center',
-                      border: '3px solid rgba(102, 126, 234, 0.5)',
+                      border: `3px solid rgba(${themeColorRgb}, 0.5)`,
                       borderRadius: '15px',
                       backgroundColor: 'rgba(255, 255, 255, 0.95)',
                       color: '#333',
@@ -725,7 +930,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                     style={{
                       flex: 1,
                       backgroundColor: parseFloat(customTipAmount) > 0 ? 'white' : 'rgba(255, 255, 255, 0.3)',
-                      color: parseFloat(customTipAmount) > 0 ? '#667eea' : 'white',
+                      color: parseFloat(customTipAmount) > 0 ? themeColor : 'white',
                       cursor: parseFloat(customTipAmount) > 0 ? 'pointer' : 'not-allowed',
                       opacity: parseFloat(customTipAmount) > 0 ? 1 : 0.5
                     }}
@@ -741,50 +946,69 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
 
         {/* Cash Confirmation Screen */}
         {currentScreen === 'cash_confirmation' && (
-          <div className="payment-screen-popup">
-            <div className="screen-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ margin: 0 }}>Cash Payment</h2>
+          <div className="payment-screen-popup" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%', marginBottom: '10px', marginTop: '-10px' }}>
+              <button
+                onClick={() => onClose && onClose()}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  color: '#999',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  opacity: 0.6
+                }}
+              >
+                Cancel
+              </button>
               <button
                 onClick={handleContinueFromCash}
                 style={{
                   padding: '6px 12px',
                   backgroundColor: 'transparent',
-                  color: '#666',
+                  color: '#999',
                   border: 'none',
                   borderRadius: '4px',
-                  fontSize: '14px',
+                  fontSize: '12px',
                   fontWeight: 400,
                   cursor: 'pointer',
-                  opacity: 0.7
+                  opacity: 0.6
                 }}
               >
                 Continue
               </button>
             </div>
             
-            <div className="totals-section" style={{ marginBottom: '30px', background: 'rgba(102, 126, 234, 0.15)', borderRadius: '15px', padding: '20px', width: '100%' }}>
-              <div className="total-row">
-                <span>Subtotal:</span>
-                <span>${subtotal.toFixed(2)}</span>
-              </div>
-              <div className="total-row">
-                <span>Tax:</span>
-                <span>${tax.toFixed(2)}</span>
-              </div>
-              {selectedTip > 0 && (
-                <div className="total-row">
-                  <span>Tip:</span>
-                  <span>${selectedTip.toFixed(2)}</span>
-                </div>
-              )}
-              <div className="total-row final">
-                <span>Total:</span>
-                <span>${amountDue.toFixed(2)}</span>
-              </div>
+            <div className="screen-header" style={{ width: '100%', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0, fontSize: '40px' }}>
+                Please give the cash amount to the cashier
+              </h2>
             </div>
             
-            <div style={{ textAlign: 'center', fontSize: '28px', fontWeight: 600, marginTop: '60px' }}>
-              Please give the cash amount to the cashier
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+              <div className="totals-section" style={{ background: `rgba(${themeColorRgb}, 0.15)`, borderRadius: '15px', padding: '20px', width: '100%' }}>
+                <div className="total-row">
+                  <span>Subtotal:</span>
+                  <span>${subtotal.toFixed(2)}</span>
+                </div>
+                <div className="total-row">
+                  <span>Tax:</span>
+                  <span>${tax.toFixed(2)}</span>
+                </div>
+                {selectedTip > 0 && (
+                  <div className="total-row">
+                    <span>Tip:</span>
+                    <span>${selectedTip.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="total-row final">
+                  <span>Total:</span>
+                  <span>${amountDue.toFixed(2)}</span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -808,16 +1032,16 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
 
         {/* Receipt Screen */}
         {currentScreen === 'receipt' && (
-          <div className="receipt-screen-popup">
-            <div className="screen-header">
+          <div className="receipt-screen-popup" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <div className="screen-header" style={{ width: '100%', marginBottom: '30px' }}>
               <h2>Sign Below</h2>
             </div>
             
             {/* Signature Area */}
             <div style={{
               width: '100%',
-              height: '150px',
-              border: '2px solid #ddd',
+              height: '250px',
+              border: `2px solid rgba(${themeColorRgb}, 0.3)`,
               borderRadius: '8px',
               backgroundColor: '#fff',
               marginBottom: '30px',
@@ -841,19 +1065,20 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                   onClick={() => selectReceipt('printed')}
                   style={{
                     flex: 1,
-                    padding: '16px',
-                    backgroundColor: receiptType === 'printed' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    padding: '24px 16px',
+                    minHeight: '70px',
+                    backgroundColor: receiptType === 'printed' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                     color: '#fff',
                     border: receiptType === 'printed' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
                     borderRadius: '8px',
-                    fontSize: '18px',
+                    fontSize: '28px',
                     fontWeight: 600,
                     cursor: 'pointer',
                     boxShadow: receiptType === 'printed' 
-                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
-                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
+                      : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
                     transition: 'all 0.3s ease'
                   }}
                 >
@@ -864,19 +1089,20 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                   onClick={() => selectReceipt('none')}
                   style={{
                     flex: 1,
-                    padding: '16px',
-                    backgroundColor: receiptType === 'none' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                    padding: '24px 16px',
+                    minHeight: '70px',
+                    backgroundColor: receiptType === 'none' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                     color: '#fff',
                     border: receiptType === 'none' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
                     borderRadius: '8px',
-                    fontSize: '18px',
+                    fontSize: '28px',
                     fontWeight: 600,
                     cursor: 'pointer',
                     boxShadow: receiptType === 'none' 
-                      ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
-                      : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                      ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
+                      : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
                     transition: 'all 0.3s ease'
                   }}
                 >
@@ -888,19 +1114,20 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                 onClick={() => selectReceipt('email')}
                 style={{
                   width: '100%',
-                  padding: '16px',
-                  backgroundColor: receiptType === 'email' ? 'rgba(128, 0, 128, 0.7)' : 'rgba(128, 0, 128, 0.5)',
+                  padding: '24px 16px',
+                  minHeight: '70px',
+                  backgroundColor: receiptType === 'email' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
                   backdropFilter: 'blur(10px)',
                   WebkitBackdropFilter: 'blur(10px)',
                   color: '#fff',
                   border: receiptType === 'email' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
                   borderRadius: '8px',
-                  fontSize: '18px',
+                  fontSize: '28px',
                   fontWeight: 600,
                   cursor: 'pointer',
                   boxShadow: receiptType === 'email' 
-                    ? '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)' 
-                    : '0 2px 8px rgba(128, 0, 128, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+                    ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
+                    : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
                   transition: 'all 0.3s ease'
                 }}
               >
@@ -928,17 +1155,18 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                   onClick={() => submitReceiptPreference()}
                   style={{
                     width: '100%',
-                    padding: '16px',
-                    backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                    padding: '24px 16px',
+                    minHeight: '70px',
+                    backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                     backdropFilter: 'blur(10px)',
                     WebkitBackdropFilter: 'blur(10px)',
                     color: '#fff',
                     border: '1px solid rgba(255, 255, 255, 0.2)',
                     borderRadius: '8px',
-                    fontSize: '18px',
+                    fontSize: '28px',
                     fontWeight: 600,
                     cursor: 'pointer',
-                    boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                     transition: 'all 0.3s ease'
                   }}
                 >

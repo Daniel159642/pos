@@ -914,12 +914,11 @@ def api_update_receipt_settings():
             # Insert new settings
             cursor.execute("""
                 INSERT INTO receipt_settings (
-                    receipt_type, store_name, store_address, store_city, store_state, store_zip,
-                    store_phone, store_email, store_website, footer_message, return_policy,
-                    show_tax_breakdown, show_payment_method
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    store_name, store_address, store_city, store_state, store_zip,
+                    store_phone, store_email, store_website, footer_message,
+                    show_tax_breakdown, show_payment_method, show_signature
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                data.get('receipt_type', 'traditional'),
                 data.get('store_name', 'Store'),
                 data.get('store_address', ''),
                 data.get('store_city', ''),
@@ -929,15 +928,14 @@ def api_update_receipt_settings():
                 data.get('store_email', ''),
                 data.get('store_website', ''),
                 data.get('footer_message', 'Thank you for your business!'),
-                data.get('return_policy', ''),
                 data.get('show_tax_breakdown', 1),
-                data.get('show_payment_method', 1)
+                data.get('show_payment_method', 1),
+                data.get('show_signature', 0)
             ))
         else:
             # Update existing settings
             cursor.execute("""
                 UPDATE receipt_settings SET
-                    receipt_type = ?,
                     store_name = ?,
                     store_address = ?,
                     store_city = ?,
@@ -947,9 +945,9 @@ def api_update_receipt_settings():
                     store_email = ?,
                     store_website = ?,
                     footer_message = ?,
-                    return_policy = ?,
                     show_tax_breakdown = ?,
                     show_payment_method = ?,
+                    show_signature = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
             """, (
@@ -963,7 +961,8 @@ def api_update_receipt_settings():
                 data.get('store_website', ''),
                 data.get('footer_message', 'Thank you for your business!'),
                 data.get('show_tax_breakdown', 1),
-                data.get('show_payment_method', 1)
+                data.get('show_payment_method', 1),
+                data.get('show_signature', 0)
             ))
         
         conn.commit()
@@ -4282,6 +4281,61 @@ def save_receipt_preference():
         )
         
         return jsonify({'success': True, 'preference_id': preference_id})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/transaction/signature', methods=['POST'])
+def save_transaction_signature():
+    """Save signature for a transaction"""
+    try:
+        data = request.json
+        transaction_id = data.get('transaction_id')
+        signature = data.get('signature')  # Base64 encoded image
+        
+        if not transaction_id or not signature:
+            return jsonify({'success': False, 'message': 'Transaction ID and signature are required'}), 400
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            # Update transaction with signature
+            cursor.execute("""
+                UPDATE transactions
+                SET signature = ?
+                WHERE transaction_id = ?
+            """, (signature, transaction_id))
+            
+            if cursor.rowcount == 0:
+                conn.close()
+                return jsonify({'success': False, 'message': 'Transaction not found'}), 404
+            
+            conn.commit()
+            conn.close()
+            
+            return jsonify({'success': True, 'message': 'Signature saved successfully'})
+        except sqlite3.OperationalError as e:
+            # Column might not exist, try to add it
+            if 'signature' in str(e).lower():
+                conn.close()
+                # Run migration
+                from migrate_add_signature_to_transactions import migrate_add_signature
+                migrate_add_signature(DB_NAME)
+                # Try again
+                conn = sqlite3.connect(DB_NAME)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE transactions
+                    SET signature = ?
+                    WHERE transaction_id = ?
+                """, (signature, transaction_id))
+                conn.commit()
+                conn.close()
+                return jsonify({'success': True, 'message': 'Signature saved successfully'})
+            else:
+                conn.close()
+                raise
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500

@@ -1,6 +1,6 @@
 .customer-display-container {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--customer-display-gradient, linear-gradient(135deg, #667eea 0%, #764ba2 100%));
   height: 100vh;
   overflow: hidden;
   color: white;
@@ -15,7 +15,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--customer-display-gradient, linear-gradient(135deg, #667eea 0%, #764ba2 100%));
   z-index: 3000;
   display: flex;
   justify-content: center;
@@ -50,7 +50,7 @@
 }
 
 .transaction-screen-popup .items-list {
-  background: rgba(102, 126, 234, 0.1);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.1);
   border-radius: 15px;
   padding: 20px;
   margin-bottom: 20px;
@@ -65,7 +65,7 @@
 }
 
 .transaction-screen-popup .totals-section {
-  background: rgba(102, 126, 234, 0.15);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.15);
   border-radius: 15px;
   padding: 20px;
   width: 100%;
@@ -90,7 +90,7 @@
 }
 
 .payment-screen-popup .amount-due {
-  color: #667eea;
+  color: var(--customer-display-theme-color, #667eea);
   font-size: 48px;
   margin-top: 15px;
 }
@@ -101,18 +101,18 @@
 }
 
 .payment-screen-popup .payment-method {
-  background: rgba(102, 126, 234, 0.1);
-  border: 2px solid rgba(102, 126, 234, 0.3);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.1);
+  border: 2px solid rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.3);
 }
 
 .payment-screen-popup .payment-method:hover {
-  background: rgba(102, 126, 234, 0.2);
-  border-color: rgba(102, 126, 234, 0.5);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.2);
+  border-color: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.5);
 }
 
 .payment-screen-popup .payment-method.selected {
-  background: rgba(102, 126, 234, 0.3);
-  border-color: #667eea;
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.3);
+  border-color: var(--customer-display-theme-color, #667eea);
 }
 
 .payment-screen-popup .payment-method-name {
@@ -125,18 +125,18 @@
 }
 
 .tip-option {
-  background: rgba(102, 126, 234, 0.1);
-  border: 2px solid rgba(102, 126, 234, 0.3);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.1);
+  border: 2px solid rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.3);
   color: #333;
 }
 
 .tip-option:hover {
-  background: rgba(102, 126, 234, 0.2);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.2);
 }
 
 .tip-option.selected {
-  background: rgba(102, 126, 234, 0.3);
-  border-color: #667eea;
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.3);
+  border-color: var(--customer-display-theme-color, #667eea);
 }
 
 .tip-percentage,
@@ -167,12 +167,12 @@
 }
 
 .receipt-option {
-  background: rgba(102, 126, 234, 0.1);
-  border: 2px solid rgba(102, 126, 234, 0.3);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.1);
+  border: 2px solid rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.3);
 }
 
 .receipt-option:hover {
-  background: rgba(102, 126, 234, 0.2);
+  background: rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.2);
 }
 
 .receipt-label {
@@ -181,7 +181,7 @@
 
 .receipt-input input {
   background: rgba(255, 255, 255, 0.9);
-  border: 2px solid rgba(102, 126, 234, 0.3);
+  border: 2px solid rgba(var(--customer-display-theme-color-rgb, 102, 126, 234), 0.3);
   color: #333;
 }
 
@@ -538,7 +538,7 @@
 /* Buttons */
 .btn-primary {
   background: white;
-  color: #667eea;
+  color: var(--customer-display-theme-color, #667eea);
   padding: 20px 50px;
   font-size: 24px;
   border-radius: 50px;

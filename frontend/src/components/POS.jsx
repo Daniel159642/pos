@@ -1007,8 +1007,8 @@ function POS({ employeeId, employeeName }) {
                 </div>
               )}
               
-              {/* Close Button - Show when on summary screen */}
-              {showSummary && !showPaymentForm && (
+              {/* Close Button - Show when on summary screen only, not during payment flow or when customer display is active */}
+              {showSummary && !showPaymentForm && !showCustomerDisplay && (
                 <button
                   onClick={() => {
                     setShowCustomerDisplay(false)
