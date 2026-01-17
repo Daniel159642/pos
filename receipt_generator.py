@@ -775,10 +775,10 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
             payment_row = cursor.fetchone()
             if payment_row:
                 payment_method = payment_row['method_name']
-                payment_method_type = payment_row.get('method_type', '')
+                payment_method_type = payment_row['method_type'] if 'method_type' in payment_row.keys() else ''
                 # Use amount from payments table if not already set from transactions table
                 if amount_paid is None:
-                    amount_paid = payment_row.get('amount')
+                    amount_paid = payment_row['amount'] if 'amount' in payment_row.keys() else None
                 # Calculate change if not already set and it's a cash payment
                 if change == 0 and amount_paid and (payment_method_type == 'cash' or (payment_method and 'cash' in payment_method.lower())):
                     change = float(amount_paid) - float(transaction['total'])
