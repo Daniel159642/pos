@@ -28,6 +28,35 @@ function Inventory() {
   const [editSuccess, setEditSuccess] = useState(false)
   const [sessionToken, setSessionToken] = useState(null)
   
+  // Create forms state
+  const [showCreateProduct, setShowCreateProduct] = useState(false)
+  const [showCreateCategory, setShowCreateCategory] = useState(false)
+  const [showCreateVendor, setShowCreateVendor] = useState(false)
+  const [createProductData, setCreateProductData] = useState({
+    product_name: '',
+    sku: '',
+    barcode: '',
+    product_price: '',
+    product_cost: '',
+    current_quantity: '0',
+    category: '',
+    vendor: '',
+    vendor_id: null,
+    photo: null
+  })
+  const [photoPreview, setPhotoPreview] = useState(null)
+  const [createCategoryData, setCreateCategoryData] = useState({ category_name: '' })
+  const [createVendorData, setCreateVendorData] = useState({
+    vendor_name: '',
+    contact_person: '',
+    email: '',
+    phone: '',
+    address: ''
+  })
+  const [createLoading, setCreateLoading] = useState(false)
+  const [createError, setCreateError] = useState(null)
+  const [createSuccess, setCreateSuccess] = useState(false)
+  
   // Determine if dark mode is active
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
@@ -159,6 +188,159 @@ function Inventory() {
       setEditError(err.message || 'An error occurred while updating the product')
     } finally {
       setEditLoading(false)
+    }
+  }
+
+  const handleCreateProduct = async (e) => {
+    e.preventDefault()
+    setCreateLoading(true)
+    setCreateError(null)
+    setCreateSuccess(false)
+
+    try {
+      // Create FormData to support file uploads
+      const formData = new FormData()
+      formData.append('product_name', createProductData.product_name)
+      formData.append('sku', createProductData.sku)
+      formData.append('barcode', createProductData.barcode || '')
+      formData.append('product_price', createProductData.product_price)
+      formData.append('product_cost', createProductData.product_cost)
+      formData.append('current_quantity', createProductData.current_quantity || '0')
+      formData.append('category', createProductData.category || '')
+      formData.append('vendor', createProductData.vendor || '')
+      if (createProductData.vendor_id) {
+        formData.append('vendor_id', createProductData.vendor_id)
+      }
+      if (createProductData.photo) {
+        formData.append('photo', createProductData.photo)
+      }
+
+      const response = await fetch('/api/inventory', {
+        method: 'POST',
+        body: formData
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to create product')
+      }
+
+      setCreateSuccess(true)
+      setCreateProductData({
+        product_name: '',
+        sku: '',
+        barcode: '',
+        product_price: '',
+        product_cost: '',
+        current_quantity: '0',
+        category: '',
+        vendor: '',
+        vendor_id: null,
+        photo: null
+      })
+      setPhotoPreview(null)
+      setTimeout(() => {
+        loadInventory()
+        setShowCreateProduct(false)
+        setCreateSuccess(false)
+      }, 1000)
+    } catch (err) {
+      setCreateError(err.message || 'An error occurred while creating the product')
+    } finally {
+      setCreateLoading(false)
+    }
+  }
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0]
+    if (file) {
+      setCreateProductData({ ...createProductData, photo: file })
+      // Create preview
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setPhotoPreview(reader.result)
+      }
+      reader.readAsDataURL(file)
+    } else {
+      setCreateProductData({ ...createProductData, photo: null })
+      setPhotoPreview(null)
+    }
+  }
+
+  const handleCreateCategory = async (e) => {
+    e.preventDefault()
+    setCreateLoading(true)
+    setCreateError(null)
+    setCreateSuccess(false)
+
+    try {
+      const response = await fetch('/api/categories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ category_name: createCategoryData.category_name })
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to create category')
+      }
+
+      setCreateSuccess(true)
+      setCreateCategoryData({ category_name: '' })
+      setTimeout(() => {
+        loadInventory()
+        setShowCreateCategory(false)
+        setCreateSuccess(false)
+      }, 1000)
+    } catch (err) {
+      setCreateError(err.message || 'An error occurred while creating the category')
+    } finally {
+      setCreateLoading(false)
+    }
+  }
+
+  const handleCreateVendor = async (e) => {
+    e.preventDefault()
+    setCreateLoading(true)
+    setCreateError(null)
+    setCreateSuccess(false)
+
+    try {
+      const response = await fetch('/api/vendors', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(createVendorData)
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to create vendor')
+      }
+
+      setCreateSuccess(true)
+      setCreateVendorData({
+        vendor_name: '',
+        contact_person: '',
+        email: '',
+        phone: '',
+        address: ''
+      })
+      setTimeout(() => {
+        loadVendors()
+        setShowCreateVendor(false)
+        setCreateSuccess(false)
+      }, 1000)
+    } catch (err) {
+      setCreateError(err.message || 'An error occurred while creating the vendor')
+    } finally {
+      setCreateLoading(false)
     }
   }
 
@@ -587,6 +769,84 @@ function Inventory() {
 
   return (
     <div style={{ padding: '40px', maxWidth: '1600px', margin: '0 auto' }}>
+      {/* Header with Create Buttons */}
+      <div style={{ 
+        display: 'flex', 
+        gap: '12px', 
+        marginBottom: '20px',
+        flexWrap: 'wrap'
+      }}>
+        <button
+          onClick={() => setShowCreateProduct(true)}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+          }}
+        >
+          + Create Product
+        </button>
+        <button
+          onClick={() => setShowCreateCategory(true)}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+          }}
+        >
+          + Create Category
+        </button>
+        <button
+          onClick={() => setShowCreateVendor(true)}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+          }}
+        >
+          + Create Vendor
+        </button>
+      </div>
+
       <div style={{ display: 'flex', gap: '30px', height: 'calc(100vh - 200px)' }}>
         {/* Left Column - Search */}
         <div style={{ 
@@ -616,6 +876,744 @@ function Inventory() {
               }}
             />
           </div>
+
+          {/* Create Product Form */}
+          {showCreateProduct && (
+            <div style={{
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '20px',
+              maxHeight: 'calc(100vh - 300px)',
+              overflowY: 'auto'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                  Create New Product
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateProduct(false)
+                    setCreateError(null)
+                    setCreateSuccess(false)
+                    setCreateProductData({
+                      product_name: '',
+                      sku: '',
+                      barcode: '',
+                      product_price: '',
+                      product_cost: '',
+                      current_quantity: '0',
+                      category: '',
+                      vendor: '',
+                      vendor_id: null,
+                      photo: null
+                    })
+                    setPhotoPreview(null)
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    lineHeight: 1
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {createError && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee',
+                  border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#ef5350' : '#c33',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  {createError}
+                </div>
+              )}
+
+              {createSuccess && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#efe',
+                  border: isDarkMode ? '1px solid rgba(46, 125, 50, 0.4)' : '1px solid #cfc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#81c784' : '#3c3',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  Product created successfully!
+                </div>
+              )}
+
+              <form onSubmit={handleCreateProduct}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Product Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={createProductData.product_name}
+                      onChange={(e) => setCreateProductData({ ...createProductData, product_name: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      SKU *
+                    </label>
+                    <input
+                      type="text"
+                      value={createProductData.sku}
+                      onChange={(e) => setCreateProductData({ ...createProductData, sku: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Barcode
+                    </label>
+                    <input
+                      type="text"
+                      value={createProductData.barcode}
+                      onChange={(e) => setCreateProductData({ ...createProductData, barcode: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                        Price *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={createProductData.product_price}
+                        onChange={(e) => setCreateProductData({ ...createProductData, product_price: e.target.value })}
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                        Cost *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={createProductData.product_cost}
+                        onChange={(e) => setCreateProductData({ ...createProductData, product_cost: e.target.value })}
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Quantity *
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={createProductData.current_quantity}
+                      onChange={(e) => setCreateProductData({ ...createProductData, current_quantity: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Category
+                    </label>
+                    <input
+                      type="text"
+                      value={createProductData.category}
+                      onChange={(e) => setCreateProductData({ ...createProductData, category: e.target.value })}
+                      placeholder="e.g., Electronics &gt; Phones"
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Vendor
+                    </label>
+                    <select
+                      value={createProductData.vendor || ''}
+                      onChange={(e) => {
+                        const vendor = allVendors.find(v => v.vendor_name === e.target.value)
+                        setCreateProductData({ 
+                          ...createProductData, 
+                          vendor: e.target.value,
+                          vendor_id: vendor ? vendor.vendor_id : null
+                        })
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    >
+                      <option value="">Select a vendor (optional)</option>
+                      {allVendors.map(vendor => (
+                        <option key={vendor.vendor_id} value={vendor.vendor_name}>
+                          {vendor.vendor_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Product Photo
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoChange}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    {photoPreview && (
+                      <div style={{ marginTop: '8px' }}>
+                        <img
+                          src={photoPreview}
+                          alt="Preview"
+                          style={{
+                            maxWidth: '100%',
+                            maxHeight: '120px',
+                            borderRadius: '4px',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateProduct(false)
+                        setCreateError(null)
+                        setCreateSuccess(false)
+                        setCreateProductData({
+                          product_name: '',
+                          sku: '',
+                          barcode: '',
+                          product_price: '',
+                          product_cost: '',
+                          current_quantity: '0',
+                          category: '',
+                          vendor: '',
+                          vendor_id: null,
+                          photo: null
+                        })
+                        setPhotoPreview(null)
+                      }}
+                      disabled={createLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        cursor: createLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={createLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: createLoading ? '#ccc' : `rgba(${themeColorRgb}, 0.7)`,
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: createLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500
+                      }}
+                    >
+                      {createLoading ? 'Creating...' : 'Create'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Create Category Form */}
+          {showCreateCategory && (
+            <div style={{
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                  Create New Category
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateCategory(false)
+                    setCreateError(null)
+                    setCreateSuccess(false)
+                    setCreateCategoryData({ category_name: '' })
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    lineHeight: 1
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {createError && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee',
+                  border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#ef5350' : '#c33',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  {createError}
+                </div>
+              )}
+
+              {createSuccess && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#efe',
+                  border: isDarkMode ? '1px solid rgba(46, 125, 50, 0.4)' : '1px solid #cfc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#81c784' : '#3c3',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  Category created successfully!
+                </div>
+              )}
+
+              <form onSubmit={handleCreateCategory}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Category Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={createCategoryData.category_name}
+                      onChange={(e) => setCreateCategoryData({ category_name: e.target.value })}
+                      placeholder="e.g., Electronics &gt; Phones or just Electronics"
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    <p style={{ marginTop: '6px', fontSize: '11px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>
+                      Use &quot;&gt;&quot; to create subcategories (e.g., &quot;Electronics &gt; Phones&quot;)
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateCategory(false)
+                        setCreateError(null)
+                        setCreateSuccess(false)
+                        setCreateCategoryData({ category_name: '' })
+                      }}
+                      disabled={createLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        cursor: createLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={createLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: createLoading ? '#ccc' : `rgba(${themeColorRgb}, 0.7)`,
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: createLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500
+                      }}
+                    >
+                      {createLoading ? 'Creating...' : 'Create'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Create Vendor Form */}
+          {showCreateVendor && (
+            <div style={{
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '20px',
+              maxHeight: 'calc(100vh - 300px)',
+              overflowY: 'auto'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                  Create New Vendor
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateVendor(false)
+                    setCreateError(null)
+                    setCreateSuccess(false)
+                    setCreateVendorData({
+                      vendor_name: '',
+                      contact_person: '',
+                      email: '',
+                      phone: '',
+                      address: ''
+                    })
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    lineHeight: 1
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {createError && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee',
+                  border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#ef5350' : '#c33',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  {createError}
+                </div>
+              )}
+
+              {createSuccess && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#efe',
+                  border: isDarkMode ? '1px solid rgba(46, 125, 50, 0.4)' : '1px solid #cfc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#81c784' : '#3c3',
+                  marginBottom: '12px',
+                  fontSize: '12px'
+                }}>
+                  Vendor created successfully!
+                </div>
+              )}
+
+              <form onSubmit={handleCreateVendor}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Vendor Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={createVendorData.vendor_name}
+                      onChange={(e) => setCreateVendorData({ ...createVendorData, vendor_name: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Contact Person
+                    </label>
+                    <input
+                      type="text"
+                      value={createVendorData.contact_person}
+                      onChange={(e) => setCreateVendorData({ ...createVendorData, contact_person: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Email
+                    </label>
+                    <input
+                      type="email"
+                      value={createVendorData.email}
+                      onChange={(e) => setCreateVendorData({ ...createVendorData, email: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={createVendorData.phone}
+                      onChange={(e) => setCreateVendorData({ ...createVendorData, phone: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      Address
+                    </label>
+                    <textarea
+                      value={createVendorData.address}
+                      onChange={(e) => setCreateVendorData({ ...createVendorData, address: e.target.value })}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box',
+                        resize: 'vertical'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateVendor(false)
+                        setCreateError(null)
+                        setCreateSuccess(false)
+                        setCreateVendorData({
+                          vendor_name: '',
+                          contact_person: '',
+                          email: '',
+                          phone: '',
+                          address: ''
+                        })
+                      }}
+                      disabled={createLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        cursor: createLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={createLoading}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        backgroundColor: createLoading ? '#ccc' : `rgba(${themeColorRgb}, 0.7)`,
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: createLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500
+                      }}
+                    >
+                      {createLoading ? 'Creating...' : 'Create'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
 
           {/* Edit Product Form */}
           {editingProduct && (

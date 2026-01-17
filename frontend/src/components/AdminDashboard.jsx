@@ -1,10 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import { usePermissions } from '../contexts/PermissionContext';
+import { useTheme } from '../contexts/ThemeContext';
 import EmployeeForm from './EmployeeForm';
 import PermissionManager from './PermissionManager';
 
 function AdminDashboard() {
   const { hasPermission } = usePermissions();
+  const { themeColor, themeMode } = useTheme();
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
+  
   const [employees, setEmployees] = useState([]);
   const [roles, setRoles] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -16,17 +48,10 @@ function AdminDashboard() {
   const [permissionEmployeeId, setPermissionEmployeeId] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [showDisplaySettings, setShowDisplaySettings] = useState(false);
-  const [displaySettings, setDisplaySettings] = useState({
-    tip_enabled: false,
-    tip_after_payment: false,
-    tip_suggestions: [15, 18, 20, 25]
-  });
 
   useEffect(() => {
     loadEmployees();
     loadRoles();
-    loadDisplaySettings();
     loadSchedules();
   }, []);
 
@@ -35,51 +60,6 @@ function AdminDashboard() {
       loadSchedules();
     }
   }, [activeTab]);
-
-  const loadDisplaySettings = async () => {
-    try {
-      const response = await fetch('/api/customer-display/settings');
-      const data = await response.json();
-      if (data.success) {
-        setDisplaySettings({
-          tip_enabled: data.data.tip_enabled === 1 || data.data.tip_enabled === true,
-          tip_after_payment: data.data.tip_after_payment === 1 || data.data.tip_after_payment === true,
-          tip_suggestions: data.data.tip_suggestions || [15, 18, 20, 25]
-        });
-      }
-    } catch (err) {
-      console.error('Failed to load display settings:', err);
-    }
-  };
-
-  const saveDisplaySettings = async () => {
-    try {
-      const sessionToken = localStorage.getItem('sessionToken');
-      const response = await fetch('/api/customer-display/settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({
-          tip_enabled: displaySettings.tip_enabled ? 1 : 0,
-          tip_after_payment: displaySettings.tip_after_payment ? 1 : 0,
-          tip_suggestions: displaySettings.tip_suggestions
-        })
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setSuccess('Display settings saved successfully');
-        setShowDisplaySettings(false);
-        setTimeout(() => setSuccess(null), 3000);
-      } else {
-        setError(data.message || 'Failed to save display settings');
-      }
-    } catch (err) {
-      setError('Failed to save display settings');
-    }
-  };
 
   const loadEmployees = async () => {
     try {
@@ -193,36 +173,85 @@ function AdminDashboard() {
 
   if (!hasPermission('manage_permissions') && !hasPermission('add_employee')) {
     return (
-      <div className="admin-dashboard">
-        <div className="error-message">
-          You don't have permission to access the admin dashboard.
-        </div>
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+        You don't have permission to access the admin dashboard.
       </div>
     );
   }
 
   if (loading) {
-    return <div className="admin-dashboard">Loading...</div>;
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+        Loading...
+      </div>
+    );
   }
 
   return (
-    <div className="admin-dashboard" style={{ padding: '0', maxWidth: '100%' }}>
-      <div className="admin-header" style={{ marginBottom: '20px' }}>
-        <h1 style={{ fontSize: '24px', margin: 0 }}>Admin Dashboard</h1>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => setShowDisplaySettings(!showDisplaySettings)}
-          >
-            {showDisplaySettings ? 'Hide' : 'Show'} Display Settings
-          </button>
+    <div style={{ padding: '0', maxWidth: '100%' }}>
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        marginBottom: '20px',
+        flexWrap: 'wrap',
+        gap: '12px'
+      }}>
+        <h1 style={{ 
+          fontSize: '24px', 
+          margin: 0,
+          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+        }}>
+          Admin Dashboard
+        </h1>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           {activeTab === 'employees' && hasPermission('add_employee') && (
-            <button className="btn btn-primary" onClick={handleAddEmployee}>
+            <button 
+              onClick={handleAddEmployee}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+              }}
+            >
               Add Employee
             </button>
           )}
           {activeTab === 'schedules' && (
-            <button className="btn btn-secondary" onClick={loadSchedules}>
+            <button 
+              onClick={loadSchedules}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
+                color: '#fff',
+                border: `1px solid rgba(${themeColorRgb}, 0.3)`,
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
+              }}
+            >
               Refresh
             </button>
           )}
@@ -230,29 +259,64 @@ function AdminDashboard() {
       </div>
 
       {error && (
-        <div className="alert alert-error" onClick={() => setError(null)}>
+        <div 
+          onClick={() => setError(null)}
+          style={{
+            padding: '12px 16px',
+            backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee',
+            border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc',
+            borderRadius: '8px',
+            color: isDarkMode ? '#ef5350' : '#c33',
+            marginBottom: '16px',
+            fontSize: '14px',
+            cursor: 'pointer'
+          }}
+        >
           {error}
         </div>
       )}
 
       {success && (
-        <div className="alert alert-success" onClick={() => setSuccess(null)}>
+        <div 
+          onClick={() => setSuccess(null)}
+          style={{
+            padding: '12px 16px',
+            backgroundColor: isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#efe',
+            border: isDarkMode ? '1px solid rgba(46, 125, 50, 0.4)' : '1px solid #cfc',
+            borderRadius: '8px',
+            color: isDarkMode ? '#81c784' : '#3c3',
+            marginBottom: '16px',
+            fontSize: '14px',
+            cursor: 'pointer'
+          }}
+        >
           {success}
         </div>
       )}
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid #ddd', paddingBottom: '10px' }}>
+      <div style={{ 
+        display: 'flex', 
+        gap: '8px', 
+        marginBottom: '20px', 
+        borderBottom: isDarkMode ? '2px solid var(--border-light, #333)' : '2px solid #eee',
+        paddingBottom: '12px'
+      }}>
         <button
           onClick={() => setActiveTab('employees')}
           style={{
-            padding: '8px 16px',
-            backgroundColor: activeTab === 'employees' ? 'var(--theme-color, purple)' : 'transparent',
-            color: activeTab === 'employees' ? '#fff' : '#666',
-            border: 'none',
-            borderRadius: '4px',
+            padding: '10px 16px',
+            backgroundColor: activeTab === 'employees' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            border: activeTab === 'employees' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: activeTab === 'employees' ? 600 : 500,
+            color: '#fff',
             cursor: 'pointer',
-            fontWeight: activeTab === 'employees' ? 'bold' : 'normal'
+            transition: 'all 0.3s ease',
+            boxShadow: activeTab === 'employees' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
           }}
         >
           Employees
@@ -260,13 +324,18 @@ function AdminDashboard() {
         <button
           onClick={() => setActiveTab('schedules')}
           style={{
-            padding: '8px 16px',
-            backgroundColor: activeTab === 'schedules' ? 'var(--theme-color, purple)' : 'transparent',
-            color: activeTab === 'schedules' ? '#fff' : '#666',
-            border: 'none',
-            borderRadius: '4px',
+            padding: '10px 16px',
+            backgroundColor: activeTab === 'schedules' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            border: activeTab === 'schedules' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: activeTab === 'schedules' ? 600 : 500,
+            color: '#fff',
             cursor: 'pointer',
-            fontWeight: activeTab === 'schedules' ? 'bold' : 'normal'
+            transition: 'all 0.3s ease',
+            boxShadow: activeTab === 'schedules' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
           }}
         >
           All Schedules
@@ -274,57 +343,225 @@ function AdminDashboard() {
       </div>
 
       {activeTab === 'employees' && (
-        <div className="employees-table">
-        <table>
+        <div style={{ overflowX: 'auto' }}>
+        <table style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+          borderRadius: '8px',
+          overflow: 'hidden'
+        }}>
           <thead>
-            <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Position</th>
-              <th>Role</th>
-              <th>Status</th>
-              <th>Actions</th>
+            <tr style={{ 
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f5f5f5',
+              borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd'
+            }}>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>ID</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Name</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Username</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Email</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Position</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Role</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Status</th>
+              <th style={{ 
+                padding: '12px 16px', 
+                textAlign: 'left', 
+                fontWeight: 600,
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {employees.map((employee) => (
-              <tr key={employee.employee_id}>
-                <td>{employee.employee_id}</td>
-                <td>{employee.first_name} {employee.last_name}</td>
-                <td>{employee.username || employee.employee_code || 'N/A'}</td>
-                <td>{employee.email || 'N/A'}</td>
-                <td>{employee.position}</td>
-                <td>{getRoleName(employee.role_id)}</td>
-                <td>
-                  <span className={`status-badge ${employee.active ? 'active' : 'inactive'}`}>
+              <tr 
+                key={employee.employee_id}
+                style={{
+                  borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #eee',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f9f9f9'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent'
+                }}
+              >
+                <td style={{ 
+                  padding: '12px 16px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px'
+                }}>{employee.employee_id}</td>
+                <td style={{ 
+                  padding: '12px 16px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px'
+                }}>{employee.first_name} {employee.last_name}</td>
+                <td style={{ 
+                  padding: '12px 16px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px'
+                }}>{employee.username || employee.employee_code || 'N/A'}</td>
+                <td style={{ 
+                  padding: '12px 16px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px'
+                }}>{employee.email || 'N/A'}</td>
+                <td style={{ 
+                  padding: '12px 16px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px'
+                }}>{employee.position}</td>
+                <td style={{ 
+                  padding: '12px 16px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  fontSize: '14px'
+                }}>{getRoleName(employee.role_id)}</td>
+                <td style={{ 
+                  padding: '12px 16px',
+                  fontSize: '14px'
+                }}>
+                  <span style={{
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    backgroundColor: employee.active 
+                      ? (isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#e8f5e9')
+                      : (isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#ffebee'),
+                    color: employee.active
+                      ? (isDarkMode ? '#81c784' : '#2e7d32')
+                      : (isDarkMode ? '#ef5350' : '#c62828')
+                  }}>
                     {employee.active ? 'Active' : 'Inactive'}
                   </span>
                 </td>
-                <td>
-                  <div className="action-buttons">
+                <td style={{ 
+                  padding: '12px 16px'
+                }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     {hasPermission('edit_employee') && (
                       <button
-                        className="btn btn-sm btn-secondary"
                         onClick={() => handleEditEmployee(employee)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          fontSize: '12px',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #3d3d3d)' : '#e0e0e0'
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0'
+                        }}
                       >
                         Edit
                       </button>
                     )}
                     {hasPermission('manage_permissions') && (
                       <button
-                        className="btn btn-sm btn-info"
                         onClick={() => handleManagePermissions(employee.employee_id)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
+                          border: `1px solid rgba(${themeColorRgb}, 0.3)`,
+                          borderRadius: '4px',
+                          color: isDarkMode ? '#fff' : '#333',
+                          fontSize: '12px',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
+                        }}
                       >
                         Permissions
                       </button>
                     )}
                     {hasPermission('delete_employee') && (
                       <button
-                        className="btn btn-sm btn-danger"
                         onClick={() => handleDeleteEmployee(employee.employee_id)}
                         disabled={!employee.active}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: !employee.active 
+                            ? (isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0')
+                            : (isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee'),
+                          border: !employee.active
+                            ? (isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd')
+                            : (isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc'),
+                          borderRadius: '4px',
+                          color: !employee.active
+                            ? (isDarkMode ? 'var(--text-secondary, #999)' : '#999')
+                            : (isDarkMode ? '#ef5350' : '#c33'),
+                          fontSize: '12px',
+                          fontWeight: 500,
+                          cursor: !employee.active ? 'not-allowed' : 'pointer',
+                          transition: 'all 0.2s',
+                          opacity: !employee.active ? 0.5 : 1
+                        }}
+                        onMouseEnter={(e) => {
+                          if (employee.active) {
+                            e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(198, 40, 40, 0.3)' : '#fdd'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (employee.active) {
+                            e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee'
+                          }
+                        }}
                       >
                         Deactivate
                       </button>
@@ -339,22 +576,72 @@ function AdminDashboard() {
       )}
 
       {activeTab === 'schedules' && (
-        <div className="schedules-table">
-          <table>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+            borderRadius: '8px',
+            overflow: 'hidden'
+          }}>
             <thead>
-              <tr>
-                <th>Employee</th>
-                <th>Date</th>
-                <th>Start Time</th>
-                <th>End Time</th>
-                <th>Hours</th>
-                <th>Notes</th>
+              <tr style={{ 
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f5f5f5',
+                borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd'
+              }}>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                }}>Employee</th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                }}>Date</th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                }}>Start Time</th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                }}>End Time</th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                }}>Hours</th>
+                <th style={{ 
+                  padding: '12px 16px', 
+                  textAlign: 'left', 
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                }}>Notes</th>
               </tr>
             </thead>
             <tbody>
               {schedules.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>
+                  <td colSpan="6" style={{ 
+                    textAlign: 'center', 
+                    padding: '40px 20px',
+                    color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999',
+                    fontSize: '14px'
+                  }}>
                     No schedules found
                   </td>
                 </tr>
@@ -379,13 +666,53 @@ function AdminDashboard() {
                   }
                   
                   return (
-                    <tr key={schedule.schedule_id || schedule.scheduled_shift_id || index}>
-                      <td>{schedule.employee_name || 'N/A'}</td>
-                      <td>{dateStr}</td>
-                      <td>{startTime}</td>
-                      <td>{endTime}</td>
-                      <td>{hours}</td>
-                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <tr 
+                      key={schedule.schedule_id || schedule.scheduled_shift_id || index}
+                      style={{
+                        borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #eee',
+                        transition: 'background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f9f9f9'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent'
+                      }}
+                    >
+                      <td style={{ 
+                        padding: '12px 16px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        fontSize: '14px'
+                      }}>{schedule.employee_name || 'N/A'}</td>
+                      <td style={{ 
+                        padding: '12px 16px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        fontSize: '14px'
+                      }}>{dateStr}</td>
+                      <td style={{ 
+                        padding: '12px 16px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        fontSize: '14px'
+                      }}>{startTime}</td>
+                      <td style={{ 
+                        padding: '12px 16px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        fontSize: '14px'
+                      }}>{endTime}</td>
+                      <td style={{ 
+                        padding: '12px 16px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        fontSize: '14px'
+                      }}>{hours}</td>
+                      <td style={{ 
+                        maxWidth: '200px', 
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis', 
+                        whiteSpace: 'nowrap',
+                        padding: '12px 16px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        fontSize: '14px'
+                      }}>
                         {schedule.notes || ''}
                       </td>
                     </tr>
@@ -419,50 +746,6 @@ function AdminDashboard() {
         />
       )}
 
-      {showDisplaySettings && (
-        <div style={{ 
-          marginTop: '20px', 
-          padding: '20px', 
-          backgroundColor: '#fff', 
-          borderRadius: '8px',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          <h2>Customer Display Settings</h2>
-          
-          <div style={{ marginTop: '20px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
-              <input
-                type="checkbox"
-                checked={displaySettings.tip_enabled}
-                onChange={(e) => setDisplaySettings({ ...displaySettings, tip_enabled: e.target.checked })}
-              />
-              <span>Enable tip prompts before payment</span>
-            </label>
-
-            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
-              <input
-                type="checkbox"
-                checked={displaySettings.tip_after_payment}
-                onChange={(e) => setDisplaySettings({ ...displaySettings, tip_after_payment: e.target.checked })}
-              />
-              <span>Enable tip option after payment completion</span>
-            </label>
-
-            <div style={{ marginTop: '20px' }}>
-              <button className="btn btn-primary" onClick={saveDisplaySettings}>
-                Save Settings
-              </button>
-              <button 
-                className="btn btn-secondary" 
-                onClick={() => setShowDisplaySettings(false)}
-                style={{ marginLeft: '10px' }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

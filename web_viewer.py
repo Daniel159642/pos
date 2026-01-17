@@ -38,7 +38,8 @@ from database import (
     create_payroll_record, get_payroll_records, get_tax_withholdings_summary,
     record_sales_tax, get_sales_tax_summary,
     add_contractor_payment, get_contractor_payments,
-    add_expense, get_expenses, get_expense_categories
+    add_expense, get_expenses, get_expense_categories,
+    add_product, create_or_get_category_with_hierarchy
 )
 from permission_manager import get_permission_manager
 import sqlite3
@@ -206,40 +207,116 @@ def serve_assets(path):
         return send_from_directory(os.path.join(BUILD_DIR, 'assets'), path)
     return '', 404
 
-@app.route('/api/inventory')
+@app.route('/api/inventory', methods=['GET', 'POST'])
 def api_inventory():
-    """Get inventory data with vendor names and metadata"""
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT 
-                i.*,
-                v.vendor_name,
-                pm.keywords,
-                pm.tags,
-                pm.attributes
-            FROM inventory i
-            LEFT JOIN vendors v ON i.vendor_id = v.vendor_id
-            LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
-            ORDER BY i.product_name
-        """)
-        
-        rows = cursor.fetchall()
-        columns = [description[0] for description in cursor.description]
-        data = [{col: row[col] for col in columns} for row in rows]
-        
-        conn.close()
-        return jsonify({'columns': columns, 'data': data})
-    except Exception as e:
-        print(f"Error in api_inventory: {e}")
-        import traceback
-        traceback.print_exc()
-        if 'conn' in locals():
+    """Get inventory data with vendor names and metadata, or create a new product"""
+    if request.method == 'POST':
+        try:
+            # Handle both JSON and form-data (for file uploads)
+            if request.is_json:
+                data = request.json
+            else:
+                data = request.form.to_dict()
+            
+            # Required fields
+            product_name = data.get('product_name')
+            sku = data.get('sku')
+            product_price = data.get('product_price')
+            product_cost = data.get('product_cost')
+            
+            if not product_name or not sku:
+                return jsonify({'success': False, 'message': 'product_name and sku are required'}), 400
+            
+            # Convert price and cost to float
+            try:
+                product_price = float(product_price) if product_price else 0.0
+                product_cost = float(product_cost) if product_cost else 0.0
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'message': 'product_price and product_cost must be valid numbers'}), 400
+            
+            # Handle photo upload if provided
+            photo_path = data.get('photo')  # Can be a URL/path from JSON
+            if 'photo' in request.files:
+                photo = request.files['photo']
+                if photo.filename:
+                    filename = secure_filename(f"product_{sku}_{datetime.now().timestamp()}_{photo.filename}")
+                    upload_dir = 'uploads/product_photos'
+                    os.makedirs(upload_dir, exist_ok=True)
+                    photo_path = os.path.join(upload_dir, filename)
+                    photo.save(photo_path)
+            
+            # Handle vendor - can be vendor_id (int) or vendor_name (str)
+            vendor_id = data.get('vendor_id')
+            vendor = data.get('vendor') or data.get('vendor_name')
+            
+            # If vendor is a string name, try to find vendor_id
+            if not vendor_id and vendor:
+                conn = sqlite3.connect(DB_NAME)
+                cursor = conn.cursor()
+                cursor.execute("SELECT vendor_id FROM vendors WHERE vendor_name = ?", (vendor,))
+                vendor_row = cursor.fetchone()
+                if vendor_row:
+                    vendor_id = vendor_row[0]
+                conn.close()
+            
+            # Create product
+            product_id = add_product(
+                product_name=product_name,
+                sku=sku,
+                product_price=product_price,
+                product_cost=product_cost,
+                vendor=vendor,
+                vendor_id=vendor_id,
+                photo=photo_path,
+                current_quantity=int(data.get('current_quantity', 0)) or 0,
+                category=data.get('category'),
+                barcode=data.get('barcode'),
+                auto_extract_metadata=True
+            )
+            
+            return jsonify({
+                'success': True,
+                'product_id': product_id,
+                'message': 'Product created successfully'
+            })
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 400
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'success': False, 'message': str(e)}), 500
+    else:
+        # GET request
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    i.*,
+                    v.vendor_name,
+                    pm.keywords,
+                    pm.tags,
+                    pm.attributes
+                FROM inventory i
+                LEFT JOIN vendors v ON i.vendor_id = v.vendor_id
+                LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
+                ORDER BY i.product_name
+            """)
+            
+            rows = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            data = [{col: row[col] for col in columns} for row in rows]
+            
             conn.close()
-        return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
+            return jsonify({'columns': columns, 'data': data})
+        except Exception as e:
+            print(f"Error in api_inventory: {e}")
+            import traceback
+            traceback.print_exc()
+            if 'conn' in locals():
+                conn.close()
+            return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
 
 @app.route('/api/inventory/<int:product_id>', methods=['PUT'])
 def api_update_inventory(product_id):
@@ -322,6 +399,30 @@ def api_vendors():
         
         columns = list(vendors[0].keys())
         return jsonify({'columns': columns, 'data': vendors})
+
+@app.route('/api/categories', methods=['POST'])
+def api_create_category():
+    """Create a new category"""
+    try:
+        data = request.json if request.is_json else request.form.to_dict()
+        category_path = data.get('category_path') or data.get('category_name')
+        
+        if not category_path:
+            return jsonify({'success': False, 'message': 'category_path or category_name is required'}), 400
+        
+        category_id = create_or_get_category_with_hierarchy(category_path)
+        
+        if category_id:
+            return jsonify({
+                'success': True,
+                'category_id': category_id,
+                'message': 'Category created successfully'
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Failed to create category'}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/shipments')
 def api_shipments():
@@ -843,7 +944,9 @@ def api_create_order():
             tax_rate=data.get('tax_rate', 0.0),
             discount=data.get('discount', 0.0),
             customer_id=data.get('customer_id'),
-            tip=data.get('tip', 0.0)
+            tip=data.get('tip', 0.0),
+            order_type=data.get('order_type'),
+            customer_info=data.get('customer_info')
         )
         
         return jsonify(result)
@@ -924,12 +1027,11 @@ def api_update_receipt_settings():
             # Insert new settings
             cursor.execute("""
                 INSERT INTO receipt_settings (
-                    receipt_type, store_name, store_address, store_city, store_state, store_zip,
-                    store_phone, store_email, store_website, footer_message, return_policy,
-                    show_tax_breakdown, show_payment_method
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    store_name, store_address, store_city, store_state, store_zip,
+                    store_phone, store_email, store_website, footer_message,
+                    show_tax_breakdown, show_payment_method, show_signature
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                data.get('receipt_type', 'traditional'),
                 data.get('store_name', 'Store'),
                 data.get('store_address', ''),
                 data.get('store_city', ''),
@@ -939,15 +1041,14 @@ def api_update_receipt_settings():
                 data.get('store_email', ''),
                 data.get('store_website', ''),
                 data.get('footer_message', 'Thank you for your business!'),
-                data.get('return_policy', ''),
                 data.get('show_tax_breakdown', 1),
-                data.get('show_payment_method', 1)
+                data.get('show_payment_method', 1),
+                data.get('show_signature', 0)
             ))
         else:
             # Update existing settings
             cursor.execute("""
                 UPDATE receipt_settings SET
-                    receipt_type = ?,
                     store_name = ?,
                     store_address = ?,
                     store_city = ?,
@@ -957,9 +1058,9 @@ def api_update_receipt_settings():
                     store_email = ?,
                     store_website = ?,
                     footer_message = ?,
-                    return_policy = ?,
                     show_tax_breakdown = ?,
                     show_payment_method = ?,
+                    show_signature = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
             """, (
@@ -973,7 +1074,8 @@ def api_update_receipt_settings():
                 data.get('store_website', ''),
                 data.get('footer_message', 'Thank you for your business!'),
                 data.get('show_tax_breakdown', 1),
-                data.get('show_payment_method', 1)
+                data.get('show_payment_method', 1),
+                data.get('show_signature', 0)
             ))
         
         conn.commit()
@@ -4678,6 +4780,61 @@ def save_receipt_preference():
         )
         
         return jsonify({'success': True, 'preference_id': preference_id})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/transaction/signature', methods=['POST'])
+def save_transaction_signature():
+    """Save signature for a transaction"""
+    try:
+        data = request.json
+        transaction_id = data.get('transaction_id')
+        signature = data.get('signature')  # Base64 encoded image
+        
+        if not transaction_id or not signature:
+            return jsonify({'success': False, 'message': 'Transaction ID and signature are required'}), 400
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            # Update transaction with signature
+            cursor.execute("""
+                UPDATE transactions
+                SET signature = ?
+                WHERE transaction_id = ?
+            """, (signature, transaction_id))
+            
+            if cursor.rowcount == 0:
+                conn.close()
+                return jsonify({'success': False, 'message': 'Transaction not found'}), 404
+            
+            conn.commit()
+            conn.close()
+            
+            return jsonify({'success': True, 'message': 'Signature saved successfully'})
+        except sqlite3.OperationalError as e:
+            # Column might not exist, try to add it
+            if 'signature' in str(e).lower():
+                conn.close()
+                # Run migration
+                from migrate_add_signature_to_transactions import migrate_add_signature
+                migrate_add_signature(DB_NAME)
+                # Try again
+                conn = sqlite3.connect(DB_NAME)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE transactions
+                    SET signature = ?
+                    WHERE transaction_id = ?
+                """, (signature, transaction_id))
+                conn.commit()
+                conn.close()
+                return jsonify({'success': True, 'message': 'Signature saved successfully'})
+            else:
+                conn.close()
+                raise
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500

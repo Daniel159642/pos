@@ -37,6 +37,13 @@ function POS({ employeeId, employeeName }) {
   const [showCustomerDisplay, setShowCustomerDisplay] = useState(false)
   const [showSummary, setShowSummary] = useState(false) // Show transaction summary before payment
   const [selectedTip, setSelectedTip] = useState(0) // Tip amount selected by customer
+  const [orderType, setOrderType] = useState(null) // 'pickup', 'delivery', or null
+  const [showCustomerInfoModal, setShowCustomerInfoModal] = useState(false) // Show customer info modal
+  const [customerInfo, setCustomerInfo] = useState({
+    name: '',
+    phone: '',
+    address: ''
+  })
   
   // Check if user can process sales
   const canProcessSale = hasPermission('process_sale')
@@ -540,16 +547,18 @@ function POS({ employeeId, employeeName }) {
   }
 
   const handleReceiptSelect = () => {
-    // Clear cart if payment was completed
-    if (paymentCompleted) {
-      setCart([])
-      setSearchTerm('')
-      setAmountPaid('')
-      setPaymentCompleted(false)
-      setSelectedTip(0) // Reset tip
-      setShowCustomerDisplay(false)
-      setShowPaymentForm(false)
-    }
+      // Clear cart if payment was completed
+      if (paymentCompleted) {
+        setCart([])
+        setSearchTerm('')
+        setAmountPaid('')
+        setPaymentCompleted(false)
+        setSelectedTip(0) // Reset tip
+        setOrderType(null) // Reset order type
+        setCustomerInfo({ name: '', phone: '', address: '' }) // Reset customer info
+        setShowCustomerDisplay(false)
+        setShowPaymentForm(false)
+      }
   }
 
   const handleCalculatorInput = (value) => {
@@ -595,6 +604,11 @@ function POS({ employeeId, employeeName }) {
         unit_price: item.unit_price,
         discount: 0
       }))
+
+      // Prepare customer info and order type for order creation
+      let customerId = null
+      const orderTypeToSave = orderType || null
+      const customerInfoToSave = orderType ? customerInfo : null
 
       // Start transaction for customer display
       let transactionId = null
@@ -702,7 +716,9 @@ function POS({ employeeId, employeeName }) {
               employee_id: employeeId,
               items: items,
               payment_method: paymentMethod,
-              tax_rate: taxRate
+              tax_rate: taxRate,
+              order_type: orderTypeToSave,
+              customer_info: customerInfoToSave
             })
           })
           result = await response.json()
@@ -747,7 +763,9 @@ function POS({ employeeId, employeeName }) {
             employee_id: employeeId,
             items: items,
             payment_method: paymentMethod,
-            tax_rate: taxRate
+            tax_rate: taxRate,
+            order_type: orderTypeToSave,
+            customer_info: customerInfoToSave
           })
         })
         result = await response.json()
@@ -1007,8 +1025,8 @@ function POS({ employeeId, employeeName }) {
                 </div>
               )}
               
-              {/* Close Button - Show when on summary screen */}
-              {showSummary && !showPaymentForm && (
+              {/* Close Button - Show when on summary screen only, not during payment flow or when customer display is active */}
+              {showSummary && !showPaymentForm && !showCustomerDisplay && (
                 <button
                   onClick={() => {
                     setShowCustomerDisplay(false)
@@ -1198,6 +1216,73 @@ function POS({ employeeId, employeeName }) {
           borderTop: '2px solid #eee',
           paddingTop: '20px'
         }}>
+          {/* Pickup/Delivery Options */}
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ marginBottom: '8px', fontSize: '14px', color: '#666', fontWeight: 500 }}>
+              Order Type (Optional):
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => {
+                  if (orderType === 'pickup') {
+                    setOrderType(null)
+                    setCustomerInfo({ name: '', phone: '', address: '' })
+                  } else {
+                    setOrderType('pickup')
+                    setShowCustomerInfoModal(true)
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  border: orderType === 'pickup' ? '2px solid ' + themeColor : '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontWeight: orderType === 'pickup' ? 600 : 400,
+                  backgroundColor: orderType === 'pickup' ? `rgba(${themeColorRgb}, 0.1)` : '#fff',
+                  color: orderType === 'pickup' ? themeColor : '#666',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Pickup
+              </button>
+              <button
+                onClick={() => {
+                  if (orderType === 'delivery') {
+                    setOrderType(null)
+                    setCustomerInfo({ name: '', phone: '', address: '' })
+                  } else {
+                    setOrderType('delivery')
+                    setShowCustomerInfoModal(true)
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  border: orderType === 'delivery' ? '2px solid ' + themeColor : '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontWeight: orderType === 'delivery' ? 600 : 400,
+                  backgroundColor: orderType === 'delivery' ? `rgba(${themeColorRgb}, 0.1)` : '#fff',
+                  color: orderType === 'delivery' ? themeColor : '#666',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Delivery
+              </button>
+            </div>
+            {orderType && customerInfo.name && (
+              <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f5f5f5', borderRadius: '4px', fontSize: '12px', color: '#666' }}>
+                <div><strong>{orderType === 'pickup' ? 'Pickup' : 'Delivery'}:</strong> {customerInfo.name} - {customerInfo.phone}</div>
+                {orderType === 'delivery' && customerInfo.address && (
+                  <div style={{ marginTop: '4px' }}><strong>Address:</strong> {customerInfo.address}</div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
             <span style={{ color: '#666' }}>Subtotal:</span>
             <span style={{ fontFamily: '"Product Sans", sans-serif', fontWeight: 500 }}>
@@ -1955,6 +2040,172 @@ function POS({ employeeId, employeeName }) {
         )}
         </div>
       </div>
+
+      {/* Customer Info Modal */}
+      {showCustomerInfoModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            backgroundColor: '#fff',
+            borderRadius: '8px',
+            padding: '24px',
+            maxWidth: '400px',
+            width: '90%',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontFamily: '"Product Sans", sans-serif' }}>
+                {orderType === 'pickup' ? 'Pickup' : 'Delivery'} Information
+              </h3>
+              <button
+                onClick={() => {
+                  setShowCustomerInfoModal(false)
+                  if (!customerInfo.name) {
+                    setOrderType(null)
+                  }
+                }}
+                style={{
+                  border: 'none',
+                  backgroundColor: 'transparent',
+                  color: '#666',
+                  cursor: 'pointer',
+                  fontSize: '24px',
+                  padding: '0',
+                  width: '30px',
+                  height: '30px',
+                  lineHeight: '1'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
+                Name *
+              </label>
+              <input
+                type="text"
+                value={customerInfo.name}
+                onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
+                placeholder="Customer name"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box'
+                }}
+                autoFocus
+              />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
+                Phone Number *
+              </label>
+              <input
+                type="tel"
+                value={customerInfo.phone}
+                onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                placeholder="Phone number"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            {orderType === 'delivery' && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
+                  Address *
+                </label>
+                <textarea
+                  value={customerInfo.address}
+                  onChange={(e) => setCustomerInfo({ ...customerInfo, address: e.target.value })}
+                  placeholder="Delivery address"
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
+                    fontFamily: 'inherit',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button
+                onClick={() => {
+                  setShowCustomerInfoModal(false)
+                  setOrderType(null)
+                  setCustomerInfo({ name: '', phone: '', address: '' })
+                }}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  backgroundColor: '#f5f5f5',
+                  color: '#666',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const requiredFields = orderType === 'pickup' 
+                    ? customerInfo.name && customerInfo.phone
+                    : customerInfo.name && customerInfo.phone && customerInfo.address
+                  
+                  if (requiredFields) {
+                    setShowCustomerInfoModal(false)
+                  } else {
+                    alert(`Please fill in all required fields${orderType === 'delivery' ? ' (name, phone, and address)' : ' (name and phone)'}`)
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Barcode Scanner Modal */}
       {showBarcodeScanner && (

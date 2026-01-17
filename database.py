@@ -2134,7 +2134,9 @@ def create_order(
     discount: float = 0.0,
     transaction_fee_rates: Optional[Dict[str, float]] = None,
     notes: Optional[str] = None,
-    tip: float = 0.0
+    tip: float = 0.0,
+    order_type: Optional[str] = None,
+    customer_info: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
     Create a new order and process payment
@@ -2143,6 +2145,8 @@ def create_order(
     payment_method: 'cash', 'credit_card', 'debit_card', 'mobile_payment', 'check', 'store_credit'
     tax_rate: Tax rate as decimal (e.g., 0.08 for 8%)
     transaction_fee_rates: Optional dict to override default fee rates
+    order_type: \'pickup\' or \'delivery\' (optional)
+    customer_info: Dict with \'name\', \'phone\', and optionally \'address\' (for delivery)
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -2173,7 +2177,52 @@ def create_order(
                     'success': False,
                     'message': f'Insufficient inventory for product_id {product_id}. Available: {available_qty}, Requested: {quantity}',
                     'order_id': None
-                }
+                }        # Handle customer info if provided (for pickup/delivery orders)
+        if customer_info and customer_info.get('name'):
+            # Create or get customer
+            customer_name = customer_info.get('name', '')
+            customer_phone = customer_info.get('phone', '')
+            customer_address = customer_info.get('address', '') if order_type == 'delivery' else None
+            
+            # Try to find existing customer by phone if phone is provided
+            if customer_phone:
+                cursor.execute("SELECT customer_id FROM customers WHERE phone = ?", (customer_phone,))
+                existing_customer = cursor.fetchone()
+                if existing_customer:
+                    customer_id = existing_customer['customer_id']
+                    # Update customer info if provided
+                    if customer_name or customer_address:
+                        update_fields = []
+                        update_values = []
+                        if customer_name:
+                            update_fields.append("customer_name = ?")
+                            update_values.append(customer_name)
+                        if customer_address:
+                            update_fields.append("address = ?")
+                            update_values.append(customer_address)
+                        if update_fields:
+                            update_values.append(customer_id)
+                            cursor.execute(f"""
+                                UPDATE customers 
+                                SET {', '.join(update_fields)}
+                                WHERE customer_id = ?
+                            """, update_values)
+                else:
+                    # Create new customer
+                    cursor.execute("""
+                        INSERT INTO customers (customer_name, phone, address)
+                        VALUES (?, ?, ?)
+                    """, (customer_name, customer_phone, customer_address))
+                    customer_id = cursor.lastrowid
+            else:
+                # No phone provided, create customer with just name
+                cursor.execute("""
+                    INSERT INTO customers (customer_name, address)
+                    VALUES (?, ?)
+                """, (customer_name, customer_address))
+                customer_id = cursor.lastrowid
+        
+
         
         # Generate order number
         order_number = generate_order_number()
@@ -2201,12 +2250,20 @@ def create_order(
         # Calculate final total (including transaction fee and tip)
         total = pre_fee_total + transaction_fee + tip
         
-        # Create order - check if tip column exists
+        # Create order - check if tip and order_type columns exist
         cursor.execute("PRAGMA table_info(orders)")
         columns = [col[1] for col in cursor.fetchall()]
         has_tip = 'tip' in columns
-        
-        if has_tip:
+        has_order_type = 'order_type' in columns
+        if has_tip and has_order_type:
+            cursor.execute("""
+                INSERT INTO orders (
+                    order_number, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
+                    discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'completed', ?, ?)
+            """, (order_number, employee_id, customer_id, subtotal, tax_rate, total_tax,
+                  discount, transaction_fee, tip, total, payment_method, order_type, notes))
+        elif has_tip:
             cursor.execute("""
                 INSERT INTO orders (
                     order_number, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
@@ -4525,7 +4582,7 @@ def journalize_sale(order_id: int, employee_id: int) -> Dict[str, Any]:
     cursor.execute("PRAGMA table_info(orders)")
     columns = [col[1] for col in cursor.fetchall()]
     has_tip = 'tip' in columns
-    
+    has_order_type = 'order_type' in columns
     if has_tip:
         cursor.execute("""
             SELECT 

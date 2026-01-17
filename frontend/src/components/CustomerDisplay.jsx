@@ -1,8 +1,30 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { io } from 'socket.io-client'
+import { useTheme } from '../contexts/ThemeContext'
 import './CustomerDisplay.css'
 
 function CustomerDisplay() {
+  const { themeColor, themeMode } = useTheme()
+  
+  // Convert hex to RGB for rgba usage
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+  }
+  
+  const themeColorRgb = hexToRgb(themeColor)
+  const isDarkMode = document.documentElement.classList.contains('dark-theme')
+  
+  // Create gradient from theme color
+  const getGradientBackground = useCallback(() => {
+    const rgb = themeColorRgb.split(', ')
+    // Create a darker shade for gradient end
+    const darkerR = Math.max(0, parseInt(rgb[0]) - 30)
+    const darkerG = Math.max(0, parseInt(rgb[1]) - 30)
+    const darkerB = Math.max(0, parseInt(rgb[2]) - 30)
+    return `linear-gradient(135deg, ${themeColor} 0%, rgb(${darkerR}, ${darkerG}, ${darkerB}) 100%)`
+  }, [themeColor, themeColorRgb])
+  
   const [currentScreen, setCurrentScreen] = useState('idle') // idle, transaction, payment, tip, card, receipt, success
   const [transaction, setTransaction] = useState(null)
   const [items, setItems] = useState([])
@@ -19,6 +41,15 @@ function CustomerDisplay() {
   const [receiptType, setReceiptType] = useState(null)
   const [receiptContact, setReceiptContact] = useState('')
   const [socket, setSocket] = useState(null)
+  
+  // Update CSS variables when theme changes
+  useEffect(() => {
+    const root = document.documentElement
+    const gradient = getGradientBackground()
+    root.style.setProperty('--customer-display-theme-color', themeColor)
+    root.style.setProperty('--customer-display-theme-color-rgb', themeColorRgb)
+    root.style.setProperty('--customer-display-gradient', gradient)
+  }, [themeColor, themeColorRgb, getGradientBackground])
 
   // Initialize Socket.IO connection
   useEffect(() => {
@@ -236,7 +267,7 @@ function CustomerDisplay() {
   }
 
   return (
-    <div className="customer-display-container">
+    <div className="customer-display-container" style={{ background: getGradientBackground() }}>
       {/* Idle Screen */}
       {currentScreen === 'idle' && (
         <div className="idle-screen">

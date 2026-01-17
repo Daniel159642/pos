@@ -429,6 +429,7 @@ function ShipmentVerificationDetail({ shipmentId }) {
   const [uploadingImage, setUploadingImage] = useState(false)
   const [verificationPhotos, setVerificationPhotos] = useState({}) // Cache verification photos
   const [imageErrors, setImageErrors] = useState({}) // Track which images failed to load
+  const [loadError, setLoadError] = useState(null) // Track loading errors
   
   // Convert hex to RGB
   const hexToRgb = (hex) => {
@@ -560,9 +561,27 @@ function ShipmentVerificationDetail({ shipmentId }) {
 
   const loadProgress = async () => {
     try {
+      setLoadError(null) // Clear previous errors
       // Add cache busting to ensure fresh data
       const response = await fetch(`/api/shipments/${actualId}/progress?t=${Date.now()}`)
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || `Server error: ${response.status}`)
+      }
+      
       const data = await response.json()
+      
+      // Check if response has an error field
+      if (data.error) {
+        throw new Error(data.error)
+      }
+      
+      // Validate data structure
+      if (!data.shipment && !data.pending_items) {
+        throw new Error('Invalid response: missing shipment data')
+      }
+      
       setProgress(data)
       if (data.shipment) {
         setCurrentWorkflowStep(data.shipment.workflow_step || (data.shipment.status === 'in_progress' ? 'verify' : null))
@@ -589,6 +608,8 @@ function ShipmentVerificationDetail({ shipmentId }) {
       return data
     } catch (error) {
       console.error('Error loading progress:', error)
+      setLoadError(error.message || 'Failed to load shipment details')
+      setProgress(null) // Clear progress on error
       return null
     }
   }
@@ -1098,7 +1119,33 @@ function ShipmentVerificationDetail({ shipmentId }) {
   if (!progress) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#333' }}>
-        <div>Loading shipment details...</div>
+        {loadError ? (
+          <div>
+            <div style={{ color: '#f44336', marginBottom: '16px', fontSize: '18px' }}>
+              ⚠️ Error loading shipment
+            </div>
+            <div style={{ marginBottom: '16px' }}>{loadError}</div>
+            <button
+              onClick={() => {
+                setLoadError(null)
+                loadProgress()
+              }}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div>Loading shipment details...</div>
+        )}
       </div>
     )
   }
