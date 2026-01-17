@@ -97,10 +97,11 @@ def generate_barcode_data(order_number: str) -> bytes:
         barcode_instance = code128(order_number, writer=ImageWriter())
         
         # Create image with custom options for receipt printing
+        # Optimized for fast scanning: wider bars, taller height, larger quiet zone
         options = {
-            'module_width': 0.3,  # Thinner bars for receipt
-            'module_height': 15.0,  # Height of barcode
-            'quiet_zone': 2.0,  # Quiet zone around barcode
+            'module_width': 0.4,  # Slightly wider bars for easier scanning (was 0.3)
+            'module_height': 20.0,  # Taller barcode for better alignment (was 15.0)
+            'quiet_zone': 6.0,  # Larger quiet zone - critical for scanner detection (was 2.0)
             'font_size': 8,  # Font size for text below barcode
             'text_distance': 3.0,  # Distance between barcode and text
             'write_text': False,  # Don't show order number below barcode (we display it separately)

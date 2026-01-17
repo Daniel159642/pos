@@ -103,13 +103,28 @@ function BarcodeScanner({ onScan, onClose, onImageScan, themeColor = '#8400ff' }
 
       const html5QrCode = new Html5Qrcode('barcode-scanner-camera')
       
+      // Optimize scanner settings for Code128 linear barcodes (faster scanning)
+      const config = {
+        fps: 15,  // Higher FPS (was 10) - scans more frames per second for faster detection
+        qrbox: { width: 400, height: 200 },  // Wider box for linear barcodes (was 350x250)
+        aspectRatio: 1.5,  // Better aspect ratio for horizontal linear barcodes (was 1.4)
+        disableFlip: false,  // Allow rotation if needed
+        // Try to optimize for Code128 if supported
+        ...(Html5Qrcode && Html5Qrcode.Html5QrcodeSupportedFormats ? {
+          formatsToSupport: [
+            Html5Qrcode.Html5QrcodeSupportedFormats.CODE_128,
+            Html5Qrcode.Html5QrcodeSupportedFormats.EAN_13,
+            Html5Qrcode.Html5QrcodeSupportedFormats.EAN_8,
+            Html5Qrcode.Html5QrcodeSupportedFormats.UPC_A,
+            Html5Qrcode.Html5QrcodeSupportedFormats.UPC_E,
+            Html5Qrcode.Html5QrcodeSupportedFormats.QR_CODE
+          ]
+        } : {})
+      }
+      
       await html5QrCode.start(
         { facingMode: 'environment' }, // Use back camera on mobile
-        {
-          fps: 10,
-          qrbox: { width: 350, height: 250 },
-          aspectRatio: 1.4
-        },
+        config,
         (decodedText) => {
           // Success callback - handleBarcodeScanned will process without stopping camera
           handleBarcodeScanned(decodedText)
