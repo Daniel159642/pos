@@ -29,6 +29,9 @@ from database import (
     create_shipment_from_document, update_pending_item_verification, add_vendor,
     clock_in, clock_out, get_current_clock_status, get_schedule,
     get_store_location_settings, update_store_location_settings,
+    # Accounting functions
+    generate_balance_sheet, generate_income_statement,
+    generate_trial_balance,
     add_product, create_or_get_category_with_hierarchy
 )
 from permission_manager import get_permission_manager
