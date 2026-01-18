@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
-import OnboardingHeader from './OnboardingHeader'
 import { ArrowLeft } from 'lucide-react'
 
 const POSITIONS = [
@@ -132,7 +131,7 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
           position: 'absolute',
           top: '20px',
           left: '20px',
-          padding: '8px',
+          padding: '8px 16px',
           backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
           backdropFilter: 'blur(10px)',
           WebkitBackdropFilter: 'blur(10px)',
@@ -144,7 +143,10 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
           alignItems: 'center',
           justifyContent: 'center',
           boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
-          transition: 'all 0.3s ease'
+          transition: 'all 0.3s ease',
+          fontSize: '14px',
+          fontWeight: 500,
+          height: '36px'
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
@@ -157,15 +159,16 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
       >
         <ArrowLeft size={20} />
       </button>
+      
       <div style={{ paddingTop: '60px' }}>
         <h2 style={{ 
-        marginBottom: '10px',
-        color: 'var(--text-primary, #000)',
-        fontSize: '28px',
-        fontWeight: 600
-      }}>
-        Add Your First Employees
-      </h2>
+          marginBottom: '30px',
+          color: 'var(--text-primary, #000)',
+          fontSize: '28px',
+          fontWeight: 600
+        }}>
+          Add Your First Employees
+        </h2>
       
       <p style={{ 
         marginBottom: '30px',
@@ -204,13 +207,26 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
                 <button
                   onClick={() => removeEmployee(index)}
                   style={{
-                    padding: '6px 12px',
-                    backgroundColor: '#dc3545',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '4px',
+                    padding: '8px 16px',
+                    backgroundColor: 'rgba(220, 53, 69, 0.2)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    color: 'rgba(220, 53, 69, 1)',
+                    border: '1px solid rgba(220, 53, 69, 0.3)',
+                    borderRadius: '8px',
                     cursor: 'pointer',
-                    fontSize: '14px'
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    boxShadow: '0 2px 8px rgba(220, 53, 69, 0.1)',
+                    transition: 'all 0.3s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(220, 53, 69, 0.3)'
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(220, 53, 69, 0.15)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(220, 53, 69, 0.2)'
+                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(220, 53, 69, 0.1)'
                   }}
                 >
                   Remove
@@ -232,19 +248,14 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
                     width: '100%',
                     padding: '8px 0',
                     border: 'none',
-                    borderBottom: `2px solid rgba(${themeColorRgb}, 0.3)`,
+                    borderBottom: `1px solid rgba(${themeColorRgb}, 1)`,
                     borderRadius: '0',
                     fontSize: '14px',
                     boxSizing: 'border-box',
                     backgroundColor: 'transparent',
                     outline: 'none',
-                    transition: 'border-color 0.2s'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 1)`
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 0.3)`
+                    lineHeight: '1.5',
+                    height: '32px'
                   }}
                 />
               </div>
@@ -262,19 +273,14 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
                     width: '100%',
                     padding: '8px 0',
                     border: 'none',
-                    borderBottom: `2px solid rgba(${themeColorRgb}, 0.3)`,
+                    borderBottom: `1px solid rgba(${themeColorRgb}, 1)`,
                     borderRadius: '0',
                     fontSize: '14px',
                     boxSizing: 'border-box',
                     backgroundColor: 'transparent',
                     outline: 'none',
-                    transition: 'border-color 0.2s'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 1)`
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 0.3)`
+                    lineHeight: '1.5',
+                    height: '32px'
                   }}
                 />
               </div>
@@ -294,20 +300,15 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
                     width: '100%',
                     padding: '8px 0',
                     border: 'none',
-                    borderBottom: `2px solid rgba(${themeColorRgb}, 0.3)`,
+                    borderBottom: `1px solid rgba(${themeColorRgb}, 1)`,
                     borderRadius: '0',
                     fontSize: '14px',
                     boxSizing: 'border-box',
                     backgroundColor: 'transparent',
                     outline: 'none',
                     textTransform: 'uppercase',
-                    transition: 'border-color 0.2s'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 1)`
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 0.3)`
+                    lineHeight: '1.5',
+                    height: '32px'
                   }}
                 />
               </div>
@@ -400,19 +401,14 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
                     width: '100%',
                     padding: '8px 0',
                     border: 'none',
-                    borderBottom: `2px solid rgba(${themeColorRgb}, 0.3)`,
+                    borderBottom: `1px solid rgba(${themeColorRgb}, 1)`,
                     borderRadius: '0',
                     fontSize: '14px',
                     boxSizing: 'border-box',
                     backgroundColor: 'transparent',
                     outline: 'none',
-                    transition: 'border-color 0.2s'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 1)`
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 0.3)`
+                    lineHeight: '1.5',
+                    height: '32px'
                   }}
                 />
               </div>
@@ -431,19 +427,14 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
                     width: '100%',
                     padding: '8px 0',
                     border: 'none',
-                    borderBottom: `2px solid rgba(${themeColorRgb}, 0.3)`,
+                    borderBottom: `1px solid rgba(${themeColorRgb}, 1)`,
                     borderRadius: '0',
                     fontSize: '14px',
                     boxSizing: 'border-box',
                     backgroundColor: 'transparent',
                     outline: 'none',
-                    transition: 'border-color 0.2s'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 1)`
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 0.3)`
+                    lineHeight: '1.5',
+                    height: '32px'
                   }}
                 />
               </div>
@@ -468,24 +459,25 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
         </button>
       </div>
       
-      {/* Navigation */}
+      {/* Bottom Navigation */}
       <div style={{
         display: 'flex',
-        justifyContent: 'space-between',
-        marginTop: '40px'
+        justifyContent: 'flex-end',
+        marginTop: '40px',
+        gap: '10px'
       }}>
         <button
-          onClick={onBack}
+          onClick={onSkip}
           style={{
-            padding: '10px 16px',
+            padding: '12px 24px',
             backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
             backdropFilter: 'blur(10px)',
             WebkitBackdropFilter: 'blur(10px)',
-            color: '#fff',
+            color: `rgba(${themeColorRgb}, 1)`,
             border: `1px solid rgba(${themeColorRgb}, 0.3)`,
             borderRadius: '8px',
             cursor: 'pointer',
-            fontSize: '14px',
+            fontSize: '16px',
             fontWeight: 500,
             boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
             transition: 'all 0.3s ease'
@@ -499,66 +491,36 @@ function OnboardingStep5({ onNext, onBack, onSkip, direction = 'forward' }) {
             e.currentTarget.style.boxShadow = `0 2px 8px rgba(${themeColorRgb}, 0.1)`
           }}
         >
-          Back
+          Skip
         </button>
         
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            onClick={onSkip}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              color: '#fff',
-              border: '1px solid rgba(255, 255, 255, 0.3)',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 600,
-              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-              transition: 'all 0.3s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
-              e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-              e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-          >
-            Skip
-          </button>
-          
-          <button
-            onClick={handleNext}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              color: '#fff',
-              border: '1px solid rgba(255, 255, 255, 0.3)',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 600,
-              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-              transition: 'all 0.3s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
-              e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-              e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-          >
-            Continue
-          </button>
-        </div>
+        <button
+          onClick={handleNext}
+          style={{
+            padding: '12px 24px',
+            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            color: '#fff',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: 600,
+            boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+            transition: 'all 0.3s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+            e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+            e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+          }}
+        >
+          Continue
+        </button>
       </div>
       </div>
     </div>

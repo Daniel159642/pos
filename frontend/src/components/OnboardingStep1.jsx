@@ -118,7 +118,8 @@ function OnboardingStep1({ onNext, storeInfo, setStoreInfo, direction = 'forward
   const handleNext = () => {
     if (validate()) {
       setStoreInfo(formData)
-      onNext()
+      // Pass storeInfo directly to onNext so it can be saved immediately
+      onNext(formData)
     }
   }
   

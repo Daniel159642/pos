@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import OnboardingHeader from './OnboardingHeader'
 import { ArrowLeft } from 'lucide-react'
@@ -14,9 +14,7 @@ function OnboardingStepRewards({ onNext, onBack, direction = 'forward' }) {
   const [percentageDiscount, setPercentageDiscount] = useState('0.0')
   const [fixedDiscount, setFixedDiscount] = useState('0.0')
   const [minimumSpend, setMinimumSpend] = useState('0.0')
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
   
   // Convert hex to RGB
   const hexToRgb = (hex) => {
@@ -26,31 +24,8 @@ function OnboardingStepRewards({ onNext, onBack, direction = 'forward' }) {
   
   const themeColorRgb = hexToRgb(themeColor)
   
-  // Load existing settings on mount
-  useEffect(() => {
-    loadExistingSettings()
-  }, [])
-  
-  const loadExistingSettings = async () => {
-    try {
-      const response = await fetch('/api/customer-rewards-settings')
-      const data = await response.json()
-      if (data.success && data.settings) {
-        setRewardsEnabled(data.settings.enabled === 1 || data.settings.enabled === true)
-        setRequireEmail(data.settings.require_email === 1 || data.settings.require_email === true)
-        setRequirePhone(data.settings.require_phone === 1 || data.settings.require_phone === true)
-        setRequireBoth(data.settings.require_both === 1 || data.settings.require_both === true)
-        setRewardType(data.settings.reward_type || 'points')
-        setPointsPerDollar((data.settings.points_per_dollar || 1.0).toString())
-        setPercentageDiscount((data.settings.percentage_discount || 0.0).toString())
-        setFixedDiscount((data.settings.fixed_discount || 0.0).toString())
-        setMinimumSpend((data.settings.minimum_spend || 0.0).toString())
-      }
-    } catch (err) {
-      console.error('Error loading settings:', err)
-      // Don't show error, just use defaults
-    }
-  }
+  // Skip loading existing settings during onboarding - just use defaults
+  // Settings will be saved to the database through the onboarding API flow
   
   const handleRequirementChange = (type) => {
     if (type === 'none') {
@@ -72,81 +47,39 @@ function OnboardingStepRewards({ onNext, onBack, direction = 'forward' }) {
     }
   }
   
-  const handleNext = async () => {
-    setLoading(true)
-    setError('')
-    setSuccess('')
-    
-    try {
-      // Validate reward settings if enabled
-      if (rewardsEnabled) {
-        if (rewardType === 'points') {
-          const points = parseFloat(pointsPerDollar)
-          if (isNaN(points) || points < 0) {
-            setError('Please enter a valid points per dollar value (0 or greater)')
-            setLoading(false)
-            return
-          }
-        } else if (rewardType === 'percentage') {
-          const percentage = parseFloat(percentageDiscount)
-          if (isNaN(percentage) || percentage < 0 || percentage > 100) {
-            setError('Please enter a valid percentage discount (0-100)')
-            setLoading(false)
-            return
-          }
-        } else if (rewardType === 'fixed') {
-          const fixed = parseFloat(fixedDiscount)
-          if (isNaN(fixed) || fixed < 0) {
-            setError('Please enter a valid fixed discount amount (0 or greater)')
-            setLoading(false)
-            return
-          }
+  const handleNext = () => {
+    // Validate reward settings if enabled
+    if (rewardsEnabled) {
+      if (rewardType === 'points') {
+        const points = parseFloat(pointsPerDollar)
+        if (isNaN(points) || points < 0) {
+          setError('Please enter a valid points per dollar value (0 or greater)')
+          return
         }
-        
-        const minSpend = parseFloat(minimumSpend)
-        if (isNaN(minSpend) || minSpend < 0) {
-          setError('Please enter a valid minimum spend amount (0 or greater)')
-          setLoading(false)
+      } else if (rewardType === 'percentage') {
+        const percentage = parseFloat(percentageDiscount)
+        if (isNaN(percentage) || percentage < 0 || percentage > 100) {
+          setError('Please enter a valid percentage discount (0-100)')
+          return
+        }
+      } else if (rewardType === 'fixed') {
+        const fixed = parseFloat(fixedDiscount)
+        if (isNaN(fixed) || fixed < 0) {
+          setError('Please enter a valid fixed discount amount (0 or greater)')
           return
         }
       }
       
-      // Save rewards settings
-      const response = await fetch('/api/customer-rewards-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: rewardsEnabled ? 1 : 0,
-          require_email: requireEmail ? 1 : 0,
-          require_phone: requirePhone ? 1 : 0,
-          require_both: requireBoth ? 1 : 0,
-          reward_type: rewardType,
-          points_per_dollar: parseFloat(pointsPerDollar) || 1.0,
-          percentage_discount: parseFloat(percentageDiscount) || 0.0,
-          fixed_discount: parseFloat(fixedDiscount) || 0.0,
-          minimum_spend: parseFloat(minimumSpend) || 0.0
-        })
-      })
-      
-      if (!response.ok) {
-        throw new Error('Failed to save customer rewards settings')
+      const minSpend = parseFloat(minimumSpend)
+      if (isNaN(minSpend) || minSpend < 0) {
+        setError('Please enter a valid minimum spend amount (0 or greater)')
+        return
       }
-      
-      const data = await response.json()
-      if (!data.success) {
-        throw new Error(data.message || 'Failed to save settings')
-      }
-      
-      setSuccess('Customer rewards settings saved successfully!')
-      setTimeout(() => {
-        onNext()
-      }, 500)
-    } catch (err) {
-      console.error('Error saving customer rewards settings:', err)
-      setError(err.message || 'Failed to save settings. Please try again.')
-    } finally {
-      setLoading(false)
     }
+    
+    // All data will be saved through the onboarding API by the parent component
+    // Just call onNext to continue - the parent will save the data
+    onNext()
   }
   
   return (
@@ -697,18 +630,6 @@ function OnboardingStepRewards({ onNext, onBack, direction = 'forward' }) {
           </div>
         )}
         
-        {success && (
-          <div style={{
-            padding: '12px',
-            backgroundColor: '#d4edda',
-            color: '#155724',
-            borderRadius: '6px',
-            marginBottom: '20px'
-          }}>
-            {success}
-          </div>
-        )}
-        
         {/* Navigation Buttons */}
         <div style={{
           display: 'flex',
@@ -746,38 +667,31 @@ function OnboardingStepRewards({ onNext, onBack, direction = 'forward' }) {
           
           <button
             onClick={handleNext}
-            disabled={loading}
             style={{
               padding: '12px 24px',
-              backgroundColor: loading ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
+              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
               color: '#fff',
-              border: loading ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.3)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
               borderRadius: '8px',
-              cursor: loading ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               fontSize: '16px',
               fontWeight: 600,
-              boxShadow: loading
-                ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` 
-                : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
               transition: 'all 0.3s ease',
               opacity: 1
             }}
             onMouseEnter={(e) => {
-              if (!loading) {
-                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
-                e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-              }
+              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+              e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
             }}
             onMouseLeave={(e) => {
-              if (!loading) {
-                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-                e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-              }
+              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+              e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
             }}
           >
-            {loading ? 'Saving...' : 'Continue'}
+            Continue
           </button>
         </div>
       </div>

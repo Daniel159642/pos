@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import OnboardingHeader from './OnboardingHeader'
 import { ArrowLeft } from 'lucide-react'
@@ -10,9 +10,7 @@ function OnboardingStepPOS({ onNext, onBack, direction = 'forward' }) {
   const [tipEnabled, setTipEnabled] = useState(false)
   const [receiptFooterMessage, setReceiptFooterMessage] = useState('Thank you for your business!')
   const [returnPolicy, setReturnPolicy] = useState('')
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
   
   // Convert hex to RGB
   const hexToRgb = (hex) => {
@@ -22,108 +20,20 @@ function OnboardingStepPOS({ onNext, onBack, direction = 'forward' }) {
   
   const themeColorRgb = hexToRgb(themeColor)
   
-  // Load existing settings on mount
-  useEffect(() => {
-    loadExistingSettings()
-  }, [])
+  // Skip loading existing settings during onboarding - just use defaults
+  // Settings will be saved to the database through the onboarding API flow
   
-  const loadExistingSettings = async () => {
-    try {
-      // Load receipt settings for footer message and return policy
-      const receiptResponse = await fetch('/api/receipt-settings')
-      const receiptData = await receiptResponse.json()
-      if (receiptData.success && receiptData.settings) {
-        setReceiptFooterMessage(receiptData.settings.footer_message || 'Thank you for your business!')
-        setReturnPolicy(receiptData.settings.return_policy || '')
-      }
-      
-      // Load display settings for tip settings
-      const displayResponse = await fetch('/api/customer-display/settings')
-      const displayData = await displayResponse.json()
-      if (displayData.success && displayData.data) {
-        setTipEnabled(displayData.data.tip_enabled === 1 || displayData.data.tip_enabled === true)
-      }
-      
-      // Load POS settings (number of registers, register type)
-      const posResponse = await fetch('/api/pos-settings')
-      if (posResponse.ok) {
-        const posData = await posResponse.json()
-        if (posData.success && posData.settings) {
-          setNumRegisters((posData.settings.num_registers || 1).toString())
-          setRegisterType(posData.settings.register_type || 'one_screen')
-        }
-      }
-    } catch (err) {
-      console.error('Error loading settings:', err)
-      // Don't show error, just use defaults
+  const handleNext = () => {
+    // Validate number of registers
+    const numRegistersInt = parseInt(numRegisters)
+    if (isNaN(numRegistersInt) || numRegistersInt < 1) {
+      setError('Please enter a valid number of registers (at least 1)')
+      return
     }
-  }
-  
-  const handleNext = async () => {
-    setLoading(true)
-    setError('')
-    setSuccess('')
     
-    try {
-      // Validate number of registers
-      const numRegistersInt = parseInt(numRegisters)
-      if (isNaN(numRegistersInt) || numRegistersInt < 1) {
-        setError('Please enter a valid number of registers (at least 1)')
-        setLoading(false)
-        return
-      }
-      
-      // Save POS settings
-      const posResponse = await fetch('/api/pos-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          num_registers: numRegistersInt,
-          register_type: registerType
-        })
-      })
-      
-      if (!posResponse.ok) {
-        throw new Error('Failed to save POS settings')
-      }
-      
-      // Save receipt settings (footer message and return policy)
-      const receiptResponse = await fetch('/api/receipt-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          footer_message: receiptFooterMessage,
-          return_policy: returnPolicy
-        })
-      })
-      
-      if (!receiptResponse.ok) {
-        throw new Error('Failed to save receipt settings')
-      }
-      
-      // Save display settings (tip enabled)
-      const displayResponse = await fetch('/api/customer-display/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tip_enabled: tipEnabled ? 1 : 0
-        })
-      })
-      
-      if (!displayResponse.ok) {
-        throw new Error('Failed to save display settings')
-      }
-      
-      setSuccess('POS settings saved successfully!')
-      setTimeout(() => {
-        onNext()
-      }, 500)
-    } catch (err) {
-      console.error('Error saving POS settings:', err)
-      setError(err.message || 'Failed to save settings. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+    // All data will be saved through the onboarding API by the parent component
+    // Just call onNext to continue - the parent will save the data
+    onNext()
   }
   
   return (
@@ -491,17 +401,6 @@ function OnboardingStepPOS({ onNext, onBack, direction = 'forward' }) {
           </div>
         )}
         
-        {success && (
-          <div style={{
-            padding: '12px',
-            backgroundColor: '#d4edda',
-            color: '#155724',
-            borderRadius: '6px',
-            marginBottom: '20px'
-          }}>
-            {success}
-          </div>
-        )}
         
         {/* Navigation Buttons */}
         <div style={{
@@ -540,38 +439,31 @@ function OnboardingStepPOS({ onNext, onBack, direction = 'forward' }) {
           
           <button
             onClick={handleNext}
-            disabled={loading}
             style={{
               padding: '12px 24px',
-              backgroundColor: loading ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
+              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
               color: '#fff',
-              border: loading ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.3)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
               borderRadius: '8px',
-              cursor: loading ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               fontSize: '16px',
               fontWeight: 600,
-              boxShadow: loading
-                ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` 
-                : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
               transition: 'all 0.3s ease',
               opacity: 1
             }}
             onMouseEnter={(e) => {
-              if (!loading) {
-                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
-                e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-              }
+              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+              e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
             }}
             onMouseLeave={(e) => {
-              if (!loading) {
-                e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-                e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-              }
+              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+              e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
             }}
           >
-            {loading ? 'Saving...' : 'Continue'}
+            Continue
           </button>
         </div>
       </div>

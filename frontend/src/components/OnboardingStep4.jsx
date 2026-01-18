@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
-import OnboardingHeader from './OnboardingHeader'
 import { ArrowLeft } from 'lucide-react'
 
 function OnboardingStep4({ onNext, onBack, onSkip, direction = 'forward' }) {
@@ -77,7 +76,7 @@ function OnboardingStep4({ onNext, onBack, onSkip, direction = 'forward' }) {
           position: 'absolute',
           top: '20px',
           left: '20px',
-          padding: '8px',
+          padding: '8px 16px',
           backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
           backdropFilter: 'blur(10px)',
           WebkitBackdropFilter: 'blur(10px)',
@@ -89,7 +88,10 @@ function OnboardingStep4({ onNext, onBack, onSkip, direction = 'forward' }) {
           alignItems: 'center',
           justifyContent: 'center',
           boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
-          transition: 'all 0.3s ease'
+          transition: 'all 0.3s ease',
+          fontSize: '14px',
+          fontWeight: 500,
+          height: '36px'
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
@@ -104,13 +106,13 @@ function OnboardingStep4({ onNext, onBack, onSkip, direction = 'forward' }) {
       </button>
       <div style={{ paddingTop: '60px' }}>
         <h2 style={{ 
-        marginBottom: '10px',
-        color: 'var(--text-primary, #000)',
-        fontSize: '28px',
-        fontWeight: 600
-      }}>
-        Import Your Inventory
-      </h2>
+          marginBottom: '30px',
+          color: 'var(--text-primary, #000)',
+          fontSize: '28px',
+          fontWeight: 600
+        }}>
+          Import Your Inventory
+        </h2>
       
       <p style={{ 
         marginBottom: '30px',
@@ -267,37 +269,9 @@ function OnboardingStep4({ onNext, onBack, onSkip, direction = 'forward' }) {
       {/* Navigation */}
       <div style={{
         display: 'flex',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-end',
         marginTop: '40px'
       }}>
-        <button
-          onClick={onBack}
-          style={{
-            padding: '10px 16px',
-            backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)',
-            color: '#fff',
-            border: `1px solid rgba(${themeColorRgb}, 0.3)`,
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: 500,
-            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
-            transition: 'all 0.3s ease'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
-            e.currentTarget.style.boxShadow = `0 4px 12px rgba(${themeColorRgb}, 0.15)`
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
-            e.currentTarget.style.boxShadow = `0 2px 8px rgba(${themeColorRgb}, 0.1)`
-          }}
-        >
-          Back
-        </button>
-        
         <button
           onClick={handleNext}
           disabled={importMethod === 'csv' && loading}

@@ -44,6 +44,15 @@ function Onboarding() {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
       
+      const contentType = response.headers.get('content-type')
+      if (!contentType || !contentType.includes('application/json')) {
+        // Not JSON response, start from step 1
+        console.warn('Non-JSON response from onboarding status API')
+        setCurrentStep(1)
+        setLoading(false)
+        return
+      }
+      
       const text = await response.text()
       if (!text || text.trim() === '') {
         // Empty response, start from step 1
@@ -54,14 +63,16 @@ function Onboarding() {
       
       const data = JSON.parse(text)
       
+      // If onboarding is completed, redirect to login
       if (data.setup_completed) {
-        // Already completed, redirect to dashboard
-        navigate('/dashboard')
-      } else {
-        // Load saved step
-        setCurrentStep(data.setup_step || 1)
-        setLoading(false)
+        console.log('Onboarding completed, redirecting to login')
+        navigate('/login')
+        return
       }
+      
+      // Load saved step or start from step 1
+      setCurrentStep(data.setup_step || 1)
+      setLoading(false)
     } catch (err) {
       console.error('Error checking onboarding status:', err)
       // On error, just start from step 1
@@ -108,15 +119,36 @@ function Onboarding() {
     return stepNames[step] || 'unknown'
   }
   
-  const handleNext = async () => {
-    // Save current step
-    await saveStep(currentStep, onboardingData)
+  const handleNext = async (stepData) => {
+    // If stepData is provided (from step 1), update onboardingData first
+    let dataToSave = onboardingData
+    if (stepData && currentStep === 1) {
+      // For step 1, we receive storeInfo directly
+      dataToSave = { ...onboardingData, storeInfo: stepData }
+      setOnboardingData(dataToSave)
+    }
+    
+    // Save current step with the updated data
+    await saveStep(currentStep, dataToSave)
     
     // Mark items as completed based on step
     markItemCompleted(currentStep)
     
-    // If on step 8 (POS) or step 9 (Customer Rewards), go back to step 2 (to-do list) instead of incrementing
-    if (currentStep === 8 || currentStep === 9) {
+    // If on step 2 (to-do list) and all items are completed, go to step 7 (review/confirmation)
+    if (currentStep === 2) {
+      // All required items: payment, employees, pos, rewards, inventory
+      const requiredItems = ['payment', 'employees', 'pos', 'rewards', 'inventory']
+      const allItemsCompleted = requiredItems.every(itemId => completedItems.includes(itemId))
+      if (allItemsCompleted) {
+        setDirection('forward')
+        setCurrentStep(7) // Go to review/confirmation page
+        return
+      }
+    }
+    
+    // If on step 3 (Payment), 4 (Inventory), 5 (Employees), 8 (POS), or 9 (Customer Rewards), 
+    // go back to step 2 (to-do list) instead of incrementing
+    if ([3, 4, 5, 8, 9].includes(currentStep)) {
       setDirection('forward')
       setCurrentStep(2)
       return
@@ -126,6 +158,14 @@ function Onboarding() {
       setDirection('forward')
       setCurrentStep(currentStep + 1)
     }
+  }
+  
+  const handleNavigateBackToTodo = async () => {
+    // Save current step and mark item as completed before navigating back
+    await saveStep(currentStep, onboardingData)
+    markItemCompleted(currentStep)
+    setDirection('forward')
+    setCurrentStep(2)
   }
   
   const handleBack = () => {
@@ -166,6 +206,16 @@ function Onboarding() {
     // Save step with skip flag
     await saveStep(currentStep, { ...onboardingData, skipped: true })
     
+    // Mark items as completed when skipped (treat skip as completion for to-do list)
+    markItemCompleted(currentStep)
+    
+    // If on step 5 (Employees), go back to step 2 (to-do list) instead of incrementing
+    if (currentStep === 5) {
+      setDirection('forward')
+      setCurrentStep(2)
+      return
+    }
+    
     if (currentStep < totalSteps) {
       setCurrentStep(currentStep + 1)
     }
@@ -182,8 +232,9 @@ function Onboarding() {
       const data = await response.json()
       
       if (data.success) {
-        // Redirect to dashboard
-        navigate('/dashboard')
+        // Redirect to login page - user needs to log in with the admin account that was created
+        // Clear any cached onboarding state
+        window.location.href = '/login'
       }
     } catch (err) {
       console.error('Error completing onboarding:', err)
@@ -249,7 +300,7 @@ function Onboarding() {
         
         {currentStep === 3 && (
           <OnboardingStepPayment
-            onNext={handleNext}
+            onNext={handleNavigateBackToTodo}
             onBack={handleBack}
             storeEmail={onboardingData.storeInfo?.store_email}
             storeCountry="US"
@@ -260,7 +311,7 @@ function Onboarding() {
         
         {currentStep === 4 && (
           <OnboardingStep4
-            onNext={handleNext}
+            onNext={handleNavigateBackToTodo}
             onBack={handleBack}
             onSkip={handleSkip}
             direction={direction}
@@ -269,7 +320,7 @@ function Onboarding() {
         
         {currentStep === 5 && (
           <OnboardingStep5
-            onNext={handleNext}
+            onNext={handleNavigateBackToTodo}
             onBack={handleBack}
             onSkip={handleSkip}
             direction={direction}
@@ -297,7 +348,7 @@ function Onboarding() {
         
         {currentStep === 8 && (
           <OnboardingStepPOS
-            onNext={handleNext}
+            onNext={handleNavigateBackToTodo}
             onBack={handleBack}
             direction={direction}
           />
@@ -305,7 +356,7 @@ function Onboarding() {
         
         {currentStep === 9 && (
           <OnboardingStepRewards
-            onNext={handleNext}
+            onNext={handleNavigateBackToTodo}
             onBack={handleBack}
             direction={direction}
           />

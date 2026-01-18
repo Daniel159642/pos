@@ -29,15 +29,34 @@ function OnboardingStep7({ onComplete, onBack, allData, direction = 'forward' })
         })
       })
       
-      const data = await response.json()
+      const responseText = await response.text()
+      let data = {}
       
-      if (data.success) {
+      const contentType = response.headers.get('content-type')
+      if (contentType && contentType.includes('application/json')) {
+        if (responseText) {
+          try {
+            data = JSON.parse(responseText)
+          } catch (parseErr) {
+            console.error('Failed to parse completion response:', parseErr, 'Response text:', responseText)
+            throw new Error(`Server returned invalid JSON. Status: ${response.status}`)
+          }
+        }
+      } else {
+        console.error('Completion response is not JSON. Status:', response.status, 'Content-Type:', contentType, 'Response:', responseText)
+        throw new Error(`Server returned non-JSON response. Status: ${response.status}`)
+      }
+      
+      if (response.ok && data.success) {
         onComplete()
       } else {
-        setError(data.message || 'Failed to complete onboarding')
+        const errorMsg = data.message || `Failed to complete onboarding (status: ${response.status})`
+        console.error('Onboarding completion failed:', { status: response.status, data, responseText })
+        setError(errorMsg)
       }
     } catch (err) {
-      setError('Network error. Please try again.')
+      const errorMsg = err.message || 'Network error. Please try again.'
+      setError(errorMsg)
       console.error('Completion error:', err)
     } finally {
       setLoading(false)

@@ -111,6 +111,64 @@ except ImportError:
     # CORS not installed, but that's okay - Vite proxy handles it in dev mode
     pass
 
+# Error handler to ensure all errors return JSON
+@app.errorhandler(400)
+def handle_400_error(e):
+    """Handle 400 errors and return JSON"""
+    error_msg = str(e) if e else 'Bad request'
+    try:
+        return jsonify({'success': False, 'error': error_msg, 'message': 'Bad request'}), 400
+    except Exception as json_err:
+        return Response(f'{{"success": false, "error": "{error_msg}", "message": "Bad request"}}', 
+                       mimetype='application/json', status=400)
+
+@app.errorhandler(500)
+def handle_500_error(e):
+    """Handle 500 errors and return JSON"""
+    import traceback
+    import sys
+    exc_type, exc_value, exc_traceback = sys.exc_info()
+    if exc_type:
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+    else:
+        traceback.print_exc()
+    
+    error_msg = str(e) if e else 'Internal server error'
+    try:
+        return jsonify({'success': False, 'error': error_msg, 'message': 'Internal server error'}), 500
+    except Exception as json_err:
+        # Last resort - return plain text JSON
+        return Response(f'{{"success": false, "error": "{error_msg}", "message": "Internal server error"}}', 
+                       mimetype='application/json', status=500)
+
+# After request hook to ensure all error responses are JSON
+@app.after_request
+def after_request(response):
+    """Ensure all error responses return JSON"""
+    if response.status_code >= 400 and response.content_type != 'application/json':
+        try:
+            # Try to parse existing response and convert to JSON
+            if response.data:
+                try:
+                    existing_data = response.get_data(as_text=True)
+                    if existing_data:
+                        # If response has data, wrap it in JSON
+                        return jsonify({'success': False, 'error': existing_data, 'message': 'Internal server error'}), response.status_code
+                except:
+                    pass
+            # If no data or parsing failed, return generic JSON error
+            return jsonify({'success': False, 'error': 'Internal server error', 'message': 'An error occurred'}), response.status_code
+        except Exception as json_err:
+            # Last resort - return plain text JSON
+            error_msg = 'Internal server error'
+            try:
+                error_msg = str(json_err)
+            except:
+                pass
+            return Response(f'{{"success": false, "error": "{error_msg}", "message": "Internal server error"}}', 
+                           mimetype='application/json', status=response.status_code)
+    return response
+
 # Check if React build exists
 BUILD_DIR = 'frontend/dist'
 HAS_BUILD = os.path.exists(BUILD_DIR) and os.path.exists(os.path.join(BUILD_DIR, 'index.html'))
@@ -1148,7 +1206,9 @@ def api_update_pos_settings():
         if not request.is_json:
             return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
         
-        data = request.json
+        data = request.get_json()
+        if data is None:
+            return jsonify({'success': False, 'message': 'Invalid JSON in request body'}), 400
         
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -5166,105 +5226,274 @@ def api_get_onboarding_status():
 def api_update_onboarding_step():
     """Update current onboarding step"""
     try:
-        if not request.is_json:
-            return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
-        
-        data = request.json
+        # Get raw data first to debug
+        try:
+            if not request.is_json:
+                return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
+            
+            data = request.get_json()
+            if data is None:
+                return jsonify({'success': False, 'message': 'Invalid JSON in request body'}), 400
+        except Exception as parse_err:
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to parse request: {str(parse_err)}'}), 400
+            
         step = data.get('step', 1)
         
-        success = update_onboarding_step(step)
+        try:
+            success = update_onboarding_step(step)
+        except Exception as update_err:
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to update step: {str(update_err)}'}), 500
         
         if success:
             return jsonify({'success': True, 'message': 'Step updated'})
         else:
-            import traceback
             traceback.print_exc()
             return jsonify({'success': False, 'message': 'Failed to update step. Check server logs for details.'}), 500
     except Exception as e:
         traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        error_msg = str(e)
+        try:
+            return jsonify({'success': False, 'error': error_msg, 'message': 'Internal server error'}), 500
+        except Exception as json_err:
+            # Last resort - return plain text JSON
+            return Response(f'{{"success": false, "error": "{error_msg}"}}', mimetype='application/json', status=500)
 
 @app.route('/api/onboarding/step', methods=['POST'])
 def api_save_onboarding_step():
     """Save onboarding step progress"""
     try:
-        if not request.is_json:
-            return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
-        
-        data = request.json
+        # Get raw data first to debug
+        try:
+            if not request.is_json:
+                return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
+            
+            data = request.get_json()
+            if data is None:
+                return jsonify({'success': False, 'message': 'Invalid JSON in request body'}), 400
+        except Exception as parse_err:
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to parse request: {str(parse_err)}'}), 400
+            
         step_name = data.get('step_name')
         step_data = data.get('data')
+        
+        print(f"[DEBUG] Saving onboarding step: {step_name}")
+        print(f"[DEBUG] Step data keys: {list(step_data.keys()) if step_data else 'None'}")
         
         if not step_name:
             return jsonify({'success': False, 'message': 'step_name is required'}), 400
         
-        success = save_onboarding_progress(step_name, step_data)
+        try:
+            success = save_onboarding_progress(step_name, step_data)
+            print(f"[DEBUG] save_onboarding_progress returned: {success}")
+        except Exception as save_err:
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to save progress: {str(save_err)}'}), 500
+        
+        # If saving store_info (step 1), create an admin account
+        print(f"[DEBUG] Checking if should create admin: step_name={step_name}, success={success}, step_data={bool(step_data)}")
+        if success and step_name == 'store_info' and step_data:
+            # Extract storeInfo from step_data - it's nested inside the data object
+            if isinstance(step_data, dict):
+                store_info = step_data.get('storeInfo')
+                # If storeInfo is not directly available, step_data might be the storeInfo itself
+                if not store_info and 'store_name' in step_data:
+                    store_info = step_data
+            else:
+                store_info = None
+                
+            print(f"[DEBUG] Store info extracted: {list(store_info.keys()) if isinstance(store_info, dict) else 'None'}")
+            print(f"[DEBUG] Store email: {store_info.get('store_email') if isinstance(store_info, dict) else 'None'}")
+            
+            if isinstance(store_info, dict) and store_info.get('store_email'):
+                try:
+                    print("[DEBUG] Starting admin account creation...")
+                    # Check if admin account already exists
+                    conn = sqlite3.connect(DB_NAME)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM employees WHERE position = 'admin'")
+                    admin_count = cursor.fetchone()[0]
+                    conn.close()
+                    print(f"[DEBUG] Current admin count: {admin_count}")
+                    
+                    # Only create admin if none exists
+                    if admin_count == 0:
+                        store_email = store_info.get('store_email', '')
+                        store_name = store_info.get('store_name', 'Store')
+                        
+                        # Extract name from store name or use default
+                        # Use first part of store name as first name, or default to "Admin"
+                        name_parts = store_name.split()
+                        first_name = name_parts[0] if name_parts else 'Admin'
+                        last_name = 'User' if len(name_parts) <= 1 else ' '.join(name_parts[1:])
+                        
+                        # Generate employee code based on store name
+                        employee_code = 'ADMIN001'
+                        
+                        print(f"[DEBUG] Creating admin with: code={employee_code}, name={first_name} {last_name}, email={store_email}")
+                        
+                        # Create admin account with default password (admin can change it later)
+                        try:
+                            admin_id = add_employee(
+                                employee_code=employee_code,
+                                first_name=first_name,
+                                last_name=last_name,
+                                email=store_email,
+                                phone=store_info.get('store_phone', ''),
+                                position='admin',
+                                date_started=datetime.now().strftime('%Y-%m-%d'),
+                                password='123456'  # Default password - admin should change this
+                            )
+                            print(f"[DEBUG] ✓ Admin account created successfully: ID {admin_id}, Email: {store_email}, Code: {employee_code}")
+                        except ValueError as ve:
+                            print(f"[DEBUG] ✗ ValueError creating admin: {ve}")
+                            traceback.print_exc()
+                            raise  # Re-raise to see the error
+                        except Exception as add_err:
+                            print(f"[DEBUG] ✗ Exception creating admin: {type(add_err).__name__}: {add_err}")
+                            traceback.print_exc()
+                            raise  # Re-raise to see the error
+                    else:
+                        print(f"[DEBUG] Admin account already exists (count: {admin_count}), skipping creation")
+                except Exception as admin_err:
+                    # Log error and fail the request so we can see what went wrong
+                    print(f"[DEBUG] ✗ ERROR creating admin account: {type(admin_err).__name__}: {admin_err}")
+                    traceback.print_exc()
+                    # Don't fail the step save, but log the error prominently
+                    print("=" * 80)
+                    print("WARNING: ADMIN ACCOUNT CREATION FAILED!")
+                    print(f"Error: {admin_err}")
+                    print("=" * 80)
         
         if success:
             return jsonify({'success': True, 'message': 'Progress saved'})
         else:
-            import traceback
             traceback.print_exc()
             return jsonify({'success': False, 'message': 'Failed to save progress. Check server logs for details.'}), 500
     except Exception as e:
         traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        error_msg = str(e)
+        print(f"[DEBUG] ✗ Top-level exception in api_save_onboarding_step: {error_msg}")
+        try:
+            return jsonify({'success': False, 'error': error_msg, 'message': 'Internal server error'}), 500
+        except Exception as json_err:
+            # Last resort - return plain text JSON
+            return Response(f'{{"success": false, "error": "{error_msg}"}}', mimetype='application/json', status=500)
 
 @app.route('/api/onboarding/complete', methods=['POST'])
 def api_complete_onboarding():
     """Complete onboarding process"""
+    conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
         conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
         
         # Save all settings from onboarding data if provided
-        if request.is_json:
-            data = request.json
-            onboarding_data = data.get('data', {})
+        onboarding_data = {}
+        try:
+            # Check if request has content before trying to parse JSON
+            if request.content_length and request.content_length > 0:
+                if request.is_json or request.headers.get('Content-Type', '').startswith('application/json'):
+                    try:
+                        data = request.get_json(force=True, silent=True)  # silent=True returns None on error
+                        if data is not None:
+                            onboarding_data = data.get('data', {})
+                    except Exception:
+                        # If get_json fails, try reading raw data
+                        try:
+                            raw_data = request.get_data(as_text=True)
+                            if raw_data and raw_data.strip():
+                                import json
+                                data = json.loads(raw_data)
+                                onboarding_data = data.get('data', {})
+                        except:
+                            pass
+        except Exception as json_err:
+            # Empty or invalid JSON body - that's okay, we'll just complete onboarding without saving extra data
+            print(f"[DEBUG] No JSON data in complete request (this is okay): {json_err}")
+            onboarding_data = {}
+        
+        # Save store info to receipt settings
+        if onboarding_data.get('storeInfo'):
+            store_info = onboarding_data['storeInfo']
             
-            # Save store info to receipt settings
-            if onboarding_data.get('storeInfo'):
-                store_info = onboarding_data['storeInfo']
+            # Check if receipt_settings table exists and has rows
+            try:
+                cursor.execute("SELECT COUNT(*) FROM receipt_settings")
+                receipt_count = cursor.fetchone()[0]
                 
-                # Update receipt settings
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE receipt_settings SET
-                        store_name = ?,
-                        store_address = ?,
-                        store_city = ?,
-                        store_state = ?,
-                        store_zip = ?,
-                        store_phone = ?,
-                        store_email = ?,
-                        store_website = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
-                """, (
-                    store_info.get('store_name', ''),
-                    store_info.get('store_address', ''),
-                    store_info.get('store_city', ''),
-                    store_info.get('store_state', ''),
-                    store_info.get('store_zip', ''),
-                    store_info.get('store_phone', ''),
-                    store_info.get('store_email', ''),
-                    store_info.get('store_website', '')
-                ))
-                conn.commit()
-            
-            # Save preferences if provided
-            if onboarding_data.get('preferences'):
-                prefs = onboarding_data['preferences']
-                if prefs.get('receipt_footer_message'):
+                if receipt_count > 0:
+                    # Update receipt settings
                     cursor.execute("""
                         UPDATE receipt_settings SET
-                            footer_message = ?,
+                            store_name = ?,
+                            store_address = ?,
+                            store_city = ?,
+                            store_state = ?,
+                            store_zip = ?,
+                            store_phone = ?,
+                            store_email = ?,
+                            store_website = ?,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
-                    """, (prefs.get('receipt_footer_message'),))
-                    conn.commit()
+                    """, (
+                        store_info.get('store_name', ''),
+                        store_info.get('store_address', ''),
+                        store_info.get('store_city', ''),
+                        store_info.get('store_state', ''),
+                        store_info.get('store_zip', ''),
+                        store_info.get('store_phone', ''),
+                        store_info.get('store_email', ''),
+                        store_info.get('store_website', '')
+                    ))
+                else:
+                    # Create new receipt settings row
+                    cursor.execute("""
+                        INSERT INTO receipt_settings (
+                            store_name, store_address, store_city, store_state, store_zip,
+                            store_phone, store_email, store_website, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """, (
+                        store_info.get('store_name', ''),
+                        store_info.get('store_address', ''),
+                        store_info.get('store_city', ''),
+                        store_info.get('store_state', ''),
+                        store_info.get('store_zip', ''),
+                        store_info.get('store_phone', ''),
+                        store_info.get('store_email', ''),
+                        store_info.get('store_website', '')
+                    ))
+                conn.commit()
+            except sqlite3.OperationalError as table_err:
+                # Table doesn't exist - create it
+                print(f"Warning: receipt_settings table doesn't exist: {table_err}")
+                # Don't fail the onboarding completion if receipt_settings doesn't exist
+                pass
         
-        conn.close()
+        # Save preferences if provided
+        if onboarding_data.get('preferences'):
+            prefs = onboarding_data['preferences']
+            if prefs.get('receipt_footer_message'):
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM receipt_settings")
+                    receipt_count = cursor.fetchone()[0]
+                    if receipt_count > 0:
+                        cursor.execute("""
+                            UPDATE receipt_settings SET
+                                footer_message = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
+                        """, (prefs.get('receipt_footer_message'),))
+                        conn.commit()
+                except sqlite3.OperationalError:
+                    # Table doesn't exist - skip
+                    pass
+        
+        if conn:
+            conn.close()
         
         # Mark onboarding as complete
         success = complete_onboarding()
@@ -5274,10 +5503,23 @@ def api_complete_onboarding():
         else:
             return jsonify({'success': False, 'message': 'Failed to complete onboarding'}), 500
     except Exception as e:
-        traceback.print_exc()
-        if 'conn' in locals():
-            conn.close()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import sys
+        error_msg = str(e)
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+        
+        # Ensure we always return JSON, even on error
+        try:
+            return jsonify({'success': False, 'error': error_msg, 'message': error_msg}), 500
+        except Exception as json_err:
+            # Last resort - return plain text if JSON fails
+            return Response(f'{{"success": false, "error": "{error_msg}"}}', mimetype='application/json', status=500)
 
 @app.route('/api/customer-rewards-settings', methods=['GET'])
 def api_get_customer_rewards_settings():

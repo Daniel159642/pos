@@ -33,6 +33,10 @@ function OnboardingStep2({ onNext, onBack, onNavigateToStep, completedItems = []
     return completedItems.includes(itemId)
   }
   
+  const allItemsCompleted = () => {
+    return TODO_ITEMS.every(item => isItemCompleted(item.id))
+  }
+  
   return (
     <div style={{ 
       maxWidth: '800px', 
@@ -179,6 +183,44 @@ function OnboardingStep2({ onNext, onBack, onNavigateToStep, completedItems = []
           }}
         >
           Back
+        </button>
+        
+        <button
+          onClick={onNext}
+          disabled={!allItemsCompleted()}
+          style={{
+            padding: '12px 24px',
+            backgroundColor: allItemsCompleted() 
+              ? `rgba(${themeColorRgb}, 0.7)` 
+              : `rgba(${themeColorRgb}, 0.2)`,
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            color: '#fff',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            borderRadius: '8px',
+            cursor: allItemsCompleted() ? 'pointer' : 'not-allowed',
+            fontSize: '16px',
+            fontWeight: 600,
+            boxShadow: allItemsCompleted()
+              ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+              : `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
+            transition: 'all 0.3s ease',
+            opacity: allItemsCompleted() ? 1 : 0.5
+          }}
+          onMouseEnter={(e) => {
+            if (allItemsCompleted()) {
+              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+              e.currentTarget.style.boxShadow = `0 6px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (allItemsCompleted()) {
+              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+              e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+            }
+          }}
+        >
+          Continue
         </button>
       </div>
     </div>

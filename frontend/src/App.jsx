@@ -49,12 +49,18 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       const response = await fetch('/api/onboarding/status')
       const data = await response.json()
       
+      // If onboarding is completed, don't require it (allow normal login flow)
       if (!data.setup_completed) {
         setOnboardingRequired(true)
+      } else {
+        // Onboarding is complete, don't force onboarding
+        setOnboardingRequired(false)
       }
       setOnboardingChecked(true)
     } catch (err) {
       console.error('Error checking onboarding status:', err)
+      // On error, assume onboarding is required
+      setOnboardingRequired(true)
       setOnboardingChecked(true)
     }
   }
@@ -99,24 +105,28 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
         <Route path="*" element={<Navigate to="/onboarding" replace />} />
       )}
       <Route path="/dashboard" element={
-        sessionToken && employee ? <Navigate to="/dashboard" replace /> : <Login onLogin={(result) => {
-          if (result.success) {
-            setSessionToken(result.session_token)
-            setEmployee({
-              employee_id: result.employee_id,
-              employee_name: result.employee_name,
-              position: result.position
-            })
-            localStorage.setItem('sessionToken', result.session_token)
-          }
-        }} />
-      } />
-      <Route path="/dashboard" element={
-        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
-          <Layout employee={employee} onLogout={onLogout}>
-            <Dashboard />
-          </Layout>
-        </ProtectedRoute>
+        onboardingRequired ? (
+          // If onboarding is required, redirect to onboarding even if logged in
+          <Navigate to="/onboarding" replace />
+        ) : sessionToken && employee ? (
+          <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+            <Layout employee={employee} onLogout={onLogout}>
+              <Dashboard />
+            </Layout>
+          </ProtectedRoute>
+        ) : (
+          <Login onLogin={(result) => {
+            if (result.success) {
+              setSessionToken(result.session_token)
+              setEmployee({
+                employee_id: result.employee_id,
+                employee_name: result.employee_name,
+                position: result.position
+              })
+              localStorage.setItem('sessionToken', result.session_token)
+            }
+          }} />
+        )
       } />
       <Route path="/pos" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
@@ -219,8 +229,10 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       <Route path="/" element={
         onboardingRequired && !sessionToken ? (
           <Navigate to="/onboarding" replace />
-        ) : (
+        ) : sessionToken && employee ? (
           <Navigate to="/dashboard" replace />
+        ) : (
+          <Navigate to="/login" replace />
         )
       } />
     </Routes>

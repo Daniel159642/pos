@@ -6932,6 +6932,19 @@ def update_onboarding_step(step: int) -> bool:
     cursor = conn.cursor()
     
     try:
+        # Create store_setup table if it doesn't exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS store_setup (
+                setup_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_completed INTEGER DEFAULT 0 CHECK(setup_completed IN (0, 1)),
+                setup_step INTEGER DEFAULT 1,
+                completed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        
         cursor.execute("SELECT COUNT(*) FROM store_setup")
         count = cursor.fetchone()[0]
         
@@ -6965,21 +6978,54 @@ def complete_onboarding() -> bool:
     cursor = conn.cursor()
     
     try:
+        # Create store_setup table if it doesn't exist
         cursor.execute("""
-            UPDATE store_setup 
-            SET setup_completed = 1, 
-                setup_step = 6,
-                completed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE setup_id = (SELECT setup_id FROM store_setup ORDER BY setup_id DESC LIMIT 1)
+            CREATE TABLE IF NOT EXISTS store_setup (
+                setup_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_completed INTEGER DEFAULT 0 CHECK(setup_completed IN (0, 1)),
+                setup_step INTEGER DEFAULT 1,
+                completed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         """)
+        conn.commit()
+        
+        # Check if store_setup table exists and has rows
+        cursor.execute("SELECT COUNT(*) FROM store_setup")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            # Create a new row if none exists
+            cursor.execute("""
+                INSERT INTO store_setup (setup_completed, setup_step, completed_at, updated_at)
+                VALUES (1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """)
+        else:
+            # Update existing row
+            cursor.execute("""
+                UPDATE store_setup 
+                SET setup_completed = 1, 
+                    setup_step = 6,
+                    completed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE setup_id = (SELECT setup_id FROM store_setup ORDER BY setup_id DESC LIMIT 1)
+            """)
         
         conn.commit()
         conn.close()
         return True
     except Exception as e:
-        conn.rollback()
-        conn.close()
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        try:
+            conn.close()
+        except:
+            pass
         print(f"Error completing onboarding: {e}")
         return False
 
@@ -6989,6 +7035,21 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
     cursor = conn.cursor()
     
     try:
+        # Create onboarding_progress table if it doesn't exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS onboarding_progress (
+                progress_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                step_name TEXT NOT NULL,
+                completed INTEGER DEFAULT 0,
+                data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(step_name)
+            )
+        """)
+        conn.commit()
+        
         # Check if progress exists
         cursor.execute("""
             SELECT progress_id FROM onboarding_progress 
@@ -6996,6 +7057,15 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
         """, (step_name,))
         
         existing = cursor.fetchone()
+        
+        # Serialize data to JSON
+        data_json = None
+        if data is not None:
+            try:
+                data_json = json.dumps(data)
+            except (TypeError, ValueError) as json_err:
+                print(f"Warning: Could not serialize data to JSON: {json_err}")
+                data_json = None
         
         if existing:
             # Update existing
@@ -7006,21 +7076,38 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
                     data = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE step_name = ?
-            """, (json.dumps(data) if data else None, step_name))
+            """, (data_json, step_name))
         else:
-            # Create new
-            cursor.execute("""
-                INSERT INTO onboarding_progress (step_name, completed, data)
-                VALUES (?, 1, ?)
-            """, (step_name, json.dumps(data) if data else None))
+            # Create new - try INSERT first, fall back to UPDATE if UNIQUE constraint fails
+            try:
+                cursor.execute("""
+                    INSERT INTO onboarding_progress (step_name, completed, data, completed_at)
+                    VALUES (?, 1, ?, CURRENT_TIMESTAMP)
+                """, (step_name, data_json))
+            except sqlite3.IntegrityError:
+                # UNIQUE constraint violation - update instead
+                cursor.execute("""
+                    UPDATE onboarding_progress 
+                    SET completed = 1,
+                        completed_at = CURRENT_TIMESTAMP,
+                        data = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE step_name = ?
+                """, (data_json, step_name))
         
         conn.commit()
         conn.close()
         return True
     except Exception as e:
         if conn:
-            conn.rollback()
-            conn.close()
+            try:
+                conn.rollback()
+            except:
+                pass
+            try:
+                conn.close()
+            except:
+                pass
         import traceback
         traceback.print_exc()
         print(f"Error saving onboarding progress: {e}")
