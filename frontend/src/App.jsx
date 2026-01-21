@@ -57,8 +57,9 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       
       // Handle non-OK responses
       if (!response.ok) {
-        console.log('Onboarding status check failed, assuming onboarding required')
-        setOnboardingRequired(true)
+        console.log('Onboarding status check failed, defaulting to master login')
+        // Don't require onboarding on error - show master login first
+        setOnboardingRequired(false)
         setOnboardingChecked(true)
         return
       }
@@ -75,8 +76,8 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       setOnboardingChecked(true)
     } catch (err) {
       console.error('Error checking onboarding status:', err)
-      // On error, assume onboarding is required (safer default)
-      setOnboardingRequired(true)
+      // On error, default to master login (don't force onboarding)
+      setOnboardingRequired(false)
       setOnboardingChecked(true)
     }
   }
@@ -127,14 +128,8 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
         <Route path="/master-login" element={<MasterLogin onMasterLoginSuccess={() => {}} />} />
         {/* Redirect /sign-up to onboarding - signup is now built into onboarding */}
         <Route path="/sign-up" element={<Navigate to="/onboarding" replace />} />
-        {/* Default redirect based on onboarding status - only for unmatched routes */}
-        <Route path="*" element={
-          onboardingRequired ? (
-            <Navigate to="/onboarding" replace />
-          ) : (
-            <Navigate to="/master-login" replace />
-          )
-        } />
+        {/* Default redirect to master-login - always show master login first */}
+        <Route path="*" element={<Navigate to="/master-login" replace />} />
       </Routes>
     )
   }
@@ -310,9 +305,7 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
         </ProtectedRoute>
       } />
       <Route path="/" element={
-        onboardingRequired && !sessionToken ? (
-          <Navigate to="/onboarding" replace />
-        ) : sessionToken && employee ? (
+        sessionToken && employee ? (
           <Navigate to="/dashboard" replace />
         ) : isSignedIn ? (
           <Navigate to="/login" replace />

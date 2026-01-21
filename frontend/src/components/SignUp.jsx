@@ -226,8 +226,6 @@ function SignUpPage() {
                   padding: '14px 16px',
                   border: `2px solid rgba(${themeColorRgb}, 0.4)`,
                   borderRadius: '12px',
-                  fontSize: '16px',
-                  fontFamily: 'inherit',
                   background: 'var(--bg-secondary)',
                   color: 'var(--text-primary)',
                   outline: 'none',

@@ -87,6 +87,14 @@ def get_connection():
     """
     return get_supabase_connection()
 
+def set_connection_override(connection_func):
+    """
+    Override the connection function (compatibility function for web_viewer.py)
+    Since this module only uses Supabase now, this is a no-op
+    """
+    # No-op since we only use Supabase
+    pass
+
 def create_or_get_category_with_hierarchy(category_path: str, conn=None) -> Optional[int]:
     """
     Create or get category with parent-child hierarchy
@@ -276,9 +284,9 @@ def add_product(
     except Exception as e:
         import psycopg2
         if isinstance(e, psycopg2.IntegrityError):
-        conn.rollback()
-        conn.close()
-        raise ValueError(f"SKU '{sku}' already exists in database") from e
+            conn.rollback()
+            conn.close()
+            raise ValueError(f"SKU '{sku}' already exists in database") from e
 
 def get_product(product_id: int) -> Optional[Dict[str, Any]]:
     """Get a product by ID"""
@@ -720,7 +728,7 @@ def get_shipment_items(shipment_id: int) -> List[Dict[str, Any]]:
         SELECT si.*, i.product_name, i.sku
         FROM shipment_items si
         JOIN inventory i ON si.product_id = i.product_id
-        WHERE si.shipment_id = ?
+        WHERE si.shipment_id = %s
         ORDER BY si.shipment_item_id
     """, (shipment_id,))
     
@@ -789,7 +797,7 @@ def get_shipment_details(shipment_id: int) -> Optional[Dict[str, Any]]:
         SELECT s.*, v.vendor_name, v.contact_person, v.email, v.phone
         FROM shipments s
         JOIN vendors v ON s.vendor_id = v.vendor_id
-        WHERE s.shipment_id = ?
+        WHERE s.shipment_id = %s
     """, (shipment_id,))
     
     shipment = cursor.fetchone()
@@ -848,9 +856,9 @@ def record_sale(
     except Exception as e:
         import psycopg2
         if isinstance(e, psycopg2.IntegrityError):
-        conn.rollback()
-        conn.close()
-        raise ValueError(f"Error recording sale") from e
+            conn.rollback()
+            conn.close()
+            raise ValueError(f"Error recording sale") from e
 
 def get_sales(
     product_id: Optional[int] = None,
@@ -1026,8 +1034,8 @@ def create_pending_shipment(
     
     # Ensure verification_mode column exists
     try:
-        cursor.execute("PRAGMA table_info(pending_shipments)")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'pending_shipments\' AND table_schema = 'public'")
+        columns = [col[0] for col in cursor.fetchall()]
         if 'verification_mode' not in columns:
             cursor.execute("""
                 ALTER TABLE pending_shipments 
@@ -1077,8 +1085,8 @@ def add_pending_shipment_item(
     product_id = product_row['product_id'] if product_row else None
     
     # Check if barcode and line_number columns exist
-    cursor.execute("PRAGMA table_info(pending_shipment_items)")
-    columns = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'pending_shipment_items\' AND table_schema = 'public'")
+    columns = [col[0] for col in cursor.fetchall()]
     has_barcode = 'barcode' in columns
     has_line_number = 'line_number' in columns
     
@@ -1087,7 +1095,7 @@ def add_pending_shipment_item(
             INSERT INTO pending_shipment_items 
             (pending_shipment_id, product_sku, product_name, quantity_expected, 
              unit_cost, lot_number, expiration_date, product_id, barcode, line_number)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (pending_shipment_id, product_sku, product_name, quantity_expected,
               unit_cost, lot_number, expiration_date, product_id, barcode, line_number))
     elif has_barcode:
@@ -1130,7 +1138,7 @@ def get_pending_shipment(pending_shipment_id: int) -> Optional[Dict[str, Any]]:
         SELECT ps.*, v.vendor_name, v.contact_person, v.email, v.phone
         FROM pending_shipments ps
         JOIN vendors v ON ps.vendor_id = v.vendor_id
-        WHERE ps.pending_shipment_id = ?
+        WHERE ps.pending_shipment_id = %s
     """, (pending_shipment_id,))
     
     row = cursor.fetchone()
@@ -1154,7 +1162,7 @@ def get_pending_shipment_items(pending_shipment_id: int) -> List[Dict[str, Any]]
             END as match_status
         FROM pending_shipment_items psi
         LEFT JOIN inventory i ON psi.product_sku = i.sku
-        WHERE psi.pending_shipment_id = ?
+        WHERE psi.pending_shipment_id = %s
         ORDER BY psi.pending_item_id
     """, (pending_shipment_id,))
     
@@ -1191,11 +1199,11 @@ def list_pending_shipments(
     params = []
     
     if status:
-        query += " AND ps.status = ?"
+        query += " AND ps.status = %s"
         params.append(status)
     
     if vendor_id:
-        query += " AND ps.vendor_id = ?"
+        query += " AND ps.vendor_id = %s"
         params.append(vendor_id)
     
     query += " ORDER BY ps.upload_timestamp DESC"
@@ -1224,7 +1232,7 @@ def add_item_to_inventory_immediately(
             FROM pending_shipment_items psi
             JOIN pending_shipments ps ON psi.pending_shipment_id = ps.pending_shipment_id
             JOIN vendors v ON ps.vendor_id = v.vendor_id
-            WHERE psi.pending_item_id = ?
+            WHERE psi.pending_item_id = %s
         """, (pending_item_id,))
         
         item = cursor.fetchone()
@@ -1258,7 +1266,7 @@ def add_item_to_inventory_immediately(
                 conn.close()
                 return {'success': False, 'message': 'SKU is required'}
             
-            cursor.execute("SELECT product_id FROM inventory WHERE sku = ?", (sku,))
+            cursor.execute("SELECT product_id FROM inventory WHERE sku = %s", (sku,))
             existing = cursor.fetchone()
             
             if existing:
@@ -1269,7 +1277,7 @@ def add_item_to_inventory_immediately(
                 cursor.execute("""
                     INSERT INTO inventory 
                     (product_name, sku, barcode, product_price, product_cost, vendor, vendor_id, current_quantity, category)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL)
                 """, (product_name, sku, barcode, unit_cost, unit_cost, vendor_name, vendor_id))
                 product_id = cursor.lastrowid
                 
@@ -1285,21 +1293,21 @@ def add_item_to_inventory_immediately(
                 # Update pending item with product_id
                 cursor.execute("""
                     UPDATE pending_shipment_items
-                    SET product_id = ?
-                    WHERE pending_item_id = ?
+                    SET product_id = %s
+                    WHERE pending_item_id = %s
                 """, (product_id, pending_item_id))
         else:
             # Update product barcode if missing
             if item.get('barcode'):
                 cursor.execute("""
                     UPDATE inventory 
-                    SET barcode = ?
-                    WHERE product_id = ? AND (barcode IS NULL OR barcode = '')
+                    SET barcode = %s
+                    WHERE product_id = %s AND (barcode IS NULL OR barcode = '')
                 """, (item['barcode'], product_id))
             
             # Check if product needs metadata extraction
             try:
-                cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = ?", (product_id,))
+                cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = %s", (product_id,))
                 has_metadata = cursor.fetchone()
                 if not has_metadata:
                     # Product exists but has no metadata - extract it
@@ -1310,7 +1318,7 @@ def add_item_to_inventory_immediately(
         # Ensure approved_shipment exists for this pending shipment (for auto-add mode)
         cursor.execute("""
             SELECT shipment_id FROM approved_shipments
-            WHERE pending_shipment_id = ?
+            WHERE pending_shipment_id = %s
         """, (pending_shipment_id,))
         
         approved_shipment = cursor.fetchone()
@@ -1322,17 +1330,16 @@ def add_item_to_inventory_immediately(
                  received_date, approved_by, total_items_received, total_cost,
                  has_issues, issue_count)
                 SELECT 
-                    ?,
+                    %s,
                     vendor_id,
                     purchase_order_number,
-                    DATE('now'),
-                    ?,
+                    DATE('now'), %s,
                     0,
                     0,
                     0,
                     0
                 FROM pending_shipments
-                WHERE pending_shipment_id = ?
+                WHERE pending_shipment_id = %s
             """, (pending_shipment_id, employee_id, pending_shipment_id))
             approved_shipment_id = cursor.lastrowid
         else:
@@ -1342,18 +1349,18 @@ def add_item_to_inventory_immediately(
         # Add quantity to inventory
         cursor.execute("""
             UPDATE inventory
-            SET current_quantity = current_quantity + ?,
-                vendor_id = ?,
-                vendor = ?,
+            SET current_quantity = current_quantity + %s,
+                vendor_id = %s,
+                vendor = %s,
                 last_restocked = CURRENT_TIMESTAMP
-            WHERE product_id = ?
+            WHERE product_id = %s
         """, (quantity_verified, vendor_id, vendor_name, product_id))
         
         # Check if item already in approved_shipment_items for this specific pending item
         # In auto-add mode, we track by product_id only (one record per product per shipment)
         cursor.execute("""
             SELECT approved_item_id, quantity_received FROM approved_shipment_items
-            WHERE shipment_id = ? AND product_id = ?
+            WHERE shipment_id = %s AND product_id = %s
             LIMIT 1
         """, (approved_shipment_id, product_id))
         
@@ -1362,9 +1369,9 @@ def add_item_to_inventory_immediately(
             # Update existing record - add to quantity
             cursor.execute("""
                 UPDATE approved_shipment_items
-                SET quantity_received = quantity_received + ?,
-                    received_by = ?
-                WHERE approved_item_id = ?
+                SET quantity_received = quantity_received + %s,
+                    received_by = %s
+                WHERE approved_item_id = %s
             """, (quantity_verified, employee_id, existing_item['approved_item_id']))
         else:
             # Insert new record
@@ -1372,7 +1379,7 @@ def add_item_to_inventory_immediately(
                 INSERT INTO approved_shipment_items
                 (shipment_id, product_id, quantity_received, unit_cost, 
                  lot_number, expiration_date, received_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (approved_shipment_id, product_id, quantity_verified, 
                   item.get('unit_cost', 0.0), item.get('lot_number'), 
                   item.get('expiration_date'), employee_id))
@@ -1382,13 +1389,13 @@ def add_item_to_inventory_immediately(
             UPDATE approved_shipments
             SET total_items_received = (
                 SELECT COALESCE(SUM(quantity_received), 0) FROM approved_shipment_items
-                WHERE shipment_id = ?
+                WHERE shipment_id = %s
             ),
             total_cost = (
                 SELECT COALESCE(SUM(quantity_received * unit_cost), 0) FROM approved_shipment_items
-                WHERE shipment_id = ?
+                WHERE shipment_id = %s
             )
-            WHERE shipment_id = ?
+            WHERE shipment_id = %s
         """, (approved_shipment_id, approved_shipment_id, approved_shipment_id))
         
         conn.commit()
@@ -1439,7 +1446,7 @@ def update_pending_item_verification(
                            ps.verification_mode, ps.pending_shipment_id
                     FROM pending_shipment_items psi
                     JOIN pending_shipments ps ON psi.pending_shipment_id = ps.pending_shipment_id
-                    WHERE psi.pending_item_id = ?
+                    WHERE psi.pending_item_id = %s
                 """, (pending_item_id,))
                 item = cursor.fetchone()
                 if item:
@@ -1453,11 +1460,11 @@ def update_pending_item_verification(
             values = []
             
             if quantity_verified is not None:
-                updates.append("quantity_verified = ?")
+                updates.append("quantity_verified = %s")
                 values.append(quantity_verified)
                 # Update verified_by and verified_at when quantity changes
                 if employee_id is not None:
-                    updates.append("verified_by = ?")
+                    updates.append("verified_by = %s")
                     values.append(employee_id)
                     updates.append("verified_at = CURRENT_TIMESTAMP")
                 # Update status
@@ -1470,15 +1477,15 @@ def update_pending_item_verification(
                         updates.append("status = 'pending'")
             
             if product_id is not None:
-                updates.append("product_id = ?")
+                updates.append("product_id = %s")
                 values.append(product_id)
             
             if discrepancy_notes is not None:
-                updates.append("discrepancy_notes = ?")
+                updates.append("discrepancy_notes = %s")
                 values.append(discrepancy_notes)
             
             if verification_photo is not None:
-                updates.append("verification_photo = ?")
+                updates.append("verification_photo = %s")
                 values.append(verification_photo)
             
             if not updates:
@@ -1486,7 +1493,7 @@ def update_pending_item_verification(
                 return False
             
             values.append(pending_item_id)
-            query = f"UPDATE pending_shipment_items SET {', '.join(updates)} WHERE pending_item_id = ?"
+            query = f"UPDATE pending_shipment_items SET {', '.join(updates)} WHERE pending_item_id = %s"
             
             cursor.execute(query, values)
             conn.commit()
@@ -1495,7 +1502,7 @@ def update_pending_item_verification(
             # Extract metadata if product was matched/created
             if success and product_id is not None:
                 try:
-                    cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = ?", (product_id,))
+                    cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = %s", (product_id,))
                     has_metadata = cursor.fetchone()
                     if not has_metadata:
                         # Extract metadata for newly matched product
@@ -1527,7 +1534,7 @@ def update_pending_item_verification(
             
             return success
             
-        except sqlite3.OperationalError as e:
+        except Exception as e:
             if "database is locked" in str(e).lower() and attempt < max_retries - 1:
                 if conn:
                     try:
@@ -1572,7 +1579,7 @@ def approve_pending_shipment(
         cursor.execute("""
             SELECT vendor_id, expected_date, purchase_order_number, tracking_number, notes, status
             FROM pending_shipments
-            WHERE pending_shipment_id = ?
+            WHERE pending_shipment_id = %s
         """, (pending_shipment_id,))
         pending_row = cursor.fetchone()
         
@@ -1605,7 +1612,7 @@ def approve_pending_shipment(
             INSERT INTO shipment_items 
             (shipment_id, product_id, quantity_received, unit_cost, lot_number, expiration_date)
             SELECT 
-                ?,
+                %s,
                 COALESCE(psi.product_id, 
                     (SELECT product_id FROM inventory WHERE sku = psi.product_sku LIMIT 1)),
                 COALESCE(psi.quantity_verified, psi.quantity_expected),
@@ -1613,7 +1620,7 @@ def approve_pending_shipment(
                 psi.lot_number,
                 psi.expiration_date
             FROM pending_shipment_items psi
-            WHERE psi.pending_shipment_id = ?
+            WHERE psi.pending_shipment_id = %s
             AND COALESCE(psi.quantity_verified, psi.quantity_expected) > 0
         """, (shipment_id, pending_shipment_id))
         
@@ -1621,10 +1628,10 @@ def approve_pending_shipment(
         cursor.execute("""
             UPDATE pending_shipments
             SET status = 'approved',
-                reviewed_by = ?,
+                reviewed_by = %s,
                 reviewed_date = CURRENT_TIMESTAMP,
-                notes = ?
-            WHERE pending_shipment_id = ?
+                notes = %s
+            WHERE pending_shipment_id = %s
         """, (reviewed_by, notes, pending_shipment_id))
         
         conn.commit()
@@ -1637,7 +1644,7 @@ def approve_pending_shipment(
                 FROM shipment_items si
                 JOIN inventory i ON si.product_id = i.product_id
                 LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
-                WHERE si.shipment_id = ? 
+                WHERE si.shipment_id = %s 
                 AND pm.metadata_id IS NULL
             """, (shipment_id,))
             
@@ -1687,10 +1694,10 @@ def reject_pending_shipment(
     cursor.execute("""
         UPDATE pending_shipments
         SET status = 'rejected',
-            reviewed_by = ?,
+            reviewed_by = %s,
             reviewed_date = CURRENT_TIMESTAMP,
-            notes = ?
-        WHERE pending_shipment_id = ?
+            notes = %s
+        WHERE pending_shipment_id = %s
     """, (reviewed_by, notes, pending_shipment_id))
     
     conn.commit()
@@ -1711,7 +1718,7 @@ def auto_match_pending_items(pending_shipment_id: int) -> Dict[str, Any]:
     cursor.execute("""
         SELECT pending_item_id, product_sku
         FROM pending_shipment_items
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
     """, (pending_shipment_id,))
     
     items = cursor.fetchall()
@@ -1721,14 +1728,14 @@ def auto_match_pending_items(pending_shipment_id: int) -> Dict[str, Any]:
     
     for item in items:
         # Try to find matching product
-        cursor.execute("SELECT product_id FROM inventory WHERE sku = ?", (item['product_sku'],))
+        cursor.execute("SELECT product_id FROM inventory WHERE sku = %s", (item['product_sku'],))
         product_row = cursor.fetchone()
         
         if product_row:
             cursor.execute("""
                 UPDATE pending_shipment_items
-                SET product_id = ?
-                WHERE pending_item_id = ?
+                SET product_id = %s
+                WHERE pending_item_id = %s
             """, (product_row['product_id'], item['pending_item_id']))
             matched += 1
         else:
@@ -1762,14 +1769,14 @@ def is_admin_user(employee_id: int, cursor) -> bool:
         SELECT r.role_name 
         FROM employees e
         LEFT JOIN roles r ON e.role_id = r.role_id
-        WHERE e.employee_id = ?
+        WHERE e.employee_id = %s
     """, (employee_id,))
     role = cursor.fetchone()
     if role and role[0] and 'admin' in role[0].lower():
         return True
     
     # Check by position
-    cursor.execute("SELECT position FROM employees WHERE employee_id = ?", (employee_id,))
+    cursor.execute("SELECT position FROM employees WHERE employee_id = %s", (employee_id,))
     position = cursor.fetchone()
     if position and position[0] and 'admin' in position[0].lower():
         return True
@@ -1811,7 +1818,7 @@ def add_employee(
         is_admin = False
         # Check if role is admin
         if role_id:
-            cursor.execute("SELECT role_name FROM roles WHERE role_id = ?", (role_id,))
+            cursor.execute("SELECT role_name FROM roles WHERE role_id = %s", (role_id,))
             role = cursor.fetchone()
             if role and role[0] and 'admin' in role[0].lower():
                 is_admin = True
@@ -1903,26 +1910,32 @@ def add_employee(
         
         if has_username:
             # Use username column
-            if has_role_id and has_pin_code and has_clerk_user_id:
-                fields = ['username'] + base_fields + ['role_id', 'pin_code', 'clerk_user_id']
-                values = [login_identifier] + base_values + [role_id, pin_code, clerk_user_id]
-            elif has_role_id and has_pin_code:
-                fields = ['username'] + base_fields + ['role_id', 'pin_code']
-                values = [login_identifier] + base_values + [role_id, pin_code]
-            else:
-                fields = ['username'] + base_fields
-                values = [login_identifier] + base_values
+            fields = ['username'] + base_fields
+            values = [login_identifier] + base_values
+            # Add optional fields if columns exist AND values are provided
+            if has_role_id and role_id is not None:
+                fields.append('role_id')
+                values.append(role_id)
+            if has_pin_code and pin_code:
+                fields.append('pin_code')
+                values.append(pin_code)
+            if has_clerk_user_id and clerk_user_id:
+                fields.append('clerk_user_id')
+                values.append(clerk_user_id)
         else:
             # Fall back to employee_code
-            if has_role_id and has_pin_code and has_clerk_user_id:
-                fields = ['employee_code'] + base_fields + ['role_id', 'pin_code', 'clerk_user_id']
-                values = [login_identifier] + base_values + [role_id, pin_code, clerk_user_id]
-            elif has_role_id and has_pin_code:
-                fields = ['employee_code'] + base_fields + ['role_id', 'pin_code']
-                values = [login_identifier] + base_values + [role_id, pin_code]
-            else:
-                fields = ['employee_code'] + base_fields
-                values = [login_identifier] + base_values
+            fields = ['employee_code'] + base_fields
+            values = [login_identifier] + base_values
+            # Add optional fields if columns exist AND values are provided
+            if has_role_id and role_id is not None:
+                fields.append('role_id')
+                values.append(role_id)
+            if has_pin_code and pin_code:
+                fields.append('pin_code')
+                values.append(pin_code)
+            if has_clerk_user_id and clerk_user_id:
+                fields.append('clerk_user_id')
+                values.append(clerk_user_id)
         
         # Build and execute INSERT query
         placeholders = ', '.join([param_placeholder] * len(fields))
@@ -1939,18 +1952,31 @@ def add_employee(
         return employee_id
     except Exception as e:
         import psycopg2
-        conn.rollback()
-        conn.close()
+        if conn and not conn.closed:
+            try:
+                conn.rollback()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
         if isinstance(e, psycopg2.IntegrityError):
             raise ValueError(f"Employee identifier '{login_identifier}' already exists") from e
         raise
 
 def get_employee_by_clerk_user_id(clerk_user_id: str) -> Optional[Dict[str, Any]]:
     """Get employee by Clerk user ID"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
+    conn = None
     try:
+        conn = get_connection()
+        if conn is None or conn.closed:
+            print("Error: Invalid connection in get_employee_by_clerk_user_id")
+            return None
+        
+        cursor = conn.cursor()
+        
         # Check if column exists using PostgreSQL information_schema
         cursor.execute("""
             SELECT column_name 
@@ -1961,7 +1987,6 @@ def get_employee_by_clerk_user_id(clerk_user_id: str) -> Optional[Dict[str, Any]
         has_column = cursor.fetchone() is not None
         
         if not has_column:
-            conn.close()
             return None
         
         # Use PostgreSQL placeholder
@@ -1970,7 +1995,6 @@ def get_employee_by_clerk_user_id(clerk_user_id: str) -> Optional[Dict[str, Any]
         row = cursor.fetchone()
         
         if not row:
-            conn.close()
             return None
         
         # Handle both Row objects (SQLite) and tuple/dict (PostgreSQL)
@@ -1978,19 +2002,24 @@ def get_employee_by_clerk_user_id(clerk_user_id: str) -> Optional[Dict[str, Any]
             employee = dict(row)
         else:
             try:
-                column_names = [desc[0] for desc in cursor.description]
-                employee = dict(zip(column_names, row))
-            except:
+                column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                if column_names:
+                    employee = dict(zip(column_names, row))
+                else:
+                    employee = dict(row) if isinstance(row, dict) else {}
+            except Exception as e:
+                print(f"Error converting row to dict: {e}")
                 employee = dict(row) if isinstance(row, dict) else {}
         
-        conn.close()
         return employee
     except Exception as e:
-        conn.close()
         print(f"Error getting employee by Clerk user ID: {e}")
         import traceback
         traceback.print_exc()
         return None
+    finally:
+        if conn and not conn.closed:
+            conn.close()
 
 def link_clerk_user_to_employee(employee_id: int, clerk_user_id: str) -> bool:
     """Link a Clerk user ID to an employee"""
@@ -1998,14 +2027,14 @@ def link_clerk_user_to_employee(employee_id: int, clerk_user_id: str) -> bool:
     cursor = conn.cursor()
     
     try:
-        cursor.execute("PRAGMA table_info(employees)")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'employees\' AND table_schema = 'public'")
+        columns = [col[0] for col in cursor.fetchall()]
         
         if 'clerk_user_id' not in columns:
             # Add column if it doesn't exist
             cursor.execute("ALTER TABLE employees ADD COLUMN clerk_user_id TEXT UNIQUE")
         
-        cursor.execute("UPDATE employees SET clerk_user_id = ? WHERE employee_id = ?", (clerk_user_id, employee_id))
+        cursor.execute("UPDATE employees SET clerk_user_id = %s WHERE employee_id = %s", (clerk_user_id, employee_id))
         conn.commit()
         conn.close()
         return True
@@ -2084,8 +2113,7 @@ def get_employee(employee_id: int) -> Optional[Dict[str, Any]]:
     
     # Get tip summary if employee_tips table exists
     cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='employee_tips'
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
     """)
     if cursor.fetchone():
         cursor.execute("""
@@ -2096,7 +2124,7 @@ def get_employee(employee_id: int) -> Optional[Dict[str, Any]]:
                 COALESCE(SUM(CASE WHEN DATE(tip_date) >= DATE('now', 'start of month') THEN tip_amount ELSE 0 END), 0) as tips_this_month,
                 COALESCE(AVG(tip_amount), 0) as avg_tip_amount
             FROM employee_tips
-            WHERE employee_id = ?
+            WHERE employee_id = %s
         """, (employee_id,))
         tip_summary = cursor.fetchone()
         if tip_summary:
@@ -2116,57 +2144,88 @@ def get_employee(employee_id: int) -> Optional[Dict[str, Any]]:
 
 def list_employees(active_only: bool = True) -> List[Dict[str, Any]]:
     """List all employees with tip summaries"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    # Check if employee_tips table exists
-    cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='employee_tips'
-    """)
-    has_tips_table = cursor.fetchone() is not None
-    
-    if active_only:
-        if has_tips_table:
-            cursor.execute("""
-                SELECT 
-                    e.*,
-                    COALESCE(SUM(et.tip_amount), 0) as total_tips_all_time,
-                    COUNT(et.tip_id) as total_tip_transactions
-                FROM employees e
-                LEFT JOIN employee_tips et ON e.employee_id = et.employee_id
-                WHERE e.active = 1 
-                GROUP BY e.employee_id
-                ORDER BY e.last_name, e.first_name
-            """)
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Check if employee_tips table exists
+        cursor.execute("""
+            SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
+        """)
+        has_tips_table = cursor.fetchone() is not None
+        
+        if active_only:
+            if has_tips_table:
+                cursor.execute("""
+                    SELECT 
+                        e.*,
+                        COALESCE(SUM(et.tip_amount), 0) as total_tips_all_time,
+                        COUNT(et.tip_id) as total_tip_transactions
+                    FROM employees e
+                    LEFT JOIN employee_tips et ON e.employee_id = et.employee_id
+                    WHERE e.active = 1 
+                    GROUP BY e.employee_id
+                    ORDER BY e.last_name, e.first_name
+                """)
+            else:
+                cursor.execute("""
+                    SELECT * FROM employees 
+                    WHERE active = 1 
+                    ORDER BY last_name, first_name
+                """)
         else:
-            cursor.execute("""
-                SELECT * FROM employees 
-                WHERE active = 1 
-                ORDER BY last_name, first_name
-            """)
-    else:
-        if has_tips_table:
-            cursor.execute("""
-                SELECT 
-                    e.*,
-                    COALESCE(SUM(et.tip_amount), 0) as total_tips_all_time,
-                    COUNT(et.tip_id) as total_tip_transactions
-                FROM employees e
-                LEFT JOIN employee_tips et ON e.employee_id = et.employee_id
-                GROUP BY e.employee_id
-                ORDER BY e.last_name, e.first_name
-            """)
-        else:
-            cursor.execute("""
-                SELECT * FROM employees 
-                ORDER BY last_name, first_name
-            """)
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
+            if has_tips_table:
+                cursor.execute("""
+                    SELECT 
+                        e.*,
+                        COALESCE(SUM(et.tip_amount), 0) as total_tips_all_time,
+                        COUNT(et.tip_id) as total_tip_transactions
+                    FROM employees e
+                    LEFT JOIN employee_tips et ON e.employee_id = et.employee_id
+                    GROUP BY e.employee_id
+                    ORDER BY e.last_name, e.first_name
+                """)
+            else:
+                cursor.execute("""
+                    SELECT * FROM employees 
+                    ORDER BY last_name, first_name
+                """)
+        
+        rows = cursor.fetchall()
+        
+        if rows is None:
+            return []
+        
+        # Handle both dict-like rows (RealDictRow) and tuple rows
+        result = []
+        for row in rows:
+            if hasattr(row, '_asdict'):
+                # Named tuple
+                result.append(dict(row._asdict()))
+            elif isinstance(row, dict):
+                result.append(row)
+            else:
+                # Try to convert to dict
+                try:
+                    result.append(dict(row))
+                except (TypeError, ValueError):
+                    # Fallback: create dict from row items if possible
+                    if hasattr(row, '__iter__') and not isinstance(row, str):
+                        result.append(dict(row))
+                    else:
+                        # Last resort: convert to dict manually
+                        result.append({str(i): val for i, val in enumerate(row)})
+        
+        return result
+    except Exception as e:
+        print(f"Error in list_employees: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        if conn and not conn.closed:
+            conn.close()
 
 def update_employee(employee_id: int, **kwargs) -> bool:
     """Update employee information"""
@@ -2213,7 +2272,7 @@ def update_employee(employee_id: int, **kwargs) -> bool:
     # Handle password update
     if password:
         password_hash = hash_password(password)
-        updates.append("password_hash = ?")
+        updates.append("password_hash = %s")
         values.append(password_hash)
     
     if not updates:
@@ -2238,13 +2297,13 @@ def delete_employee(employee_id: int) -> bool:
     cursor = conn.cursor()
     
     # Soft delete - set active to 0
-        cursor.execute("""
-            UPDATE employees
-            SET active = 0,
-                date_terminated = NOW(),
-                updated_at = NOW()
-            WHERE employee_id = %s
-        """, (employee_id,))
+    cursor.execute("""
+        UPDATE employees
+        SET active = 0,
+            date_terminated = NOW(),
+            updated_at = NOW()
+        WHERE employee_id = %s
+    """, (employee_id,))
     
     conn.commit()
     success = cursor.rowcount > 0
@@ -2267,7 +2326,7 @@ def add_customer(
     
     cursor.execute("""
         INSERT INTO customers (customer_name, email, phone)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
     """, (customer_name, email, phone))
     
     conn.commit()
@@ -2281,7 +2340,7 @@ def get_customer(customer_id: int) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM customers WHERE customer_id = ?", (customer_id,))
+    cursor.execute("SELECT * FROM customers WHERE customer_id = %s", (customer_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -2397,10 +2456,10 @@ def create_order(
             
             # Try to find existing customer by phone or email
             if customer_phone:
-                cursor.execute("SELECT customer_id FROM customers WHERE phone = ?", (customer_phone,))
+                cursor.execute("SELECT customer_id FROM customers WHERE phone = %s", (customer_phone,))
                 existing_customer = cursor.fetchone()
             elif customer_email:
-                cursor.execute("SELECT customer_id FROM customers WHERE email = ?", (customer_email,))
+                cursor.execute("SELECT customer_id FROM customers WHERE email = %s", (customer_email,))
                 existing_customer = cursor.fetchone()
             else:
                 existing_customer = None
@@ -2411,29 +2470,29 @@ def create_order(
                 update_fields = []
                 update_values = []
                 if customer_name:
-                    update_fields.append("customer_name = ?")
+                    update_fields.append("customer_name = %s")
                     update_values.append(customer_name)
                 if customer_email:
-                    update_fields.append("email = ?")
+                    update_fields.append("email = %s")
                     update_values.append(customer_email)
                 if customer_phone:
-                    update_fields.append("phone = ?")
+                    update_fields.append("phone = %s")
                     update_values.append(customer_phone)
                 if customer_address:
-                    update_fields.append("address = ?")
+                    update_fields.append("address = %s")
                     update_values.append(customer_address)
                 if update_fields:
                     update_values.append(customer_id)
                     cursor.execute(f"""
                         UPDATE customers 
                         SET {', '.join(update_fields)}
-                        WHERE customer_id = ?
+                        WHERE customer_id = %s
                     """, update_values)
             else:
                 # Create new customer
                 cursor.execute("""
                     INSERT INTO customers (customer_name, email, phone, address)
-                    VALUES (?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s)
                 """, (customer_name, customer_email, customer_phone, customer_address))
                 customer_id = cursor.lastrowid
         
@@ -2466,8 +2525,8 @@ def create_order(
         total = pre_fee_total + transaction_fee + tip
         
         # Create order - check if tip and order_type columns exist
-        cursor.execute("PRAGMA table_info(orders)")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'orders\' AND table_schema = 'public'")
+        columns = [col[0] for col in cursor.fetchall()]
         has_tip = 'tip' in columns
         has_order_type = 'order_type' in columns
         
@@ -2487,7 +2546,7 @@ def create_order(
                 INSERT INTO orders (
                     order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
                     discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'completed', ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s, %s)
             """, (order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
                   discount, transaction_fee, tip, total, payment_method, order_type, notes))
         elif has_tip:
@@ -2495,7 +2554,7 @@ def create_order(
                 INSERT INTO orders (
                     order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
                     discount, transaction_fee, tip, total, payment_method, payment_status, order_status, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'completed', ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s)
             """, (order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
                   discount, transaction_fee, tip, total, payment_method, notes))
         else:
@@ -2504,7 +2563,7 @@ def create_order(
                 INSERT INTO orders (
                     order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
                     discount, transaction_fee, total, payment_method, payment_status, order_status, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'completed', ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s)
             """, (order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
                   discount, transaction_fee, total, payment_method, notes))
         
@@ -2524,14 +2583,14 @@ def create_order(
                 INSERT INTO order_items (
                     order_id, product_id, quantity, unit_price, discount, subtotal,
                     tax_rate, tax_amount
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
                   item_tax_rate, item_tax))
         
         # Record payment transaction with fee details and tip
         # Check if tip and employee_id columns exist
-        cursor.execute("PRAGMA table_info(payment_transactions)")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'payment_transactions\' AND table_schema = 'public'")
+        columns = [col[0] for col in cursor.fetchall()]
         has_tip = 'tip' in columns
         has_employee_id = 'employee_id' in columns
         
@@ -2540,7 +2599,7 @@ def create_order(
                 INSERT INTO payment_transactions (
                     order_id, payment_method, amount, transaction_fee, transaction_fee_rate,
                     net_amount, status, tip, employee_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'approved', %s, %s)
             """, (order_id, payment_method, pre_fee_total, transaction_fee, 
                   fee_calc['fee_rate'], fee_calc['net_amount'], tip, employee_id))
         else:
@@ -2549,7 +2608,7 @@ def create_order(
                 INSERT INTO payment_transactions (
                     order_id, payment_method, amount, transaction_fee, transaction_fee_rate,
                     net_amount, status
-                ) VALUES (?, ?, ?, ?, ?, ?, 'approved')
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'approved')
             """, (order_id, payment_method, pre_fee_total, transaction_fee, 
                   fee_calc['fee_rate'], fee_calc['net_amount']))
         
@@ -2558,14 +2617,13 @@ def create_order(
         # Record tip in employee_tips table if tip exists
         if tip > 0:
             cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='employee_tips'
+                SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
             """)
             if cursor.fetchone():
                 cursor.execute("""
                     INSERT INTO employee_tips (
                         employee_id, order_id, transaction_id, tip_amount, payment_method
-                    ) VALUES (?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s)
                 """, (employee_id, order_id, transaction_id, tip, payment_method))
         
         # Track customer spending and award rewards if customer_id exists
@@ -2583,8 +2641,8 @@ def create_order(
                     # Update customer total_spent
                     cursor.execute("""
                         UPDATE customers 
-                        SET total_spent = COALESCE(total_spent, 0) + ?
-                        WHERE customer_id = ?
+                        SET total_spent = COALESCE(total_spent, 0) + %s
+                        WHERE customer_id = %s
                     """, (amount_for_rewards, customer_id))
                     
                     # Award rewards based on type
@@ -2592,8 +2650,8 @@ def create_order(
                         # Add points to customer
                         cursor.execute("""
                             UPDATE customers 
-                            SET loyalty_points = COALESCE(loyalty_points, 0) + ?
-                            WHERE customer_id = ?
+                            SET loyalty_points = COALESCE(loyalty_points, 0) + %s
+                            WHERE customer_id = %s
                         """, (rewards_info['points_earned'], customer_id))
                     elif rewards_info['discount_amount'] > 0:
                         # Apply discount to order if reward type is percentage or fixed
@@ -2643,7 +2701,7 @@ def get_order_details(order_id: int) -> Optional[Dict[str, Any]]:
         FROM orders o
         LEFT JOIN employees e ON o.employee_id = e.employee_id
         LEFT JOIN customers c ON o.customer_id = c.customer_id
-        WHERE o.order_id = ?
+        WHERE o.order_id = %s
     """, (order_id,))
     
     # Note: The query will automatically include new fields: tax_rate, tax_amount, transaction_fee
@@ -2663,7 +2721,7 @@ def get_order_details(order_id: int) -> Optional[Dict[str, Any]]:
             i.sku
         FROM order_items oi
         JOIN inventory i ON oi.product_id = i.product_id
-        WHERE oi.order_id = ?
+        WHERE oi.order_id = %s
     """, (order_id,))
     
     items = [dict(row) for row in cursor.fetchall()]
@@ -2671,7 +2729,7 @@ def get_order_details(order_id: int) -> Optional[Dict[str, Any]]:
     # Get payment transactions
     cursor.execute("""
         SELECT * FROM payment_transactions
-        WHERE order_id = ?
+        WHERE order_id = %s
     """, (order_id,))
     
     payments = [dict(row) for row in cursor.fetchall()]
@@ -2694,7 +2752,7 @@ def void_order(order_id: int, employee_id: int, reason: Optional[str] = None) ->
         cursor.execute("""
             SELECT product_id, quantity
             FROM order_items
-            WHERE order_id = ?
+            WHERE order_id = %s
         """, (order_id,))
         
         items = cursor.fetchall()
@@ -2704,7 +2762,7 @@ def void_order(order_id: int, employee_id: int, reason: Optional[str] = None) ->
             return {'success': False, 'message': 'Order not found or has no items'}
         
         # Check if order is already voided
-        cursor.execute("SELECT order_status FROM orders WHERE order_id = ?", (order_id,))
+        cursor.execute("SELECT order_status FROM orders WHERE order_id = %s", (order_id,))
         status_row = cursor.fetchone()
         if not status_row:
             conn.close()
@@ -2718,9 +2776,9 @@ def void_order(order_id: int, employee_id: int, reason: Optional[str] = None) ->
         for item in items:
             cursor.execute("""
                 UPDATE inventory
-                SET current_quantity = current_quantity + ?,
+                SET current_quantity = current_quantity + %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE product_id = ?
+                WHERE product_id = %s
             """, (item['quantity'], item['product_id']))
         
         # Update order status
@@ -2731,15 +2789,15 @@ def void_order(order_id: int, employee_id: int, reason: Optional[str] = None) ->
         cursor.execute("""
             UPDATE orders
             SET order_status = 'voided',
-                notes = COALESCE(notes, '') || ?
-            WHERE order_id = ?
+                notes = COALESCE(notes, '') || %s
+            WHERE order_id = %s
         """, (notes_text, order_id))
         
         # Update payment status
         cursor.execute("""
             UPDATE payment_transactions
             SET status = 'refunded'
-            WHERE order_id = ?
+            WHERE order_id = %s
         """, (order_id,))
         
         conn.commit()
@@ -2776,7 +2834,7 @@ def process_return(
             cursor.execute("""
                 SELECT product_id, quantity, unit_price, discount
                 FROM order_items
-                WHERE order_item_id = ?
+                WHERE order_item_id = %s
             """, (order_item_id,))
             
             original = cursor.fetchone()
@@ -2796,9 +2854,9 @@ def process_return(
             # Return items to inventory
             cursor.execute("""
                 UPDATE inventory
-                SET current_quantity = current_quantity + ?,
+                SET current_quantity = current_quantity + %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE product_id = ?
+                WHERE product_id = %s
             """, (return_qty, original['product_id']))
             
             # Update order item quantity if partial return
@@ -2808,15 +2866,15 @@ def process_return(
                 
                 cursor.execute("""
                     UPDATE order_items
-                    SET quantity = ?,
-                        subtotal = ?
-                    WHERE order_item_id = ?
+                    SET quantity = %s,
+                        subtotal = %s
+                    WHERE order_item_id = %s
                 """, (new_qty, new_subtotal, order_item_id))
             else:
                 # Full return - delete item
                 cursor.execute("""
                     DELETE FROM order_items
-                    WHERE order_item_id = ?
+                    WHERE order_item_id = %s
                 """, (order_item_id,))
         
         # Update order total
@@ -2827,18 +2885,18 @@ def process_return(
         
         cursor.execute("""
             UPDATE orders
-            SET total = total - ?,
-                subtotal = subtotal - ?,
+            SET total = total - %s,
+                subtotal = subtotal - %s,
                 order_status = 'returned',
-                notes = COALESCE(notes, '') || ?
-            WHERE order_id = ?
+                notes = COALESCE(notes, '') || %s
+            WHERE order_id = %s
         """, (total_refund, total_refund, notes_text, order_id))
         
         # Record refund transaction
         cursor.execute("""
             INSERT INTO payment_transactions (
                 order_id, payment_method, amount, status
-            ) VALUES (?, 'refund', ?, 'refunded')
+            ) VALUES (%s, 'refund', %s, 'refunded')
         """, (order_id, -total_refund))
         
         conn.commit()
@@ -2876,7 +2934,7 @@ def create_pending_return(
     
     try:
         # Verify order exists
-        cursor.execute("SELECT order_id, order_number FROM orders WHERE order_id = ?", (order_id,))
+        cursor.execute("SELECT order_id, order_number FROM orders WHERE order_id = %s", (order_id,))
         order = cursor.fetchone()
         if not order:
             conn.close()
@@ -2890,7 +2948,7 @@ def create_pending_return(
         cursor.execute("""
             SELECT COUNT(*) as count
             FROM pending_returns
-            WHERE order_id = ? AND return_number LIKE ?
+            WHERE order_id = %s AND return_number LIKE %s
         """, (order_id, f"RET-{date_str}-{order_id}%"))
         
         existing_count = cursor.fetchone()['count']
@@ -2916,7 +2974,7 @@ def create_pending_return(
                        i.product_name, i.sku
                 FROM order_items oi
                 JOIN inventory i ON oi.product_id = i.product_id
-                WHERE oi.order_item_id = ?
+                WHERE oi.order_item_id = %s
             """, (order_item_id,))
             
             original = cursor.fetchone()
@@ -2949,7 +3007,7 @@ def create_pending_return(
             INSERT INTO pending_returns (
                 return_number, order_id, employee_id, customer_id,
                 total_refund_amount, reason, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (return_number, order_id, employee_id, customer_id, total_refund, reason, notes))
         
         return_id = cursor.lastrowid
@@ -2960,7 +3018,7 @@ def create_pending_return(
                 INSERT INTO pending_return_items (
                     return_id, order_item_id, product_id, quantity,
                     unit_price, discount, refund_amount, condition, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 return_id, item['order_item_id'], item['product_id'],
                 item['quantity'], item['unit_price'], item['discount'],
@@ -3009,7 +3067,7 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
             SELECT pr.*, o.order_number
             FROM pending_returns pr
             JOIN orders o ON pr.order_id = o.order_id
-            WHERE pr.return_id = ?
+            WHERE pr.return_id = %s
         """, (return_id,))
         
         return_record = cursor.fetchone()
@@ -3028,7 +3086,7 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
             SELECT pri.*, i.product_name, i.sku
             FROM pending_return_items pri
             JOIN inventory i ON pri.product_id = i.product_id
-            WHERE pri.return_id = ?
+            WHERE pri.return_id = %s
         """, (return_id,))
         
         return_items = [dict(row) for row in cursor.fetchall()]
@@ -3041,9 +3099,9 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
         for item in return_items:
             cursor.execute("""
                 UPDATE inventory
-                SET current_quantity = current_quantity + ?,
+                SET current_quantity = current_quantity + %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE product_id = ?
+                WHERE product_id = %s
             """, (item['quantity'], item['product_id']))
         
         # Update order items (reduce quantities or delete)
@@ -3051,7 +3109,7 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
         for item in return_items:
             # Get current order item quantity
             cursor.execute("""
-                SELECT quantity FROM order_items WHERE order_item_id = ?
+                SELECT quantity FROM order_items WHERE order_item_id = %s
             """, (item['order_item_id'],))
             
             current = cursor.fetchone()
@@ -3061,14 +3119,14 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
                 
                 if new_qty <= 0:
                     # Delete item if fully returned
-                    cursor.execute("DELETE FROM order_items WHERE order_item_id = ?", (item['order_item_id'],))
+                    cursor.execute("DELETE FROM order_items WHERE order_item_id = %s", (item['order_item_id'],))
                 else:
                     # Update quantity
                     cursor.execute("""
                         UPDATE order_items
-                        SET quantity = ?,
-                            subtotal = (unit_price * ?) - discount
-                        WHERE order_item_id = ?
+                        SET quantity = %s,
+                            subtotal = (unit_price * %s) - discount
+                        WHERE order_item_id = %s
                     """, (new_qty, new_qty, item['order_item_id']))
         
         # Update order totals
@@ -3080,32 +3138,32 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
         
         cursor.execute("""
             UPDATE orders
-            SET total = total - ?,
-                subtotal = subtotal - ?,
+            SET total = total - %s,
+                subtotal = subtotal - %s,
                 order_status = CASE 
-                    WHEN (SELECT COUNT(*) FROM order_items WHERE order_id = ?) = 0 
+                    WHEN (SELECT COUNT(*) FROM order_items WHERE order_id = %s) = 0 
                     THEN 'returned' 
                     ELSE order_status 
                 END,
-                notes = COALESCE(notes, '') || ?
-            WHERE order_id = ?
+                notes = COALESCE(notes, '') || %s
+            WHERE order_id = %s
         """, (total_refund, total_refund, order_id, notes_text, order_id))
         
         # Record refund transaction
         cursor.execute("""
             INSERT INTO payment_transactions (
                 order_id, payment_method, amount, status
-            ) VALUES (?, 'refund', ?, 'refunded')
+            ) VALUES (%s, 'refund', %s, 'refunded')
         """, (order_id, -total_refund))
         
         # Update return status
         cursor.execute("""
             UPDATE pending_returns
             SET status = 'approved',
-                approved_by = ?,
+                approved_by = %s,
                 approved_date = CURRENT_TIMESTAMP,
-                notes = COALESCE(notes, '') || ?
-            WHERE return_id = ?
+                notes = COALESCE(notes, '') || %s
+            WHERE return_id = %s
         """, (approved_by, notes, return_id))
         
         conn.commit()
@@ -3151,10 +3209,10 @@ def reject_pending_return(return_id: int, rejected_by: int, reason: Optional[str
         cursor.execute("""
             UPDATE pending_returns
             SET status = 'rejected',
-                approved_by = ?,
+                approved_by = %s,
                 approved_date = CURRENT_TIMESTAMP,
-                notes = COALESCE(notes, '') || ?
-            WHERE return_id = ? AND status = 'pending'
+                notes = COALESCE(notes, '') || %s
+            WHERE return_id = %s AND status = 'pending'
         """, (rejected_by, f"\nRejected: {reason or 'No reason provided'}", return_id))
         
         if cursor.rowcount == 0:
@@ -3197,7 +3255,7 @@ def get_pending_return(return_id: int) -> Optional[Dict[str, Any]]:
         JOIN orders o ON pr.order_id = o.order_id
         JOIN employees e ON pr.employee_id = e.employee_id
         LEFT JOIN customers c ON pr.customer_id = c.customer_id
-        WHERE pr.return_id = ?
+        WHERE pr.return_id = %s
     """, (return_id,))
     
     return_record = cursor.fetchone()
@@ -3212,7 +3270,7 @@ def get_pending_return(return_id: int) -> Optional[Dict[str, Any]]:
         SELECT pri.*, i.product_name, i.sku
         FROM pending_return_items pri
         JOIN inventory i ON pri.product_id = i.product_id
-        WHERE pri.return_id = ?
+        WHERE pri.return_id = %s
     """, (return_id,))
     
     return_record['items'] = [dict(row) for row in cursor.fetchall()]
@@ -3242,11 +3300,11 @@ def list_pending_returns(
     params = []
     
     if status:
-        query += " AND pr.status = ?"
+        query += " AND pr.status = %s"
         params.append(status)
     
     if order_id:
-        query += " AND pr.order_id = ?"
+        query += " AND pr.order_id = %s"
         params.append(order_id)
     
     query += " ORDER BY pr.return_date DESC"
@@ -3375,8 +3433,7 @@ def list_orders(
     
     # Check if receipt_preferences table exists
     cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='receipt_preferences'
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'receipt_preferences'
     """)
     has_receipt_prefs = cursor.fetchone() is not None
     
@@ -3423,11 +3480,11 @@ def list_orders(
         params.append(end_date)
     
     if employee_id:
-        query += " AND o.employee_id = ?"
+        query += " AND o.employee_id = %s"
         params.append(employee_id)
     
     if order_status:
-        query += " AND o.order_status = ?"
+        query += " AND o.order_status = %s"
         params.append(order_status)
     
     query += " ORDER BY o.order_date DESC"
@@ -3449,8 +3506,7 @@ def get_tips_by_employee(
     
     # Check if employee_tips table exists
     cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='employee_tips'
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
     """)
     has_tips_table = cursor.fetchone() is not None
     
@@ -3471,7 +3527,7 @@ def get_tips_by_employee(
         params = []
         
         if employee_id:
-            query += " AND et.employee_id = ?"
+            query += " AND et.employee_id = %s"
             params.append(employee_id)
         
         if start_date:
@@ -3531,8 +3587,7 @@ def get_employee_tip_summary(
     
     # Check if employee_tips table exists
     cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='employee_tips'
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
     """)
     has_tips_table = cursor.fetchone() is not None
     
@@ -3545,7 +3600,7 @@ def get_employee_tip_summary(
                 MIN(et.tip_amount) as min_tip,
                 MAX(et.tip_amount) as max_tip
             FROM employee_tips et
-            WHERE et.employee_id = ?
+            WHERE et.employee_id = %s
               AND et.tip_amount > 0
         """
         params = [employee_id]
@@ -3568,7 +3623,7 @@ def get_employee_tip_summary(
                 MAX(COALESCE(pt.tip, 0)) as max_tip
             FROM payment_transactions pt
             JOIN orders o ON pt.order_id = o.order_id
-            WHERE COALESCE(pt.employee_id, o.employee_id) = ?
+            WHERE COALESCE(pt.employee_id, o.employee_id) = %s
               AND COALESCE(pt.tip, 0) > 0
         """
         params = [employee_id]
@@ -3606,8 +3661,7 @@ def get_employee_tips(
     
     # Check if employee_tips table exists
     cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='employee_tips'
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
     """)
     has_tips_table = cursor.fetchone() is not None
     
@@ -3620,7 +3674,7 @@ def get_employee_tips(
                 o.total as order_total
             FROM employee_tips et
             JOIN orders o ON et.order_id = o.order_id
-            WHERE et.employee_id = ?
+            WHERE et.employee_id = %s
         """
         params = [employee_id]
         
@@ -3649,7 +3703,7 @@ def get_employee_tips(
                 o.total as order_total
             FROM payment_transactions pt
             JOIN orders o ON pt.order_id = o.order_id
-            WHERE COALESCE(pt.employee_id, o.employee_id) = ?
+            WHERE COALESCE(pt.employee_id, o.employee_id) = %s
               AND COALESCE(pt.tip, 0) > 0
         """
         params = [employee_id]
@@ -3689,7 +3743,7 @@ def add_schedule(
     cursor.execute("""
         INSERT INTO employee_schedule (
             employee_id, schedule_date, start_time, end_time, break_duration, notes
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s)
     """, (employee_id, schedule_date, start_time, end_time, break_duration, notes))
     
     conn.commit()
@@ -3727,10 +3781,10 @@ def clock_in(employee_id: int, schedule_id: Optional[int] = None, schedule_date:
                 UPDATE employee_schedule
                 SET clock_in_time = CURRENT_TIMESTAMP,
                     status = 'clocked_in',
-                    clock_in_latitude = ?,
-                    clock_in_longitude = ?,
-                    clock_in_address = ?
-                WHERE schedule_id = ? AND employee_id = ?
+                    clock_in_latitude = %s,
+                    clock_in_longitude = %s,
+                    clock_in_address = %s
+                WHERE schedule_id = %s AND employee_id = %s
             """, (latitude, longitude, address, schedule_id, employee_id))
             
             if cursor.rowcount == 0:
@@ -3745,7 +3799,7 @@ def clock_in(employee_id: int, schedule_id: Optional[int] = None, schedule_date:
                 INSERT INTO employee_schedule (
                     employee_id, schedule_date, clock_in_time, status,
                     clock_in_latitude, clock_in_longitude, clock_in_address
-                ) VALUES (?, ?, CURRENT_TIMESTAMP, 'clocked_in', ?, ?, ?)
+                ) VALUES (%s, %s, CURRENT_TIMESTAMP, 'clocked_in', %s, %s, %s)
             """, (employee_id, schedule_date, latitude, longitude, address))
             
             schedule_id = cursor.lastrowid
@@ -3774,7 +3828,7 @@ def clock_out(employee_id: int, schedule_id: int) -> Dict[str, Any]:
         cursor.execute("""
             SELECT clock_in_time, start_time, end_time, break_duration
             FROM employee_schedule
-            WHERE schedule_id = ? AND employee_id = ?
+            WHERE schedule_id = %s AND employee_id = %s
         """, (schedule_id, employee_id))
         
         schedule = cursor.fetchone()
@@ -3812,10 +3866,10 @@ def clock_out(employee_id: int, schedule_id: int) -> Dict[str, Any]:
         cursor.execute("""
             UPDATE employee_schedule
             SET clock_out_time = CURRENT_TIMESTAMP,
-                hours_worked = ?,
-                overtime_hours = ?,
+                hours_worked = %s,
+                overtime_hours = %s,
                 status = 'clocked_out'
-            WHERE schedule_id = ? AND employee_id = ?
+            WHERE schedule_id = %s AND employee_id = %s
         """, (hours_worked, overtime_hours, schedule_id, employee_id))
         
         conn.commit()
@@ -3853,7 +3907,7 @@ def get_schedule(
     params = []
     
     if employee_id:
-        query += " AND es.employee_id = ?"
+        query += " AND es.employee_id = %s"
         params.append(employee_id)
     
     if start_date:
@@ -3883,7 +3937,7 @@ def get_current_clock_status(employee_id: int) -> Optional[Dict[str, Any]]:
             e.first_name || ' ' || e.last_name as employee_name
         FROM employee_schedule es
         JOIN employees e ON es.employee_id = e.employee_id
-        WHERE es.employee_id = ? 
+        WHERE es.employee_id = %s 
           AND es.status = 'clocked_in'
           AND DATE(es.clock_in_time) = DATE('now')
         ORDER BY es.clock_in_time DESC
@@ -3924,7 +3978,7 @@ def add_calendar_event(
             INSERT INTO master_calendar (
                 event_date, event_type, title, description, start_time, end_time,
                 related_id, related_table, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (event_date, event_type, title, description, start_time, end_time,
               related_id, related_table, created_by))
         
@@ -3935,7 +3989,7 @@ def add_calendar_event(
             for employee_id in employee_ids:
                 cursor.execute("""
                     INSERT INTO calendar_event_employees (calendar_id, employee_id)
-                    VALUES (?, ?)
+                    VALUES (%s, %s)
                 """, (calendar_id, employee_id))
         
         conn.commit()
@@ -3974,7 +4028,7 @@ def get_calendar_events(
         params.append(end_date)
     
     if event_type:
-        query += " AND c.event_type = ?"
+        query += " AND c.event_type = %s"
         params.append(event_type)
     
     query += " ORDER BY c.event_date, c.start_time"
@@ -3995,7 +4049,7 @@ def add_shipment_to_calendar(shipment_id: int, shipment_date: str) -> int:
         SELECT s.*, v.vendor_name
         FROM shipments s
         JOIN vendors v ON s.vendor_id = v.vendor_id
-        WHERE s.shipment_id = ?
+        WHERE s.shipment_id = %s
     """, (shipment_id,))
     
     shipment = cursor.fetchone()
@@ -4042,7 +4096,7 @@ def get_calendar_view(start_date: str, end_date: str) -> Dict[str, Any]:
             'shipment' as event_type
         FROM shipments s
         JOIN vendors v ON s.vendor_id = v.vendor_id
-        WHERE s.received_date >= ? AND s.received_date <= ?
+        WHERE s.received_date >= %s AND s.received_date <= %s
     """, (start_date, end_date))
     
     shipments = [dict(row) for row in cursor.fetchall()]
@@ -4083,8 +4137,8 @@ def employee_login(
     password_hash = hash_password(password)
     
     # Check if table has username column (RBAC migration)
-    cursor.execute("PRAGMA table_info(employees)")
-    columns = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'employees\' AND table_schema = 'public'")
+    columns = [col[0] for col in cursor.fetchall()]
     has_username = 'username' in columns
     
     # Verify credentials - try username first if available, then employee_code
@@ -4092,13 +4146,13 @@ def employee_login(
         cursor.execute("""
             SELECT employee_id, first_name, last_name, position, active, password_hash, username, employee_code
             FROM employees
-            WHERE username = ? OR employee_code = ?
+            WHERE username = %s OR employee_code = %s
         """, (login_identifier, login_identifier))
     else:
         cursor.execute("""
             SELECT employee_id, first_name, last_name, position, active, password_hash, employee_code
             FROM employees
-            WHERE employee_code = ?
+            WHERE employee_code = %s
         """, (login_identifier,))
     
     employee = cursor.fetchone()
@@ -4130,14 +4184,14 @@ def employee_login(
     cursor.execute("""
         INSERT INTO employee_sessions (
             employee_id, session_token, ip_address, device_info
-        ) VALUES (?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s)
     """, (employee['employee_id'], session_token, ip_address, device_info))
     
     # Update last login
     cursor.execute("""
         UPDATE employees
         SET last_login = CURRENT_TIMESTAMP
-        WHERE employee_id = ?
+        WHERE employee_id = %s
     """, (employee['employee_id'],))
     
     conn.commit()
@@ -4174,7 +4228,7 @@ def get_employee_role(employee_id: int) -> Optional[Dict[str, Any]]:
         SELECT e.employee_id, e.role_id, r.role_name, r.description
         FROM employees e
         LEFT JOIN roles r ON e.role_id = r.role_id
-        WHERE e.employee_id = ? AND e.active = 1
+        WHERE e.employee_id = %s AND e.active = 1
     """, (employee_id,))
     
     row = cursor.fetchone()
@@ -4190,8 +4244,8 @@ def assign_role_to_employee(employee_id: int, role_id: int) -> bool:
     try:
         cursor.execute("""
             UPDATE employees
-            SET role_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE employee_id = ?
+            SET role_id = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE employee_id = %s
         """, (role_id, employee_id))
         
         conn.commit()
@@ -4207,73 +4261,133 @@ def verify_session(session_token: str) -> Dict[str, Any]:
     if not session_token:
         return {'valid': False, 'message': 'Session token is required'}
     
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT es.*, e.first_name, e.last_name, e.position, e.active
-        FROM employee_sessions es
-        JOIN employees e ON es.employee_id = e.employee_id
-        WHERE es.session_token = ? 
-          AND es.is_active = 1
-          AND e.active = 1
-    """, (session_token,))
-    
-    session = cursor.fetchone()
-    conn.close()
-    
-    if session:
-        session = dict(session)
-        return {
-            'valid': True,
-            'employee_id': session['employee_id'],
-            'employee_name': f"{session['first_name']} {session['last_name']}",
-            'position': session['position']
-        }
-    
-    return {'valid': False}
+    conn = None
+    try:
+        conn = get_connection()
+        if conn is None or conn.closed:
+            return {'valid': False, 'message': 'Database connection failed'}
+        
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT es.*, e.first_name, e.last_name, e.position, e.active
+            FROM employee_sessions es
+            JOIN employees e ON es.employee_id = e.employee_id
+            WHERE es.session_token = %s 
+              AND es.is_active = 1
+              AND e.active = 1
+        """, (session_token,))
+        
+        session = cursor.fetchone()
+        
+        if session:
+            # Handle both dict-like rows (RealDictRow) and tuple rows
+            if isinstance(session, dict):
+                session_dict = session
+            elif hasattr(session, '_asdict'):
+                session_dict = dict(session._asdict())
+            else:
+                # Try to convert to dict
+                try:
+                    column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                    if column_names:
+                        session_dict = dict(zip(column_names, session))
+                    else:
+                        session_dict = dict(session) if isinstance(session, dict) else {}
+                except (TypeError, ValueError):
+                    # Fallback: convert manually
+                    session_dict = {str(i): val for i, val in enumerate(session)} if hasattr(session, '__iter__') and not isinstance(session, str) else {}
+            
+            return {
+                'valid': True,
+                'employee_id': session_dict.get('employee_id'),
+                'employee_name': f"{session_dict.get('first_name', '')} {session_dict.get('last_name', '')}".strip(),
+                'position': session_dict.get('position', '')
+            }
+        
+        return {'valid': False}
+    except Exception as e:
+        print(f"Error in verify_session: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'valid': False, 'message': str(e)}
+    finally:
+        if conn and not conn.closed:
+            conn.close()
 
 def employee_logout(session_token: str) -> Dict[str, Any]:
     """End employee session"""
     if not session_token:
         return {'success': False, 'message': 'Session token is required'}
     
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    # Get employee_id before logout
-    cursor.execute("SELECT employee_id FROM employee_sessions WHERE session_token = ?", (session_token,))
-    session = cursor.fetchone()
-    
-    if session:
-        employee_id = dict(session)['employee_id']
+    conn = None
+    try:
+        conn = get_connection()
+        if conn is None or conn.closed:
+            return {'success': False, 'message': 'Database connection failed'}
         
-        cursor.execute("""
-            UPDATE employee_sessions
-            SET is_active = 0,
-                logout_time = CURRENT_TIMESTAMP
-            WHERE session_token = ?
-        """, (session_token,))
+        cursor = conn.cursor()
         
-        conn.commit()
-        conn.close()
+        # Get employee_id before logout
+        cursor.execute("SELECT employee_id FROM employee_sessions WHERE session_token = %s", (session_token,))
+        session = cursor.fetchone()
         
-        # Log logout action (don't fail logout if audit logging fails)
-        try:
-            log_audit_action(
-                table_name='employee_sessions',
-                record_id=employee_id,
-                action_type='LOGOUT',
-                employee_id=employee_id,
-                notes='Employee logged out'
-            )
-        except Exception as audit_error:
-            # Log error but don't fail the logout
-            print(f"Warning: Failed to log audit action for logout: {audit_error}")
-        return {'success': True, 'message': 'Logged out successfully'}
-    
-    conn.close()
-    return {'success': False, 'message': 'Session not found'}
+        if session:
+            # Handle both dict-like rows (RealDictRow) and tuple rows
+            if isinstance(session, dict):
+                employee_id = session.get('employee_id')
+            elif hasattr(session, '_asdict'):
+                employee_id = dict(session._asdict()).get('employee_id')
+            else:
+                # Try to get employee_id from tuple
+                try:
+                    column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                    if column_names and 'employee_id' in column_names:
+                        session_dict = dict(zip(column_names, session))
+                        employee_id = session_dict.get('employee_id')
+                    else:
+                        employee_id = session[0] if isinstance(session, (tuple, list)) and len(session) > 0 else None
+                except (TypeError, ValueError, IndexError):
+                    employee_id = None
+            
+            if employee_id:
+                cursor.execute("""
+                    UPDATE employee_sessions
+                    SET is_active = 0,
+                        logout_time = CURRENT_TIMESTAMP
+                    WHERE session_token = %s
+                """, (session_token,))
+                
+                conn.commit()
+                
+                # Log logout action (don't fail logout if audit logging fails)
+                try:
+                    log_audit_action(
+                        table_name='employee_sessions',
+                        record_id=employee_id,
+                        action_type='LOGOUT',
+                        employee_id=employee_id,
+                        notes='Employee logged out'
+                    )
+                except Exception as audit_error:
+                    # Log error but don't fail the logout
+                    print(f"Warning: Failed to log audit action for logout: {audit_error}")
+                return {'success': True, 'message': 'Logged out successfully'}
+        
+        return {'success': False, 'message': 'Session not found'}
+    except Exception as e:
+        print(f"Error in employee_logout: {e}")
+        import traceback
+        traceback.print_exc()
+        if conn and not conn.closed:
+            try:
+                conn.rollback()
+            except:
+                pass
+        return {'success': False, 'message': str(e)}
+    finally:
+        if conn and not conn.closed:
+            conn.close()
 
 def change_employee_password(employee_id: int, old_password: str, new_password: str) -> Dict[str, Any]:
     """Change employee password"""
@@ -4281,7 +4395,7 @@ def change_employee_password(employee_id: int, old_password: str, new_password: 
     cursor = conn.cursor()
     
     # Verify old password
-    cursor.execute("SELECT password_hash FROM employees WHERE employee_id = ?", (employee_id,))
+    cursor.execute("SELECT password_hash FROM employees WHERE employee_id = %s", (employee_id,))
     row = cursor.fetchone()
     
     if not row:
@@ -4301,8 +4415,8 @@ def change_employee_password(employee_id: int, old_password: str, new_password: 
     new_password_hash = hash_password(new_password)
     cursor.execute("""
         UPDATE employees
-        SET password_hash = ?
-        WHERE employee_id = ?
+        SET password_hash = %s
+        WHERE employee_id = %s
     """, (new_password_hash, employee_id))
     
     conn.commit()
@@ -4323,7 +4437,7 @@ def time_clock_in(employee_id: int) -> Dict[str, Any]:
     cursor.execute("""
         SELECT time_entry_id
         FROM time_clock
-        WHERE employee_id = ? 
+        WHERE employee_id = %s 
           AND clock_out IS NULL
     """, (employee_id,))
     
@@ -4334,7 +4448,7 @@ def time_clock_in(employee_id: int) -> Dict[str, Any]:
     # Clock in
     cursor.execute("""
         INSERT INTO time_clock (employee_id, clock_in, status)
-        VALUES (?, CURRENT_TIMESTAMP, 'clocked_in')
+        VALUES (%s, CURRENT_TIMESTAMP, 'clocked_in')
     """, (employee_id,))
     
     time_entry_id = cursor.lastrowid
@@ -4367,7 +4481,7 @@ def time_clock_out(employee_id: int) -> Dict[str, Any]:
     cursor.execute("""
         SELECT time_entry_id, clock_in
         FROM time_clock
-        WHERE employee_id = ? 
+        WHERE employee_id = %s 
           AND clock_out IS NULL
         ORDER BY clock_in DESC
         LIMIT 1
@@ -4398,8 +4512,8 @@ def time_clock_out(employee_id: int) -> Dict[str, Any]:
         UPDATE time_clock
         SET clock_out = CURRENT_TIMESTAMP,
             status = 'clocked_out',
-            total_hours = ?
-        WHERE time_entry_id = ?
+            total_hours = %s
+        WHERE time_entry_id = %s
     """, (total_hours, time_entry_id))
     
     conn.commit()
@@ -4430,7 +4544,7 @@ def time_start_break(employee_id: int) -> Dict[str, Any]:
         UPDATE time_clock
         SET break_start = CURRENT_TIMESTAMP,
             status = 'on_break'
-        WHERE employee_id = ? 
+        WHERE employee_id = %s 
           AND clock_out IS NULL
           AND break_start IS NULL
     """, (employee_id,))
@@ -4453,7 +4567,7 @@ def time_end_break(employee_id: int) -> Dict[str, Any]:
         UPDATE time_clock
         SET break_end = CURRENT_TIMESTAMP,
             status = 'clocked_in'
-        WHERE employee_id = ? 
+        WHERE employee_id = %s 
           AND clock_out IS NULL
           AND break_start IS NOT NULL
           AND break_end IS NULL
@@ -4483,8 +4597,8 @@ def get_timesheet(employee_id: int, start_date: str, end_date: str) -> Dict[str,
             total_hours,
             status
         FROM time_clock
-        WHERE employee_id = ?
-          AND DATE(clock_in) >= ? AND DATE(clock_in) <= ?
+        WHERE employee_id = %s
+          AND DATE(clock_in) >= %s AND DATE(clock_in) <= %s
         ORDER BY clock_in DESC
     """, (employee_id, start_date, end_date))
     
@@ -4494,8 +4608,8 @@ def get_timesheet(employee_id: int, start_date: str, end_date: str) -> Dict[str,
     cursor.execute("""
         SELECT SUM(total_hours) as total
         FROM time_clock
-        WHERE employee_id = ?
-          AND DATE(clock_in) >= ? AND DATE(clock_in) <= ?
+        WHERE employee_id = %s
+          AND DATE(clock_in) >= %s AND DATE(clock_in) <= %s
           AND clock_out IS NOT NULL
     """, (employee_id, start_date, end_date))
     
@@ -4534,7 +4648,7 @@ def log_audit_action(
         INSERT INTO audit_log (
             table_name, record_id, action_type, employee_id,
             old_values, new_values, ip_address, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """, (table_name, record_id, action_type, employee_id,
           old_values_json, new_values_json, ip_address, notes))
     
@@ -4568,15 +4682,15 @@ def get_audit_trail(
     params = []
     
     if table_name:
-        query += " AND al.table_name = ?"
+        query += " AND al.table_name = %s"
         params.append(table_name)
     
     if record_id:
-        query += " AND al.record_id = ?"
+        query += " AND al.record_id = %s"
         params.append(record_id)
     
     if employee_id:
-        query += " AND al.employee_id = ?"
+        query += " AND al.employee_id = %s"
         params.append(employee_id)
     
     if start_date:
@@ -4658,10 +4772,10 @@ def initialize_chart_of_accounts() -> Dict[str, Any]:
             cursor.execute("""
                 INSERT INTO chart_of_accounts (
                     account_number, account_name, account_type, account_subtype, normal_balance
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s)
             """, (account_number, account_name, account_type, account_subtype, normal_balance))
             added += 1
-        except sqlite3.IntegrityError:
+        except Exception:
             skipped += 1
     
     conn.commit()
@@ -4691,7 +4805,7 @@ def add_account(
             INSERT INTO chart_of_accounts (
                 account_number, account_name, account_type, account_subtype,
                 normal_balance, parent_account_id, description
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (account_number, account_name, account_type, account_subtype,
               normal_balance, parent_account_id, description))
         
@@ -4702,16 +4816,16 @@ def add_account(
     except Exception as e:
         import psycopg2
         if isinstance(e, psycopg2.IntegrityError):
-        conn.rollback()
-        conn.close()
-        raise ValueError(f"Account number '{account_number}' already exists") from e
+            conn.rollback()
+            conn.close()
+            raise ValueError(f"Account number '{account_number}' already exists") from e
 
 def get_account_by_number(account_number: str) -> Optional[Dict[str, Any]]:
     """Get account by account number"""
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM chart_of_accounts WHERE account_number = ?", (account_number,))
+    cursor.execute("SELECT * FROM chart_of_accounts WHERE account_number = %s", (account_number,))
     row = cursor.fetchone()
     conn.close()
     
@@ -4740,7 +4854,7 @@ def create_journal_entry(
         cursor.execute("""
             SELECT COUNT(*) + 1 as next_num
             FROM journal_entries
-            WHERE strftime('%Y', entry_date) = strftime('%Y', ?)
+            WHERE strftime('%Y', entry_date) = strftime('%Y', %s)
         """, (entry_date,))
         
         next_num = cursor.fetchone()[0]
@@ -4762,7 +4876,7 @@ def create_journal_entry(
             INSERT INTO journal_entries (
                 entry_number, entry_date, entry_type, transaction_source, source_id,
                 description, employee_id, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (entry_number, entry_date, entry_type, transaction_source, source_id,
               description, employee_id, notes))
         
@@ -4784,7 +4898,7 @@ def create_journal_entry(
                 INSERT INTO journal_entry_lines (
                     journal_entry_id, line_number, account_id,
                     debit_amount, credit_amount, description
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s)
             """, (journal_entry_id, idx, account['account_id'],
                   item.get('debit_amount', 0), item.get('credit_amount', 0),
                   item.get('description', '')))
@@ -4822,7 +4936,7 @@ def post_journal_entry(journal_entry_id: int, employee_id: int) -> bool:
         UPDATE journal_entries
         SET posted = 1,
             posted_date = CURRENT_TIMESTAMP
-        WHERE journal_entry_id = ?
+        WHERE journal_entry_id = %s
     """, (journal_entry_id,))
     
     conn.commit()
@@ -4846,8 +4960,8 @@ def journalize_sale(order_id: int, employee_id: int) -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Get order details - check if tip column exists
-    cursor.execute("PRAGMA table_info(orders)")
-    columns = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'orders\' AND table_schema = 'public'")
+    columns = [col[0] for col in cursor.fetchall()]
     has_tip = 'tip' in columns
     has_order_type = 'order_type' in columns
     if has_tip:
@@ -4860,7 +4974,7 @@ def journalize_sale(order_id: int, employee_id: int) -> Dict[str, Any]:
                 o.tip,
                 o.payment_method
             FROM orders o
-            WHERE o.order_id = ?
+            WHERE o.order_id = %s
         """, (order_id,))
     else:
         cursor.execute("""
@@ -4872,7 +4986,7 @@ def journalize_sale(order_id: int, employee_id: int) -> Dict[str, Any]:
                 0.0 as tip,
                 o.payment_method
             FROM orders o
-            WHERE o.order_id = ?
+            WHERE o.order_id = %s
         """, (order_id,))
     
     order = cursor.fetchone()
@@ -4886,7 +5000,7 @@ def journalize_sale(order_id: int, employee_id: int) -> Dict[str, Any]:
     cursor.execute("""
         SELECT net_amount, transaction_fee
         FROM payment_transactions
-        WHERE order_id = ?
+        WHERE order_id = %s
         LIMIT 1
     """, (order_id,))
     
@@ -4898,7 +5012,7 @@ def journalize_sale(order_id: int, employee_id: int) -> Dict[str, Any]:
         SELECT SUM(oi.quantity * i.product_cost) as cogs
         FROM order_items oi
         JOIN inventory i ON oi.product_id = i.product_id
-        WHERE oi.order_id = ?
+        WHERE oi.order_id = %s
     """, (order_id,))
     
     cogs_row = cursor.fetchone()
@@ -4996,7 +5110,7 @@ def journalize_shipment_received(shipment_id: int, employee_id: int) -> Dict[str
         SELECT 
             SUM(si.quantity_received * si.unit_cost) as total_cost
         FROM shipment_items si
-        WHERE si.shipment_id = ?
+        WHERE si.shipment_id = %s
     """, (shipment_id,))
     
     shipment = cursor.fetchone()
@@ -5115,7 +5229,7 @@ def report_discrepancy(
             discrepancy_type, expected_quantity, actual_quantity,
             discrepancy_quantity, expected_product_sku, actual_product_sku,
             financial_impact, reported_by, resolution_notes, photos
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (shipment_id, pending_shipment_id, product_id, discrepancy_type,
           expected_quantity, actual_quantity, discrepancy_qty,
           expected_product_sku, actual_product_sku, financial_impact,
@@ -5127,8 +5241,8 @@ def report_discrepancy(
     if pending_shipment_id:
         cursor.execute("""
             UPDATE pending_shipment_items
-            SET discrepancy_notes = ?
-            WHERE pending_shipment_id = ? AND product_id = ?
+            SET discrepancy_notes = %s
+            WHERE pending_shipment_id = %s AND product_id = %s
         """, (notes, pending_shipment_id, product_id))
     
     conn.commit()
@@ -5171,7 +5285,7 @@ def resolve_discrepancy(
     # Get discrepancy details
     cursor.execute("""
         SELECT * FROM shipment_discrepancies
-        WHERE discrepancy_id = ?
+        WHERE discrepancy_id = %s
     """, (discrepancy_id,))
     
     discrepancy = cursor.fetchone()
@@ -5184,14 +5298,14 @@ def resolve_discrepancy(
     # Update discrepancy status
     cursor.execute("""
         UPDATE shipment_discrepancies
-        SET resolution_status = ?,
-            resolved_by = ?,
+        SET resolution_status = %s,
+            resolved_by = %s,
             resolved_date = CURRENT_TIMESTAMP,
-            resolution_notes = ?,
-            vendor_notified = ?,
-            vendor_response = ?,
-            claim_number = ?
-        WHERE discrepancy_id = ?
+            resolution_notes = %s,
+            vendor_notified = %s,
+            vendor_response = %s,
+            claim_number = %s
+        WHERE discrepancy_id = %s
     """, (resolution_status, employee_id, resolution_notes,
           int(vendor_notified), vendor_response, claim_number, discrepancy_id))
     
@@ -5281,15 +5395,15 @@ def get_discrepancies(
     params = []
     
     if shipment_id:
-        query += " AND sd.shipment_id = ?"
+        query += " AND sd.shipment_id = %s"
         params.append(shipment_id)
     
     if pending_shipment_id:
-        query += " AND sd.pending_shipment_id = ?"
+        query += " AND sd.pending_shipment_id = %s"
         params.append(pending_shipment_id)
     
     if resolution_status:
-        query += " AND sd.resolution_status = ?"
+        query += " AND sd.resolution_status = %s"
         params.append(resolution_status)
     
     query += " ORDER BY sd.reported_date DESC"
@@ -5404,7 +5518,7 @@ def generate_income_statement(start_date: str, end_date: str) -> Dict[str, Any]:
         LEFT JOIN journal_entry_lines jel ON coa.account_id = jel.account_id
         LEFT JOIN journal_entries je ON jel.journal_entry_id = je.journal_entry_id
         WHERE je.posted = 1
-          AND je.entry_date BETWEEN ? AND ?
+          AND je.entry_date BETWEEN ? AND %s
           AND coa.account_type IN ('revenue', 'contra_revenue', 'expense')
         GROUP BY coa.account_id
         ORDER BY 
@@ -5516,7 +5630,7 @@ def add_fiscal_period(
     
     cursor.execute("""
         INSERT INTO fiscal_periods (period_name, start_date, end_date)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
     """, (period_name, start_date, end_date))
     
     conn.commit()
@@ -5538,7 +5652,7 @@ def calculate_retained_earnings(
     cursor.execute("""
         SELECT start_date, end_date
         FROM fiscal_periods
-        WHERE period_id = ?
+        WHERE period_id = %s
     """, (period_id,))
     
     period = cursor.fetchone()
@@ -5559,7 +5673,7 @@ def calculate_retained_earnings(
         INSERT INTO retained_earnings (
             fiscal_period_id, beginning_balance, net_income,
             dividends, ending_balance
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s)
     """, (period_id, beginning_balance, net_income, dividends, ending_balance))
     
     conn.commit()
@@ -5591,17 +5705,17 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
             cursor.execute("""
                 UPDATE pending_shipments 
                 SET status = 'in_progress',
-                    started_by = ?,
+                    started_by = %s,
                     started_at = CURRENT_TIMESTAMP
-                WHERE pending_shipment_id = ?
+                WHERE pending_shipment_id = %s
             """, (employee_id, pending_shipment_id))
-        except sqlite3.OperationalError as e:
+        except Exception as e:
             # Columns might not exist, try without them
             if 'no such column' in str(e).lower():
                 cursor.execute("""
                     UPDATE pending_shipments 
                     SET status = 'in_progress'
-                    WHERE pending_shipment_id = ?
+                    WHERE pending_shipment_id = %s
                 """, (pending_shipment_id,))
             else:
                 raise
@@ -5610,7 +5724,7 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
         cursor.execute("""
             INSERT INTO verification_sessions 
             (pending_shipment_id, employee_id, device_id)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
         """, (pending_shipment_id, employee_id, device_id))
         
         session_id = cursor.lastrowid
@@ -5621,7 +5735,7 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
                    (SELECT COUNT(*) FROM pending_shipment_items WHERE pending_shipment_id = ps.pending_shipment_id) as total_items
             FROM pending_shipments ps
             LEFT JOIN vendors v ON ps.vendor_id = v.vendor_id
-            WHERE ps.pending_shipment_id = ?
+            WHERE ps.pending_shipment_id = %s
         """, (pending_shipment_id,))
         
         shipment = cursor.fetchone()
@@ -5651,9 +5765,9 @@ def scan_item(pending_shipment_id: int, barcode: str, employee_id: int,
     cursor.execute("""
         SELECT psi.*, i.product_id, i.product_name as inventory_name
         FROM pending_shipment_items psi
-        LEFT JOIN inventory i ON (psi.product_sku = i.sku OR psi.barcode = i.barcode OR i.barcode = ?)
-        WHERE psi.pending_shipment_id = ? 
-        AND (psi.barcode = ? OR psi.product_sku = ? OR i.barcode = ?)
+        LEFT JOIN inventory i ON (psi.product_sku = i.sku OR psi.barcode = i.barcode OR i.barcode = %s)
+        WHERE psi.pending_shipment_id = %s 
+        AND (psi.barcode = %s OR psi.product_sku = %s OR i.barcode = %s)
         AND psi.status != 'verified'
     """, (barcode, pending_shipment_id, barcode, barcode, barcode))
     
@@ -5685,11 +5799,11 @@ def scan_item(pending_shipment_id: int, barcode: str, employee_id: int,
             
             cursor.execute("""
                 UPDATE pending_shipment_items
-                SET quantity_verified = ?,
-                    verified_by = ?,
+                SET quantity_verified = %s,
+                    verified_by = %s,
                     verified_at = CURRENT_TIMESTAMP,
-                    status = ?
-                WHERE pending_item_id = ?
+                    status = %s
+                WHERE pending_item_id = %s
             """, (new_quantity, employee_id, new_status, item['pending_item_id']))
             
             response = {
@@ -5707,7 +5821,7 @@ def scan_item(pending_shipment_id: int, barcode: str, employee_id: int,
                     UPDATE verification_sessions
                     SET total_scans = total_scans + 1,
                         items_verified = items_verified + 1
-                    WHERE session_id = ?
+                    WHERE session_id = %s
                 """, (session_id,))
     else:
         # Unknown item scanned
@@ -5724,7 +5838,7 @@ def scan_item(pending_shipment_id: int, barcode: str, employee_id: int,
         INSERT INTO shipment_scan_log
         (pending_shipment_id, pending_item_id, scanned_barcode, 
          scanned_by, scan_result, device_id, location)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     """, (pending_shipment_id, pending_item_id, barcode, employee_id, scan_result, device_id, location))
     
     conn.commit()
@@ -5756,16 +5870,16 @@ def report_shipment_issue(pending_shipment_id: int, pending_item_id: Optional[in
         cursor.execute("""
             UPDATE pending_shipment_items
             SET status = 'issue',
-                discrepancy_notes = COALESCE(discrepancy_notes || '\n', '') || 'Issue reported: ' || ?
-            WHERE pending_item_id = ?
+                discrepancy_notes = COALESCE(discrepancy_notes || '\n', '') || 'Issue reported: ' || %s
+            WHERE pending_item_id = %s
         """, (description, pending_item_id))
     
     # Update session stats
     cursor.execute("""
         UPDATE verification_sessions
         SET issues_reported = issues_reported + 1
-        WHERE pending_shipment_id = ? 
-        AND employee_id = ?
+        WHERE pending_shipment_id = %s 
+        AND employee_id = %s
         AND ended_at IS NULL
         ORDER BY started_at DESC
         LIMIT 1
@@ -5790,7 +5904,7 @@ def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
             SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as items_fully_verified,
             SUM(CASE WHEN status = 'issue' THEN 1 ELSE 0 END) as items_with_issues
         FROM pending_shipment_items
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
     """, (pending_shipment_id,))
     
     progress = dict(cursor.fetchone())
@@ -5803,7 +5917,7 @@ def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
                verification_photo,
                (quantity_expected - COALESCE(quantity_verified, 0)) as remaining
         FROM pending_shipment_items
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
         ORDER BY COALESCE(line_number, pending_item_id)
     """, (pending_shipment_id,))
     
@@ -5816,7 +5930,7 @@ def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
         FROM shipment_issues si
         LEFT JOIN pending_shipment_items psi ON si.pending_item_id = psi.pending_item_id
         JOIN employees e ON si.reported_by = e.employee_id
-        WHERE si.pending_shipment_id = ?
+        WHERE si.pending_shipment_id = %s
         ORDER BY si.reported_at DESC
     """, (pending_shipment_id,))
     
@@ -5826,7 +5940,7 @@ def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
     cursor.execute("""
         SELECT pending_shipment_id, status, workflow_step, added_to_inventory, vendor_id
         FROM pending_shipments
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
     """, (pending_shipment_id,))
     shipment_row = cursor.fetchone()
     shipment = dict(shipment_row) if shipment_row else {}
@@ -5859,7 +5973,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     cursor.execute("""
         SELECT COUNT(*) as unverified_count
         FROM pending_shipment_items
-        WHERE pending_shipment_id = ? 
+        WHERE pending_shipment_id = %s 
         AND status = 'pending'
         AND COALESCE(quantity_verified, 0) < quantity_expected
     """, (pending_shipment_id,))
@@ -5881,7 +5995,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
                COALESCE(SUM(psi.quantity_verified * psi.unit_cost), 0) as total_cost
         FROM pending_shipments ps
         LEFT JOIN pending_shipment_items psi ON ps.pending_shipment_id = psi.pending_shipment_id
-        WHERE ps.pending_shipment_id = ?
+        WHERE ps.pending_shipment_id = %s
         GROUP BY ps.pending_shipment_id
     """, (pending_shipment_id,))
     
@@ -5890,7 +6004,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     # Check if approved shipment already exists (for auto-add mode)
     cursor.execute("""
         SELECT shipment_id FROM approved_shipments
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
     """, (pending_shipment_id,))
     
     existing_approved = cursor.fetchone()
@@ -5902,14 +6016,14 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             UPDATE approved_shipments
             SET total_items_received = (
                 SELECT COALESCE(SUM(quantity_received), 0) FROM approved_shipment_items
-                WHERE shipment_id = ?
+                WHERE shipment_id = %s
             ),
             total_cost = (
                 SELECT COALESCE(SUM(quantity_received * unit_cost), 0) FROM approved_shipment_items
-                WHERE shipment_id = ?
+                WHERE shipment_id = %s
             ),
-            approved_by = ?
-            WHERE shipment_id = ?
+            approved_by = %s
+            WHERE shipment_id = %s
         """, (approved_shipment_id, approved_shipment_id, employee_id, approved_shipment_id))
     else:
         # Create approved shipment
@@ -5918,7 +6032,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             (pending_shipment_id, vendor_id, purchase_order_number, 
              received_date, approved_by, total_items_received, total_cost,
              has_issues, issue_count)
-            VALUES (?, ?, ?, DATE('now'), ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, DATE('now'), %s, %s, %s, %s, %s)
         """, (pending_shipment_id, shipment['vendor_id'], 
               shipment.get('purchase_order_number'), employee_id,
               shipment['total_received'], shipment['total_cost'],
@@ -5929,7 +6043,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     vendor_id = shipment['vendor_id']
     
     # Get vendor name for new products
-    cursor.execute("SELECT vendor_name FROM vendors WHERE vendor_id = ?", (vendor_id,))
+    cursor.execute("SELECT vendor_name FROM vendors WHERE vendor_id = %s", (vendor_id,))
     vendor_row = cursor.fetchone()
     vendor_name = vendor_row['vendor_name'] if vendor_row else None
     
@@ -5940,7 +6054,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         SET product_id = (
             SELECT product_id FROM inventory WHERE sku = pending_shipment_items.product_sku LIMIT 1
         )
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
         AND product_id IS NULL
         AND product_sku IS NOT NULL
     """, (pending_shipment_id,))
@@ -5951,7 +6065,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             SELECT DISTINCT psi.product_id
             FROM pending_shipment_items psi
             LEFT JOIN product_metadata pm ON psi.product_id = pm.product_id
-            WHERE psi.pending_shipment_id = ?
+            WHERE psi.pending_shipment_id = %s
             AND psi.product_id IS NOT NULL
             AND pm.metadata_id IS NULL
         """, (pending_shipment_id,))
@@ -5970,13 +6084,13 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         SET barcode = (
             SELECT barcode FROM pending_shipment_items psi
             WHERE psi.product_id = inventory.product_id
-            AND psi.pending_shipment_id = ?
+            AND psi.pending_shipment_id = %s
             AND psi.barcode IS NOT NULL AND psi.barcode != ''
             LIMIT 1
         )
         WHERE product_id IN (
             SELECT DISTINCT product_id FROM pending_shipment_items
-            WHERE pending_shipment_id = ? AND product_id IS NOT NULL
+            WHERE pending_shipment_id = %s AND product_id IS NOT NULL
         )
         AND (barcode IS NULL OR barcode = '')
     """, (pending_shipment_id, pending_shipment_id))
@@ -5994,7 +6108,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
              AND psi2.barcode IS NOT NULL AND psi2.barcode != ''
              LIMIT 1) as barcode
         FROM pending_shipment_items psi
-        WHERE psi.pending_shipment_id = ?
+        WHERE psi.pending_shipment_id = %s
         AND psi.product_id IS NULL
         AND psi.product_sku IS NOT NULL
         AND psi.product_sku != ''
@@ -6015,7 +6129,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         
         try:
             # Check if product already exists (in case it was just created)
-            cursor.execute("SELECT product_id, barcode FROM inventory WHERE sku = ?", (sku,))
+            cursor.execute("SELECT product_id, barcode FROM inventory WHERE sku = %s", (sku,))
             existing = cursor.fetchone()
             if existing:
                 new_product_id = existing['product_id']
@@ -6023,13 +6137,13 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
                 if (not existing['barcode'] or existing['barcode'].strip() == '') and barcode:
                     cursor.execute("""
                         UPDATE inventory 
-                        SET barcode = ?
-                        WHERE product_id = ?
+                        SET barcode = %s
+                        WHERE product_id = %s
                     """, (barcode, new_product_id))
                 
                 # Extract metadata if product doesn't have it yet
                 try:
-                    cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = ?", (new_product_id,))
+                    cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = %s", (new_product_id,))
                     has_metadata = cursor.fetchone()
                     if not has_metadata:
                         # Product exists but has no metadata - extract it
@@ -6041,7 +6155,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
                 cursor.execute("""
                     INSERT INTO inventory 
                     (product_name, sku, barcode, product_price, product_cost, vendor, vendor_id, current_quantity, category)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL)
                 """, (product_name, sku, barcode, unit_cost, unit_cost, vendor_name, vendor_id))
                 
                 new_product_id = cursor.lastrowid
@@ -6059,9 +6173,9 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             # Update pending_shipment_items with the new product_id
             cursor.execute("""
                 UPDATE pending_shipment_items
-                SET product_id = ?
-                WHERE pending_shipment_id = ?
-                AND product_sku = ?
+                SET product_id = %s
+                WHERE pending_shipment_id = %s
+                AND product_sku = %s
                 AND product_id IS NULL
             """, (new_product_id, pending_shipment_id, sku))
         except Exception as e:
@@ -6078,27 +6192,27 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         (shipment_id, product_id, quantity_received, unit_cost, 
          lot_number, expiration_date, received_by)
         SELECT 
-            ?,
+            %s,
             psi.product_id,
             COALESCE(psi.quantity_verified, 0),
             psi.unit_cost,
             psi.lot_number,
             psi.expiration_date,
-            ?
+            %s
         FROM pending_shipment_items psi
-        WHERE psi.pending_shipment_id = ?
+        WHERE psi.pending_shipment_id = %s
         AND COALESCE(psi.quantity_verified, 0) > 0
         AND psi.product_id IS NOT NULL
         AND NOT EXISTS (
             SELECT 1 FROM approved_shipment_items asi
-            WHERE asi.shipment_id = ? AND asi.product_id = psi.product_id
+            WHERE asi.shipment_id = %s AND asi.product_id = psi.product_id
         )
     """, (approved_shipment_id, employee_id, pending_shipment_id, approved_shipment_id))
     
     # Check verification mode - in auto-add mode, items are already added to inventory
     cursor.execute("""
         SELECT verification_mode FROM pending_shipments
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
     """, (pending_shipment_id,))
     mode_result = cursor.fetchone()
     verification_mode = mode_result['verification_mode'] if mode_result else 'verify_whole_shipment'
@@ -6109,7 +6223,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         cursor.execute("""
             SELECT product_id, SUM(quantity_verified) as total_quantity
             FROM pending_shipment_items
-            WHERE pending_shipment_id = ?
+            WHERE pending_shipment_id = %s
             AND product_id IS NOT NULL
             AND COALESCE(quantity_verified, 0) > 0
             GROUP BY product_id
@@ -6123,29 +6237,29 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             quantity = item['total_quantity']
             cursor.execute("""
                 UPDATE inventory
-                SET current_quantity = current_quantity + ?,
-                    vendor_id = ?,
-                    vendor = ?,
+                SET current_quantity = current_quantity + %s,
+                    vendor_id = %s,
+                    vendor = %s,
                     last_restocked = CURRENT_TIMESTAMP
-                WHERE product_id = ?
+                WHERE product_id = %s
             """, (quantity, vendor_id, vendor_name, product_id))
     
     # Update pending shipment status
     status = 'completed_with_issues' if shipment['issue_count'] > 0 else 'approved'
     cursor.execute("""
         UPDATE pending_shipments
-        SET status = ?,
-            completed_by = ?,
+        SET status = %s,
+            completed_by = %s,
             completed_at = CURRENT_TIMESTAMP,
-            notes = COALESCE(notes || '\n', '') || COALESCE(?, '')
-        WHERE pending_shipment_id = ?
+            notes = COALESCE(notes || '\n', '') || COALESCE(%s, '')
+        WHERE pending_shipment_id = %s
     """, (status, employee_id, notes, pending_shipment_id))
     
     # End any open verification sessions
     cursor.execute("""
         UPDATE verification_sessions
         SET ended_at = CURRENT_TIMESTAMP
-        WHERE pending_shipment_id = ? AND ended_at IS NULL
+        WHERE pending_shipment_id = %s AND ended_at IS NULL
     """, (pending_shipment_id,))
     
     conn.commit()
@@ -6191,7 +6305,7 @@ def get_pending_shipments_with_progress(status: Optional[str] = None) -> List[Di
     """
     
     if status:
-        query += " WHERE ps.status = ?"
+        query += " WHERE ps.status = %s"
         cursor.execute(query + " GROUP BY ps.pending_shipment_id ORDER BY ps.upload_timestamp DESC", 
                      (status,))
     else:
@@ -6217,7 +6331,7 @@ def get_shipment_items(pending_shipment_id: int) -> List[Dict[str, Any]]:
                    ELSE 'not_started'
                END as verification_status
         FROM pending_shipment_items psi
-        WHERE psi.pending_shipment_id = ?
+        WHERE psi.pending_shipment_id = %s
         ORDER BY COALESCE(psi.line_number, psi.pending_item_id)
     """, (pending_shipment_id,))
     
@@ -6322,11 +6436,11 @@ def create_shipment_from_document(
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE pending_shipments
-        SET total_expected_items = ?,
-            total_expected_cost = ?,
-            document_path = ?,
+        SET total_expected_items = %s,
+            total_expected_cost = %s,
+            document_path = %s,
             status = 'pending_review'
-        WHERE pending_shipment_id = ?
+        WHERE pending_shipment_id = %s
     """, (items_added, total_cost, file_path, pending_shipment_id))
     conn.commit()
     conn.close()
@@ -6403,7 +6517,7 @@ def update_store_location_settings(
                 INSERT INTO store_location_settings (
                     store_name, latitude, longitude, address, 
                     allowed_radius_meters, require_location
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s)
             """, (
                 store_name or 'Store',
                 latitude,
@@ -6418,22 +6532,22 @@ def update_store_location_settings(
             params = []
             
             if store_name is not None:
-                updates.append("store_name = ?")
+                updates.append("store_name = %s")
                 params.append(store_name)
             if latitude is not None:
-                updates.append("latitude = ?")
+                updates.append("latitude = %s")
                 params.append(latitude)
             if longitude is not None:
-                updates.append("longitude = ?")
+                updates.append("longitude = %s")
                 params.append(longitude)
             if address is not None:
-                updates.append("address = ?")
+                updates.append("address = %s")
                 params.append(address)
             if allowed_radius_meters is not None:
-                updates.append("allowed_radius_meters = ?")
+                updates.append("allowed_radius_meters = %s")
                 params.append(allowed_radius_meters)
             if require_location is not None:
-                updates.append("require_location = ?")
+                updates.append("require_location = %s")
                 params.append(require_location)
             
             if updates:
@@ -6512,8 +6626,8 @@ def get_customer_rewards_settings() -> Optional[Dict[str, Any]]:
     
     # Create table if it doesn't exist
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS customer_rewards_settings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS customer_rewards_settings (
+            id SERIAL PRIMARY KEY,
             enabled INTEGER DEFAULT 0 CHECK(enabled IN (0, 1)),
             require_email INTEGER DEFAULT 0 CHECK(require_email IN (0, 1)),
             require_phone INTEGER DEFAULT 0 CHECK(require_phone IN (0, 1)),
@@ -6563,7 +6677,7 @@ def update_customer_rewards_settings(**kwargs) -> bool:
         # Create table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS customer_rewards_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
                 enabled INTEGER DEFAULT 0 CHECK(enabled IN (0, 1)),
                 require_email INTEGER DEFAULT 0 CHECK(require_email IN (0, 1)),
                 require_phone INTEGER DEFAULT 0 CHECK(require_phone IN (0, 1)),
@@ -6686,19 +6800,24 @@ def get_payment_settings(store_id: Optional[int] = None) -> Optional[Dict[str, A
     conn = get_connection()
     cursor = conn.cursor()
     
-    if store_id:
-        cursor.execute("""
-            SELECT * FROM payment_settings 
-            WHERE store_id = ?
-            ORDER BY setting_id DESC 
-            LIMIT 1
-        """, (store_id,))
-    else:
-        cursor.execute("""
-            SELECT * FROM payment_settings 
-            ORDER BY setting_id DESC 
-            LIMIT 1
-        """)
+    try:
+        if store_id:
+            cursor.execute("""
+                SELECT * FROM payment_settings 
+                WHERE store_id = %s
+                ORDER BY setting_id DESC 
+                LIMIT 1
+            """, (store_id,))
+        else:
+            cursor.execute("""
+                SELECT * FROM payment_settings 
+                ORDER BY setting_id DESC 
+                LIMIT 1
+            """)
+    except Exception as e:
+        # Table doesn't exist - return None
+        conn.close()
+        return None
     
     row = cursor.fetchone()
     conn.close()
@@ -6726,9 +6845,30 @@ def update_payment_settings(
     cursor = conn.cursor()
     
     try:
+        # Create payment_settings table if it doesn't exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS payment_settings (
+                setting_id SERIAL PRIMARY KEY,
+                store_id INTEGER,
+                payment_processor TEXT DEFAULT 'cash_only',
+                stripe_account_id INTEGER,
+                stripe_credential_id INTEGER,
+                default_currency TEXT DEFAULT 'usd',
+                transaction_fee_rate REAL DEFAULT 0.029,
+                transaction_fee_fixed REAL DEFAULT 0.30,
+                enabled_payment_methods TEXT DEFAULT '["cash"]',
+                require_cvv INTEGER DEFAULT 1 CHECK(require_cvv IN (0, 1)),
+                require_zip INTEGER DEFAULT 0 CHECK(require_zip IN (0, 1)),
+                auto_capture INTEGER DEFAULT 1 CHECK(auto_capture IN (0, 1)),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        
         # Check if settings exist
         if store_id:
-            cursor.execute("SELECT COUNT(*) FROM payment_settings WHERE store_id = ?", (store_id,))
+            cursor.execute("SELECT COUNT(*) FROM payment_settings WHERE store_id = %s", (store_id,))
         else:
             cursor.execute("SELECT COUNT(*) FROM payment_settings")
         count = cursor.fetchone()[0]
@@ -6740,7 +6880,7 @@ def update_payment_settings(
                     store_id, payment_processor, stripe_account_id, stripe_credential_id,
                     default_currency, transaction_fee_rate, transaction_fee_fixed,
                     enabled_payment_methods, require_cvv, require_zip, auto_capture
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 store_id,
                 payment_processor or 'cash_only',
@@ -6760,34 +6900,34 @@ def update_payment_settings(
             params = []
             
             if payment_processor is not None:
-                updates.append("payment_processor = ?")
+                updates.append("payment_processor = %s")
                 params.append(payment_processor)
             if stripe_account_id is not None:
-                updates.append("stripe_account_id = ?")
+                updates.append("stripe_account_id = %s")
                 params.append(stripe_account_id)
             if stripe_credential_id is not None:
-                updates.append("stripe_credential_id = ?")
+                updates.append("stripe_credential_id = %s")
                 params.append(stripe_credential_id)
             if default_currency is not None:
-                updates.append("default_currency = ?")
+                updates.append("default_currency = %s")
                 params.append(default_currency)
             if transaction_fee_rate is not None:
-                updates.append("transaction_fee_rate = ?")
+                updates.append("transaction_fee_rate = %s")
                 params.append(transaction_fee_rate)
             if transaction_fee_fixed is not None:
-                updates.append("transaction_fee_fixed = ?")
+                updates.append("transaction_fee_fixed = %s")
                 params.append(transaction_fee_fixed)
             if enabled_payment_methods is not None:
-                updates.append("enabled_payment_methods = ?")
+                updates.append("enabled_payment_methods = %s")
                 params.append(enabled_payment_methods)
             if require_cvv is not None:
-                updates.append("require_cvv = ?")
+                updates.append("require_cvv = %s")
                 params.append(require_cvv)
             if require_zip is not None:
-                updates.append("require_zip = ?")
+                updates.append("require_zip = %s")
                 params.append(require_zip)
             if auto_capture is not None:
-                updates.append("auto_capture = ?")
+                updates.append("auto_capture = %s")
                 params.append(auto_capture)
             
             if updates:
@@ -6797,7 +6937,7 @@ def update_payment_settings(
                     query = f"""
                         UPDATE payment_settings 
                         SET {', '.join(updates)}
-                        WHERE store_id = ?
+                        WHERE store_id = %s
                     """
                     params.append(store_id)
                 else:
@@ -6835,7 +6975,7 @@ def create_stripe_connect_account(
         cursor.execute("""
             INSERT INTO stripe_accounts (
                 store_id, stripe_account_type, email, country
-            ) VALUES (?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s)
         """, (store_id, account_type, email, country))
         
         account_id = cursor.lastrowid
@@ -6873,40 +7013,40 @@ def update_stripe_connect_account(
         params = []
         
         if stripe_connected_account_id is not None:
-            updates.append("stripe_connected_account_id = ?")
+            updates.append("stripe_connected_account_id = %s")
             params.append(stripe_connected_account_id)
         if stripe_publishable_key is not None:
-            updates.append("stripe_publishable_key = ?")
+            updates.append("stripe_publishable_key = %s")
             params.append(stripe_publishable_key)
         if stripe_access_token_encrypted is not None:
-            updates.append("stripe_access_token_encrypted = ?")
+            updates.append("stripe_access_token_encrypted = %s")
             params.append(stripe_access_token_encrypted)
         if stripe_refresh_token_encrypted is not None:
-            updates.append("stripe_refresh_token_encrypted = ?")
+            updates.append("stripe_refresh_token_encrypted = %s")
             params.append(stripe_refresh_token_encrypted)
         if onboarding_completed is not None:
-            updates.append("onboarding_completed = ?")
+            updates.append("onboarding_completed = %s")
             params.append(onboarding_completed)
         if onboarding_link is not None:
-            updates.append("onboarding_link = ?")
+            updates.append("onboarding_link = %s")
             params.append(onboarding_link)
         if onboarding_link_expires_at is not None:
-            updates.append("onboarding_link_expires_at = ?")
+            updates.append("onboarding_link_expires_at = %s")
             params.append(onboarding_link_expires_at)
         if charges_enabled is not None:
-            updates.append("charges_enabled = ?")
+            updates.append("charges_enabled = %s")
             params.append(charges_enabled)
         if payouts_enabled is not None:
-            updates.append("payouts_enabled = ?")
+            updates.append("payouts_enabled = %s")
             params.append(payouts_enabled)
         if country is not None:
-            updates.append("country = ?")
+            updates.append("country = %s")
             params.append(country)
         if email is not None:
-            updates.append("email = ?")
+            updates.append("email = %s")
             params.append(email)
         if business_type is not None:
-            updates.append("business_type = ?")
+            updates.append("business_type = %s")
             params.append(business_type)
         
         if updates:
@@ -6916,7 +7056,7 @@ def update_stripe_connect_account(
             query = f"""
                 UPDATE stripe_accounts 
                 SET {', '.join(updates)}
-                WHERE stripe_account_id = ?
+                WHERE stripe_account_id = %s
             """
             cursor.execute(query, params)
         
@@ -6936,7 +7076,7 @@ def get_stripe_connect_account(stripe_account_id: int) -> Optional[Dict[str, Any
     
     cursor.execute("""
         SELECT * FROM stripe_accounts 
-        WHERE stripe_account_id = ?
+        WHERE stripe_account_id = %s
     """, (stripe_account_id,))
     
     row = cursor.fetchone()
@@ -6963,7 +7103,7 @@ def create_stripe_credentials(
             INSERT INTO stripe_credentials (
                 store_id, stripe_publishable_key, stripe_secret_key_encrypted,
                 webhook_secret_encrypted, test_mode
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s)
         """, (store_id, stripe_publishable_key, stripe_secret_key_encrypted, 
               webhook_secret_encrypted, test_mode))
         
@@ -6995,19 +7135,19 @@ def update_stripe_credentials(
         params = []
         
         if stripe_publishable_key is not None:
-            updates.append("stripe_publishable_key = ?")
+            updates.append("stripe_publishable_key = %s")
             params.append(stripe_publishable_key)
         if stripe_secret_key_encrypted is not None:
-            updates.append("stripe_secret_key_encrypted = ?")
+            updates.append("stripe_secret_key_encrypted = %s")
             params.append(stripe_secret_key_encrypted)
         if webhook_secret_encrypted is not None:
-            updates.append("webhook_secret_encrypted = ?")
+            updates.append("webhook_secret_encrypted = %s")
             params.append(webhook_secret_encrypted)
         if test_mode is not None:
-            updates.append("test_mode = ?")
+            updates.append("test_mode = %s")
             params.append(test_mode)
         if verified is not None:
-            updates.append("verified = ?")
+            updates.append("verified = %s")
             params.append(verified)
             updates.append("last_verified_at = CURRENT_TIMESTAMP")
         
@@ -7018,7 +7158,7 @@ def update_stripe_credentials(
             query = f"""
                 UPDATE stripe_credentials 
                 SET {', '.join(updates)}
-                WHERE credential_id = ?
+                WHERE credential_id = %s
             """
             cursor.execute(query, params)
         
@@ -7038,7 +7178,7 @@ def get_stripe_credentials(credential_id: int) -> Optional[Dict[str, Any]]:
     
     cursor.execute("""
         SELECT * FROM stripe_credentials 
-        WHERE credential_id = ?
+        WHERE credential_id = %s
     """, (credential_id,))
     
     row = cursor.fetchone()
@@ -7113,30 +7253,20 @@ def get_stripe_config(store_id: Optional[int] = None) -> Optional[Dict[str, Any]
 
 def get_onboarding_status() -> Dict[str, Any]:
     """Get current onboarding status"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
+    conn = None
     try:
-        # Check if table exists first
-        USE_SUPABASE = os.getenv('USE_SUPABASE', 'false').lower() == 'true'
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        if USE_SUPABASE:
-            # PostgreSQL - check if table exists
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = 'store_setup'
-                )
-            """)
-            table_exists = cursor.fetchone()[0]
-        else:
-            # SQLite - check if table exists
-            cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='store_setup'
-            """)
-            table_exists = cursor.fetchone() is not None
+        # Check if table exists (PostgreSQL)
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'store_setup'
+            )
+        """)
+        table_exists = cursor.fetchone()[0]
         
         if not table_exists:
             # Table doesn't exist - onboarding not started
@@ -7183,8 +7313,22 @@ def get_onboarding_status() -> Dict[str, Any]:
             'setup_step': row_dict.get('setup_step', 1),
             'completed_at': row_dict.get('completed_at')
         }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error getting onboarding status: {e}")
+        # Return default status on error
+        return {
+            'setup_completed': False,
+            'setup_step': 1,
+            'completed_at': None
+        }
     finally:
-        conn.close()
+        if conn and not conn.closed:
+            try:
+                conn.close()
+            except:
+                pass
 
 def update_onboarding_step(step: int) -> bool:
     """Update current onboarding step"""
@@ -7195,7 +7339,7 @@ def update_onboarding_step(step: int) -> bool:
         # Create store_setup table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS store_setup (
-                setup_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_id SERIAL PRIMARY KEY,
                 setup_completed INTEGER DEFAULT 0 CHECK(setup_completed IN (0, 1)),
                 setup_step INTEGER DEFAULT 1,
                 completed_at TIMESTAMP,
@@ -7211,12 +7355,12 @@ def update_onboarding_step(step: int) -> bool:
         if count == 0:
             cursor.execute("""
                 INSERT INTO store_setup (setup_step)
-                VALUES (?)
+                VALUES (%s)
             """, (step,))
         else:
             cursor.execute("""
                 UPDATE store_setup 
-                SET setup_step = ?, updated_at = CURRENT_TIMESTAMP
+                SET setup_step = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE setup_id = (SELECT setup_id FROM store_setup ORDER BY setup_id DESC LIMIT 1)
             """, (step,))
         
@@ -7224,12 +7368,18 @@ def update_onboarding_step(step: int) -> bool:
         conn.close()
         return True
     except Exception as e:
-        if conn:
-            conn.rollback()
-            conn.close()
         import traceback
         traceback.print_exc()
         print(f"Error updating onboarding step: {e}")
+        if conn and not conn.closed:
+            try:
+                conn.rollback()
+            except:
+                pass
+            try:
+                conn.close()
+            except:
+                pass
         return False
 
 def complete_onboarding() -> bool:
@@ -7241,7 +7391,7 @@ def complete_onboarding() -> bool:
         # Create store_setup table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS store_setup (
-                setup_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_id SERIAL PRIMARY KEY,
                 setup_completed INTEGER DEFAULT 0 CHECK(setup_completed IN (0, 1)),
                 setup_step INTEGER DEFAULT 1,
                 completed_at TIMESTAMP,
@@ -7298,7 +7448,7 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
         # Create onboarding_progress table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS onboarding_progress (
-                progress_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                progress_id SERIAL PRIMARY KEY,
                 step_name TEXT NOT NULL,
                 completed INTEGER DEFAULT 0,
                 data TEXT,
@@ -7313,7 +7463,7 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
         # Check if progress exists
         cursor.execute("""
             SELECT progress_id FROM onboarding_progress 
-            WHERE step_name = ?
+            WHERE step_name = %s
         """, (step_name,))
         
         existing = cursor.fetchone()
@@ -7333,33 +7483,39 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
                 UPDATE onboarding_progress 
                 SET completed = 1,
                     completed_at = CURRENT_TIMESTAMP,
-                    data = ?,
+                    data = %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE step_name = ?
+                WHERE step_name = %s
             """, (data_json, step_name))
         else:
             # Create new - try INSERT first, fall back to UPDATE if UNIQUE constraint fails
             try:
                 cursor.execute("""
                     INSERT INTO onboarding_progress (step_name, completed, data, completed_at)
-                    VALUES (?, 1, ?, CURRENT_TIMESTAMP)
+                    VALUES (%s, 1, %s, CURRENT_TIMESTAMP)
                 """, (step_name, data_json))
-            except sqlite3.IntegrityError:
-                # UNIQUE constraint violation - update instead
-                cursor.execute("""
-                    UPDATE onboarding_progress 
-                    SET completed = 1,
-                        completed_at = CURRENT_TIMESTAMP,
-                        data = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE step_name = ?
-                """, (data_json, step_name))
+            except Exception as e:
+                # Check if it's an integrity error (unique constraint violation)
+                import psycopg2
+                if isinstance(e, psycopg2.IntegrityError):
+                    # UNIQUE constraint violation - update instead
+                    cursor.execute("""
+                        UPDATE onboarding_progress 
+                        SET completed = 1,
+                            completed_at = CURRENT_TIMESTAMP,
+                            data = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE step_name = %s
+                    """, (data_json, step_name))
         
         conn.commit()
         conn.close()
         return True
     except Exception as e:
-        if conn:
+        import traceback
+        traceback.print_exc()
+        print(f"Error saving onboarding progress: {e}")
+        if conn and not conn.closed:
             try:
                 conn.rollback()
             except:
@@ -7368,31 +7524,45 @@ def save_onboarding_progress(step_name: str, data: Optional[Dict[str, Any]] = No
                 conn.close()
             except:
                 pass
-        import traceback
-        traceback.print_exc()
-        print(f"Error saving onboarding progress: {e}")
         return False
 
 def get_onboarding_progress(step_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Get onboarding progress for a specific step or all steps"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
+    conn = None
     try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
         if step_name:
             cursor.execute("""
                 SELECT * FROM onboarding_progress 
-                WHERE step_name = ?
+                WHERE step_name = %s
             """, (step_name,))
             row = cursor.fetchone()
-            conn.close()
             
             if not row:
+                if conn and not conn.closed:
+                    conn.close()
                 return None
             
-            result = dict(row)
+            # Handle different row formats (tuple vs dict-like)
+            if hasattr(row, 'keys'):
+                result = dict(row)
+            else:
+                try:
+                    column_names = [desc[0] for desc in cursor.description]
+                    result = dict(zip(column_names, row))
+                except Exception:
+                    result = dict(row) if isinstance(row, dict) else {}
+            
             if result.get('data'):
-                result['data'] = json.loads(result['data'])
+                try:
+                    result['data'] = json.loads(result['data'])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    pass
+            
+            if conn and not conn.closed:
+                conn.close()
             return result
         else:
             cursor.execute("""
@@ -7400,19 +7570,44 @@ def get_onboarding_progress(step_name: Optional[str] = None) -> Optional[Dict[st
                 ORDER BY created_at
             """)
             rows = cursor.fetchall()
-            conn.close()
             
             progress = {}
-            for row in rows:
-                step = dict(row)
-                if step.get('data'):
-                    step['data'] = json.loads(step['data'])
-                progress[step['step_name']] = step
+            if rows:
+                try:
+                    column_names = [desc[0] for desc in cursor.description]
+                except Exception:
+                    column_names = None
+                
+                for row in rows:
+                    # Handle different row formats
+                    if hasattr(row, 'keys'):
+                        step = dict(row)
+                    elif column_names:
+                        step = dict(zip(column_names, row))
+                    else:
+                        step = dict(row) if isinstance(row, dict) else {}
+                    
+                    if step.get('data'):
+                        try:
+                            step['data'] = json.loads(step['data'])
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            pass
+                    
+                    if 'step_name' in step:
+                        progress[step['step_name']] = step
             
+            if conn and not conn.closed:
+                conn.close()
             return progress
     except Exception as e:
-        conn.close()
+        if conn and not conn.closed:
+            try:
+                conn.close()
+            except:
+                pass
         print(f"Error getting onboarding progress: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ============================================================================
@@ -7439,7 +7634,7 @@ def open_cash_register(employee_id: int, register_id: int = 1, starting_cash: fl
         # Check if there's an open session for this register
         cursor.execute("""
             SELECT session_id FROM cash_register_sessions
-            WHERE register_id = ? AND status = 'open'
+            WHERE register_id = %s AND status = 'open'
         """, (register_id,))
         
         existing = cursor.fetchone()
@@ -7455,7 +7650,7 @@ def open_cash_register(employee_id: int, register_id: int = 1, starting_cash: fl
         cursor.execute("""
             INSERT INTO cash_register_sessions
             (register_id, employee_id, starting_cash, notes, status)
-            VALUES (?, ?, ?, ?, 'open')
+            VALUES (%s, %s, %s, %s, 'open')
         """, (register_id, employee_id, starting_cash, notes))
         
         session_id = cursor.lastrowid
@@ -7511,7 +7706,7 @@ def close_cash_register(session_id: int, employee_id: int, ending_cash: float, n
         cursor.execute("""
             SELECT register_id, employee_id, starting_cash, opened_at, status
             FROM cash_register_sessions
-            WHERE session_id = ?
+            WHERE session_id = %s
         """, (session_id,))
         
         session = cursor.fetchone()
@@ -7531,7 +7726,7 @@ def close_cash_register(session_id: int, employee_id: int, ending_cash: float, n
                 COALESCE(SUM(CASE WHEN o.payment_method = 'cash' THEN o.total ELSE 0 END), 0) as cash_sales,
                 COALESCE(SUM(CASE WHEN o.payment_method = 'cash' AND o.order_status = 'returned' THEN o.total ELSE 0 END), 0) as cash_refunds
             FROM orders o
-            WHERE o.order_date >= ? AND o.order_date <= datetime('now')
+            WHERE o.order_date >= %s AND o.order_date <= datetime('now')
             AND o.payment_method = 'cash'
         """, (session['opened_at'],))
         
@@ -7545,7 +7740,7 @@ def close_cash_register(session_id: int, employee_id: int, ending_cash: float, n
                 COALESCE(SUM(CASE WHEN transaction_type IN ('cash_in', 'deposit') THEN amount ELSE 0 END), 0) as cash_in,
                 COALESCE(SUM(CASE WHEN transaction_type IN ('cash_out', 'withdrawal') THEN amount ELSE 0 END), 0) as cash_out
             FROM cash_transactions
-            WHERE session_id = ?
+            WHERE session_id = %s
         """, (session_id,))
         
         trans_data = cursor.fetchone()
@@ -7562,17 +7757,17 @@ def close_cash_register(session_id: int, employee_id: int, ending_cash: float, n
         cursor.execute("""
             UPDATE cash_register_sessions
             SET closed_at = CURRENT_TIMESTAMP,
-                closed_by = ?,
-                ending_cash = ?,
-                expected_cash = ?,
-                cash_sales = ?,
-                cash_refunds = ?,
-                cash_in = ?,
-                cash_out = ?,
-                discrepancy = ?,
+                closed_by = %s,
+                ending_cash = %s,
+                expected_cash = %s,
+                cash_sales = %s,
+                cash_refunds = %s,
+                cash_in = %s,
+                cash_out = %s,
+                discrepancy = %s,
                 status = 'closed',
                 notes = COALESCE(notes, '') || CASE WHEN ? IS NOT NULL THEN '\n' || ? ELSE '' END
-            WHERE session_id = ?
+            WHERE session_id = %s
         """, (employee_id, ending_cash, expected_cash, cash_sales, cash_refunds, 
               cash_in, cash_out, discrepancy, notes, notes, session_id))
         
@@ -7640,7 +7835,7 @@ def add_cash_transaction(session_id: int, employee_id: int, transaction_type: st
     try:
         # Verify session is open
         cursor.execute("""
-            SELECT status FROM cash_register_sessions WHERE session_id = ?
+            SELECT status FROM cash_register_sessions WHERE session_id = %s
         """, (session_id,))
         
         session = cursor.fetchone()
@@ -7709,7 +7904,7 @@ def get_register_session(session_id: Optional[int] = None, register_id: Optional
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
+    # PostgreSQL cursor returns dict-like rows
     
     try:
         if session_id:
@@ -7722,7 +7917,7 @@ def get_register_session(session_id: Optional[int] = None, register_id: Optional
                 LEFT JOIN employees e1 ON crs.employee_id = e1.employee_id
                 LEFT JOIN employees e2 ON crs.closed_by = e2.employee_id
                 LEFT JOIN employees e3 ON crs.reconciled_by = e3.employee_id
-                WHERE crs.session_id = ?
+                WHERE crs.session_id = %s
             """, (session_id,))
             
             row = cursor.fetchone()
@@ -7743,11 +7938,11 @@ def get_register_session(session_id: Optional[int] = None, register_id: Optional
             params = []
             
             if register_id:
-                query += " AND crs.register_id = ?"
+                query += " AND crs.register_id = %s"
                 params.append(register_id)
             
             if status:
-                query += " AND crs.status = ?"
+                query += " AND crs.status = %s"
                 params.append(status)
             
             query += " ORDER BY crs.opened_at DESC"
@@ -7776,7 +7971,7 @@ def get_register_summary(session_id: int) -> Dict[str, Any]:
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
+    # PostgreSQL cursor returns dict-like rows
     
     try:
         # Get session
@@ -7790,7 +7985,7 @@ def get_register_summary(session_id: int) -> Dict[str, Any]:
                    e.first_name || ' ' || e.last_name as employee_name
             FROM cash_transactions ct
             JOIN employees e ON ct.employee_id = e.employee_id
-            WHERE ct.session_id = ?
+            WHERE ct.session_id = %s
             ORDER BY ct.transaction_date
         """, (session_id,))
         
@@ -7804,7 +7999,7 @@ def get_register_summary(session_id: int) -> Dict[str, Any]:
                 COALESCE(SUM(CASE WHEN o.order_status = 'voided' THEN o.total ELSE 0 END), 0) as voided_amount
             FROM orders o
             WHERE o.payment_method = 'cash'
-            AND o.order_date >= ? AND o.order_date <= COALESCE(?, datetime('now'))
+            AND o.order_date >= ? AND o.order_date <= COALESCE(%s, datetime('now'))
         """, (session['opened_at'], session.get('closed_at')))
         
         sales_data = dict(cursor.fetchone())
@@ -7843,7 +8038,7 @@ def reconcile_register_session(session_id: int, employee_id: int, notes: Optiona
     try:
         # Check session exists and is closed
         cursor.execute("""
-            SELECT status FROM cash_register_sessions WHERE session_id = ?
+            SELECT status FROM cash_register_sessions WHERE session_id = %s
         """, (session_id,))
         
         session = cursor.fetchone()
@@ -7859,10 +8054,10 @@ def reconcile_register_session(session_id: int, employee_id: int, notes: Optiona
         cursor.execute("""
             UPDATE cash_register_sessions
             SET status = 'reconciled',
-                reconciled_by = ?,
+                reconciled_by = %s,
                 reconciled_at = CURRENT_TIMESTAMP,
                 notes = COALESCE(notes, '') || CASE WHEN ? IS NOT NULL THEN '\nReconciled: ' || ? ELSE '' END
-            WHERE session_id = ?
+            WHERE session_id = %s
         """, (employee_id, notes, notes, session_id))
         
         # Log audit
@@ -7952,7 +8147,7 @@ def save_register_cash_settings(
         # Check if setting exists
         cursor.execute("""
             SELECT setting_id FROM register_cash_settings
-            WHERE register_id = ?
+            WHERE register_id = %s
         """, (register_id,))
         
         existing = cursor.fetchone()
@@ -7961,18 +8156,18 @@ def save_register_cash_settings(
             # Update existing
             cursor.execute("""
                 UPDATE register_cash_settings
-                SET cash_mode = ?,
-                    total_amount = ?,
-                    denominations = ?,
+                SET cash_mode = %s,
+                    total_amount = %s,
+                    denominations = %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE register_id = ?
+                WHERE register_id = %s
             """, (cash_mode, total_amount, denominations_json, register_id))
         else:
             # Insert new
             cursor.execute("""
                 INSERT INTO register_cash_settings
                 (register_id, cash_mode, total_amount, denominations, is_active)
-                VALUES (?, ?, ?, ?, 1)
+                VALUES (%s, %s, %s, %s, 1)
             """, (register_id, cash_mode, total_amount, denominations_json))
         
         conn.commit()
@@ -8005,13 +8200,13 @@ def get_register_cash_settings(register_id: Optional[int] = None) -> Optional[Di
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
+    # PostgreSQL cursor returns dict-like rows
     
     try:
         if register_id:
             cursor.execute("""
                 SELECT * FROM register_cash_settings
-                WHERE register_id = ? AND is_active = 1
+                WHERE register_id = %s AND is_active = 1
             """, (register_id,))
             
             row = cursor.fetchone()
@@ -8110,7 +8305,7 @@ def save_daily_cash_count(
         # Check if count already exists for this date/type
         cursor.execute("""
             SELECT count_id FROM daily_cash_counts
-            WHERE register_id = ? AND count_date = ? AND count_type = ?
+            WHERE register_id = %s AND count_date = %s AND count_type = %s
         """, (register_id, count_date, count_type))
         
         existing = cursor.fetchone()
@@ -8119,12 +8314,12 @@ def save_daily_cash_count(
             # Update existing
             cursor.execute("""
                 UPDATE daily_cash_counts
-                SET total_amount = ?,
-                    denominations = ?,
-                    counted_by = ?,
+                SET total_amount = %s,
+                    denominations = %s,
+                    counted_by = %s,
                     counted_at = CURRENT_TIMESTAMP,
-                    notes = ?
-                WHERE count_id = ?
+                    notes = %s
+                WHERE count_id = %s
             """, (total_amount, denominations_json, employee_id, notes, existing[0]))
             count_id = existing[0]
         else:
@@ -8132,7 +8327,7 @@ def save_daily_cash_count(
             cursor.execute("""
                 INSERT INTO daily_cash_counts
                 (register_id, count_date, count_type, total_amount, denominations, counted_by, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (register_id, count_date, count_type, total_amount, denominations_json, employee_id, notes))
             count_id = cursor.lastrowid
         
@@ -8194,7 +8389,7 @@ def get_daily_cash_counts(
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
+    # PostgreSQL cursor returns dict-like rows
     
     try:
         query = """
@@ -8207,15 +8402,15 @@ def get_daily_cash_counts(
         params = []
         
         if register_id:
-            query += " AND dc.register_id = ?"
+            query += " AND dc.register_id = %s"
             params.append(register_id)
         
         if count_date:
-            query += " AND dc.count_date = ?"
+            query += " AND dc.count_date = %s"
             params.append(count_date)
         
         if count_type:
-            query += " AND dc.count_type = ?"
+            query += " AND dc.count_type = %s"
             params.append(count_type)
         
         if start_date:

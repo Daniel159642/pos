@@ -3,6 +3,14 @@
 Web viewer for inventory database - Google Sheets style interface
 """
 
+import os
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("Warning: python-dotenv not installed. Environment variables must be set manually.")
+
 from flask import Flask, render_template, jsonify, send_from_directory, request, Response
 from werkzeug.utils import secure_filename
 
@@ -5680,10 +5688,112 @@ def api_get_onboarding_status():
     """Get onboarding status"""
     try:
         status = get_onboarding_status()
+        setup_completed = status.get('setup_completed', False)
+        
+        # Always verify that an admin account exists, regardless of setup_completed status
+        conn = None
+        try:
+            conn = get_connection()
+            if conn is None or conn.closed:
+                print("[DEBUG] Invalid connection - skipping admin check")
+                return jsonify({
+                    'success': True,
+                    'setup_completed': setup_completed,
+                    'setup_step': status.get('setup_step', 1)
+                })
+            cursor = conn.cursor()
+            setup_step = status.get('setup_step', 1)
+            
+            # First check if clerk_user_id column exists
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'employees' 
+                AND table_schema = 'public'
+                AND column_name = 'clerk_user_id'
+            """)
+            has_clerk_column = cursor.fetchone() is not None
+            
+            # Check if there's an admin employee (with clerk_user_id check if column exists)
+            if has_clerk_column:
+                # First, let's see what admins exist
+                cursor.execute("""
+                    SELECT employee_id, first_name, last_name, clerk_user_id, active 
+                    FROM employees 
+                    WHERE position = 'admin'
+                """)
+                all_admins = cursor.fetchall()
+                print(f"[DEBUG] All admin employees: {all_admins}")
+                
+                # Check for admin with clerk_user_id (preferred check)
+                cursor.execute("""
+                    SELECT COUNT(*) FROM employees 
+                    WHERE position = 'admin' 
+                    AND clerk_user_id IS NOT NULL 
+                    AND clerk_user_id != ''
+                    AND active = 1
+                """)
+                admin_count = cursor.fetchone()[0]
+                
+                # Also check for ANY admin account (with or without clerk_user_id)
+                cursor.execute("""
+                    SELECT COUNT(*) FROM employees 
+                    WHERE position = 'admin' 
+                    AND active = 1
+                """)
+                any_admin_count = cursor.fetchone()[0]
+            else:
+                # If column doesn't exist, just check for admin position
+                cursor.execute("""
+                    SELECT COUNT(*) FROM employees 
+                    WHERE position = 'admin' 
+                    AND active = 1
+                """)
+                admin_count = cursor.fetchone()[0]
+                any_admin_count = admin_count
+            
+            print(f"[DEBUG] Admin count with active=1 and clerk_user_id: {admin_count}")
+            print(f"[DEBUG] Any admin count with active=1: {any_admin_count}")
+            
+            # Only reset onboarding if:
+            # 1. There's truly no admin account at all (any_admin_count == 0)
+            # 2. AND onboarding wasn't already completed
+            # This prevents resetting onboarding after it's been marked complete
+            if any_admin_count == 0 and not setup_completed:
+                print("[DEBUG] No admin account found and onboarding not completed - resetting onboarding to step 1")
+                setup_completed = False
+                setup_step = 1
+                # Reset the onboarding status in database
+                try:
+                    if conn and not conn.closed:
+                        cursor.execute("""
+                            UPDATE store_setup 
+                            SET setup_completed = 0, setup_step = 1
+                            WHERE setup_id = (SELECT setup_id FROM store_setup ORDER BY setup_id DESC LIMIT 1)
+                        """)
+                        conn.commit()
+                except Exception as reset_err:
+                    print(f"[DEBUG] Could not reset onboarding status: {reset_err}")
+            elif any_admin_count == 0 and setup_completed:
+                # Admin account was deleted after onboarding completed - log warning but don't reset
+                print("[DEBUG] WARNING: Onboarding marked complete but no admin account found. Keeping completion status.")
+        except Exception as admin_check_err:
+            print(f"[DEBUG] Error checking admin account: {admin_check_err}")
+            # Don't reset onboarding if it was already completed - preserve the status
+            # Only reset if onboarding wasn't completed yet
+            if not setup_completed:
+                setup_completed = False
+                setup_step = 1
+            else:
+                print("[DEBUG] Onboarding was already completed - preserving completion status despite admin check error")
+        finally:
+            if conn and not conn.closed:
+                conn.close()
+        
         return jsonify({
             'success': True,
-            'setup_completed': status.get('setup_completed', False),
-            'setup_step': status.get('setup_step', 1)
+            'setup_completed': setup_completed,
+            'setup_step': setup_step
         })
     except Exception as e:
         import traceback
@@ -5918,8 +6028,7 @@ def api_complete_onboarding():
     """Complete onboarding process"""
     conn = None
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Save all settings from onboarding data if provided
@@ -5960,14 +6069,14 @@ def api_complete_onboarding():
                     # Update receipt settings
                     cursor.execute("""
                         UPDATE receipt_settings SET
-                            store_name = ?,
-                            store_address = ?,
-                            store_city = ?,
-                            store_state = ?,
-                            store_zip = ?,
-                            store_phone = ?,
-                            store_email = ?,
-                            store_website = ?,
+                            store_name = %s,
+                            store_address = %s,
+                            store_city = %s,
+                            store_state = %s,
+                            store_zip = %s,
+                            store_phone = %s,
+                            store_email = %s,
+                            store_website = %s,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
                     """, (
@@ -5986,7 +6095,7 @@ def api_complete_onboarding():
                         INSERT INTO receipt_settings (
                             store_name, store_address, store_city, store_state, store_zip,
                             store_phone, store_email, store_website, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """, (
                         store_info.get('store_name', ''),
                         store_info.get('store_address', ''),
@@ -5998,9 +6107,9 @@ def api_complete_onboarding():
                         store_info.get('store_website', '')
                     ))
                 conn.commit()
-            except sqlite3.OperationalError as table_err:
-                # Table doesn't exist - create it
-                print(f"Warning: receipt_settings table doesn't exist: {table_err}")
+            except Exception as table_err:
+                # Table doesn't exist or other error - log and continue
+                print(f"Warning: receipt_settings update failed: {table_err}")
                 # Don't fail the onboarding completion if receipt_settings doesn't exist
                 pass
         
@@ -6014,13 +6123,13 @@ def api_complete_onboarding():
                     if receipt_count > 0:
                         cursor.execute("""
                             UPDATE receipt_settings SET
-                                footer_message = ?,
+                                footer_message = %s,
                                 updated_at = CURRENT_TIMESTAMP
                             WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
                         """, (prefs.get('receipt_footer_message'),))
                         conn.commit()
-                except sqlite3.OperationalError:
-                    # Table doesn't exist - skip
+                except Exception:
+                    # Table doesn't exist or other error - skip
                     pass
         
         if conn:
@@ -6060,13 +6169,11 @@ def api_complete_onboarding():
             clerk_user_id = admin_account.get('clerk_user_id') if admin_account else None
             pin_code = admin_account.get('pin') if admin_account else None
             
-            # Create establishment if using Supabase and Clerk account exists
+            # Create establishment - MANDATORY for Supabase
             establishment_id = None
-            if USE_SUPABASE and clerk_user_id and store_info:
+            if clerk_user_id and store_info:
                 try:
-                    from database_supabase import get_connection, set_current_establishment
-                    
-                    # Check if establishment already exists for this Clerk user
+                    # Check if establishment already exists
                     conn = get_connection()
                     cursor = conn.cursor()
                     
@@ -6074,11 +6181,13 @@ def api_complete_onboarding():
                     cursor.execute("SELECT COUNT(*) FROM establishments")
                     existing_count = cursor.fetchone()[0]
                     
-                    if existing_count == 0 or not store_info.get('store_name'):
+                    if existing_count == 0 and store_info.get('store_name'):
                         # Create new establishment from store info
                         store_name = store_info.get('store_name', 'Store')
                         store_code = store_info.get('store_code') or store_name.lower().replace(' ', '').replace('-', '')[:20]
                         subdomain = store_info.get('subdomain') or store_code
+                        
+                        print(f"[DEBUG] Creating establishment: name={store_name}, code={store_code}")
                         
                         cursor.execute("""
                             INSERT INTO establishments (establishment_name, establishment_code, subdomain)
@@ -6091,6 +6200,134 @@ def api_complete_onboarding():
                         
                         print(f"[DEBUG] ✓ Created establishment during onboarding: ID {establishment_id}, Name: {store_name}")
                         
+                        # Ensure default permissions exist (permissions are shared across establishments)
+                        try:
+                            cursor.execute("SELECT COUNT(*) FROM permissions")
+                            perm_count = cursor.fetchone()[0]
+                            
+                            if perm_count == 0:
+                                print(f"[DEBUG] Permissions table is empty - creating default permissions...")
+                                # Insert all default permissions
+                                default_permissions = [
+                                    # Sales permissions
+                                    ('process_sale', 'sales', 'Process a sale transaction'),
+                                    ('process_return', 'sales', 'Process returns and refunds'),
+                                    ('apply_discount', 'sales', 'Apply discounts to items'),
+                                    ('void_transaction', 'sales', 'Void a transaction'),
+                                    ('view_sales', 'sales', 'View sales transactions'),
+                                    ('edit_sale', 'sales', 'Edit completed sales'),
+                                    
+                                    # Inventory permissions
+                                    ('view_inventory', 'inventory', 'View inventory levels and products'),
+                                    ('add_product', 'inventory', 'Add new products'),
+                                    ('edit_product', 'inventory', 'Edit product information'),
+                                    ('delete_product', 'inventory', 'Delete products'),
+                                    ('adjust_inventory', 'inventory', 'Manually adjust inventory counts'),
+                                    ('receive_shipment', 'inventory', 'Receive and process shipments'),
+                                    ('transfer_inventory', 'inventory', 'Transfer inventory between locations'),
+                                    
+                                    # Employee/User management
+                                    ('view_employees', 'users', 'View employee list'),
+                                    ('add_employee', 'users', 'Add new employees'),
+                                    ('edit_employee', 'users', 'Edit employee information'),
+                                    ('delete_employee', 'users', 'Delete employees'),
+                                    ('manage_permissions', 'users', 'Manage user roles and permissions'),
+                                    ('view_activity_log', 'users', 'View system activity logs'),
+                                    
+                                    # Reports permissions
+                                    ('view_sales_reports', 'reports', 'View sales reports'),
+                                    ('view_inventory_reports', 'reports', 'View inventory reports'),
+                                    ('view_employee_reports', 'reports', 'View employee performance reports'),
+                                    ('view_financial_reports', 'reports', 'View financial reports'),
+                                    ('export_reports', 'reports', 'Export reports to file'),
+                                    
+                                    # Settings permissions
+                                    ('modify_settings', 'settings', 'Modify system settings'),
+                                    ('manage_vendors', 'settings', 'Manage vendor information'),
+                                    ('manage_customers', 'settings', 'Manage customer database'),
+                                    ('backup_database', 'settings', 'Create database backups'),
+                                    ('view_audit_logs', 'settings', 'View system audit logs'),
+                                ]
+                                
+                                for perm_name, category, description in default_permissions:
+                                    try:
+                                        cursor.execute("""
+                                            INSERT INTO permissions (permission_name, permission_category, description)
+                                            VALUES (%s, %s, %s)
+                                            ON CONFLICT (permission_name) DO NOTHING
+                                        """, (perm_name, category, description))
+                                    except Exception:
+                                        # If ON CONFLICT not supported, try INSERT with error handling
+                                        try:
+                                            cursor.execute("""
+                                                INSERT INTO permissions (permission_name, permission_category, description)
+                                                VALUES (%s, %s, %s)
+                                            """, (perm_name, category, description))
+                                        except:
+                                            pass  # Permission already exists
+                                
+                                conn.commit()
+                                print(f"[DEBUG] ✓ Created {len(default_permissions)} default permissions")
+                            else:
+                                print(f"[DEBUG] Permissions already exist ({perm_count} permissions)")
+                        except Exception as perm_init_err:
+                            print(f"[DEBUG] Warning: Could not initialize permissions: {perm_init_err}")
+                        
+                        # Create default roles for this establishment
+                        try:
+                            cursor.execute("""
+                                INSERT INTO roles (establishment_id, role_name, description, is_system_role) VALUES
+                                (%s, 'Admin', 'Full system administrator', 1),
+                                (%s, 'Manager', 'Store manager with elevated permissions', 1),
+                                (%s, 'Cashier', 'Point of sale operator', 1),
+                                (%s, 'Inventory Manager', 'Manages inventory and shipments', 1)
+                            """, (establishment_id, establishment_id, establishment_id, establishment_id))
+                            conn.commit()
+                            print(f"[DEBUG] ✓ Created default roles for establishment {establishment_id}")
+                            
+                            # Get Admin role_id and assign ALL permissions to it
+                            cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Admin' AND establishment_id = %s", (establishment_id,))
+                            admin_role_row = cursor.fetchone()
+                            if admin_role_row:
+                                admin_role_id = admin_role_row[0] if isinstance(admin_role_row, (tuple, list)) else admin_role_row.get('role_id') if isinstance(admin_role_row, dict) else None
+                                
+                                # Get all available permissions
+                                cursor.execute("SELECT permission_id FROM permissions")
+                                all_permissions = cursor.fetchall()
+                                
+                                if not all_permissions:
+                                    print(f"[DEBUG] WARNING: Permissions table is empty! No permissions to assign to Admin role.")
+                                else:
+                                    print(f"[DEBUG] Found {len(all_permissions)} permissions to assign to Admin role")
+                                
+                                if all_permissions and admin_role_id:
+                                    # Assign all permissions to Admin role
+                                    for perm_row in all_permissions:
+                                        permission_id = perm_row[0] if isinstance(perm_row, (tuple, list)) else perm_row.get('permission_id') if isinstance(perm_row, dict) else None
+                                        if permission_id:
+                                            try:
+                                                cursor.execute("""
+                                                    INSERT INTO role_permissions (role_id, permission_id, granted)
+                                                    VALUES (%s, %s, 1)
+                                                    ON CONFLICT (role_id, permission_id) DO UPDATE SET granted = 1
+                                                """, (admin_role_id, permission_id))
+                                            except Exception as perm_err:
+                                                # Permission might already exist or table might not have ON CONFLICT
+                                                try:
+                                                    cursor.execute("""
+                                                        INSERT INTO role_permissions (role_id, permission_id, granted)
+                                                        VALUES (%s, %s, 1)
+                                                    """, (admin_role_id, permission_id))
+                                                except:
+                                                    pass
+                                    
+                                    conn.commit()
+                                    print(f"[DEBUG] ✓ Assigned all permissions to Admin role (role_id: {admin_role_id})")
+                        except Exception as role_err:
+                            print(f"[DEBUG] Warning: Could not create roles: {role_err}")
+                            import traceback
+                            traceback.print_exc()
+                        
                         # Set establishment context
                         set_current_establishment(establishment_id)
                     else:
@@ -6099,30 +6336,50 @@ def api_complete_onboarding():
                         result = cursor.fetchone()
                         establishment_id = result[0] if result else None
                         if establishment_id:
+                            print(f"[DEBUG] Using existing establishment: ID {establishment_id}")
                             set_current_establishment(establishment_id)
+                        else:
+                            print(f"[DEBUG] ERROR: No establishments found and no store info to create one")
                     
                     cursor.close()
                     conn.close()
                 except Exception as est_err:
-                    print(f"[DEBUG] Warning: Failed to create establishment: {est_err}")
-                    import traceback
+                    print(f"[DEBUG] ERROR: Failed to create/get establishment: {est_err}")
                     traceback.print_exc()
+                    # Don't continue if establishment creation fails
+                    if conn:
+                        try:
+                            conn.close()
+                        except:
+                            pass
+            else:
+                print(f"[DEBUG] Cannot create establishment: clerk_user_id={clerk_user_id}, has_store_info={bool(store_info)}")
+            
+            # Verify establishment exists before continuing
+            if not establishment_id:
+                print(f"[DEBUG] ERROR: No establishment_id available. Cannot create admin account.")
+                print(f"[DEBUG] This usually means onboarding data is missing or establishment creation failed.")
             
             # Check if admin account already exists
-            conn = sqlite3.connect(DB_NAME) if not USE_SUPABASE else get_connection()
+            conn = get_connection()
             cursor = conn.cursor()
             
-            if USE_SUPABASE:
+            if USE_SUPABASE and establishment_id:
                 cursor.execute("SELECT COUNT(*) FROM employees WHERE position = 'admin' AND establishment_id = %s", (establishment_id,))
             else:
                 cursor.execute("SELECT COUNT(*) FROM employees WHERE position = 'admin'")
-            admin_count = cursor.fetchone()[0]
+            admin_result = cursor.fetchone()
+            admin_count = admin_result[0] if admin_result else 0
             conn.close()
             
             if admin_count == 0:
                 print("[DEBUG] No admin account found, creating from onboarding data...")
                 
-                if store_info and (store_info.get('store_email') or clerk_user_id):
+                # Verify we have an establishment before creating admin
+                if not establishment_id:
+                    print(f"[DEBUG] ERROR: Cannot create admin account without establishment_id")
+                    print(f"[DEBUG] Onboarding will complete but without admin account.")
+                elif store_info and (store_info.get('store_email') or clerk_user_id):
                     store_email = store_info.get('store_email', '')
                     store_name = store_info.get('store_name', 'Store')
                     
@@ -6131,22 +6388,28 @@ def api_complete_onboarding():
                     last_name = 'User' if len(name_parts) <= 1 else ' '.join(name_parts[1:])
                     employee_code = 'ADMIN001'
                     
-                    # Get Admin role_id
-                    conn = sqlite3.connect(DB_NAME) if not USE_SUPABASE else get_connection()
+                    # Get Admin role_id - MUST filter by establishment_id since roles are establishment-specific
+                    conn = get_connection()
                     cursor = conn.cursor()
-                    if USE_SUPABASE:
-                        cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Admin' LIMIT 1")
+                    if establishment_id:
+                        cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Admin' AND establishment_id = %s LIMIT 1", (establishment_id,))
                     else:
-                        cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Admin'")
+                        cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Admin' LIMIT 1")
                     admin_role = cursor.fetchone()
-                    admin_role_id = admin_role[0] if admin_role else None
+                    if admin_role:
+                        admin_role_id = admin_role[0] if isinstance(admin_role, (tuple, list)) else (dict(admin_role).get('role_id') if hasattr(admin_role, '__getitem__') else None)
+                        print(f"[DEBUG] Found Admin role_id: {admin_role_id} for establishment {establishment_id}")
+                    else:
+                        admin_role_id = None
+                        print(f"[DEBUG] WARNING: No Admin role found for establishment {establishment_id}")
                     conn.close()
                     
                     print(f"[DEBUG] Creating admin account: email={store_email}, clerk_user_id={clerk_user_id}, pin={'***' if pin_code else None}, role_id={admin_role_id}, establishment_id={establishment_id}")
                     
-                    # Set establishment context before creating employee
-                    if USE_SUPABASE and establishment_id:
+                    # Set establishment context before creating employee (should already be set, but ensure)
+                    if establishment_id:
                         set_current_establishment(establishment_id)
+                        print(f"[DEBUG] Establishment context set to: {establishment_id}")
                     
                     admin_id = add_employee(
                         employee_code=employee_code,
@@ -6162,9 +6425,51 @@ def api_complete_onboarding():
                         role_id=admin_role_id
                     )
                     print(f"[DEBUG] ✓ Admin account created successfully during onboarding completion: ID {admin_id}")
+                    
+                    # VERIFY admin account was created correctly with role and permissions
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    try:
+                        # Verify employee has role_id set
+                        cursor.execute("SELECT employee_id, role_id, position, active FROM employees WHERE employee_id = %s", (admin_id,))
+                        emp_row = cursor.fetchone()
+                        if emp_row:
+                            emp_role_id = emp_row[1] if isinstance(emp_row, (tuple, list)) else emp_row.get('role_id')
+                            emp_position = emp_row[2] if isinstance(emp_row, (tuple, list)) else emp_row.get('position')
+                            emp_active = emp_row[3] if isinstance(emp_row, (tuple, list)) else emp_row.get('active')
+                            print(f"[DEBUG] ✓ VERIFICATION: Admin employee_id={admin_id}, role_id={emp_role_id}, position={emp_position}, active={emp_active}")
+                            
+                            # Verify role exists
+                            if emp_role_id:
+                                cursor.execute("SELECT role_name, role_id FROM roles WHERE role_id = %s", (emp_role_id,))
+                                role_row = cursor.fetchone()
+                                if role_row:
+                                    role_name = role_row[0] if isinstance(role_row, (tuple, list)) else role_row.get('role_name')
+                                    print(f"[DEBUG] ✓ VERIFICATION: Admin has role: {role_name} (role_id: {emp_role_id})")
+                                else:
+                                    print(f"[DEBUG] ERROR: Role with role_id={emp_role_id} does not exist!")
+                            
+                            # Verify permissions are assigned to this role
+                            if emp_role_id:
+                                cursor.execute("SELECT COUNT(*) FROM role_permissions WHERE role_id = %s AND granted = 1", (emp_role_id,))
+                                perm_count = cursor.fetchone()[0]
+                                print(f"[DEBUG] ✓ VERIFICATION: Admin role has {perm_count} permissions assigned")
+                                if perm_count == 0:
+                                    print(f"[DEBUG] ERROR: Admin role has NO permissions! This is why admin account doesn't work!")
+                            else:
+                                print(f"[DEBUG] ERROR: Admin employee has no role_id! This is why admin account doesn't work!")
+                        else:
+                            print(f"[DEBUG] ERROR: Could not find admin employee after creation!")
+                    except Exception as verify_err:
+                        print(f"[DEBUG] Error verifying admin account: {verify_err}")
+                        import traceback
+                        traceback.print_exc()
+                    finally:
+                        conn.close()
+                else:
+                    print(f"[DEBUG] ERROR: Missing store_info or clerk_user_id to create admin account")
         except Exception as admin_err:
             print(f"[DEBUG] Warning: Failed to create admin account during onboarding completion: {admin_err}")
-            import traceback
             traceback.print_exc()
             # Don't fail onboarding completion if admin creation fails
         

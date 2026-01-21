@@ -3,27 +3,24 @@
 Role-Based Access Control (RBAC) Permission Manager
 """
 
-import sqlite3
 import hashlib
 import secrets
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from functools import wraps
-from database import get_connection, DB_NAME
+from database import get_connection
 
 
 class PermissionManager:
     """Manages roles, permissions, and access control"""
     
     def __init__(self):
-        self.db_name = DB_NAME
+        pass
     
     def get_connection(self):
         """Get database connection"""
-        conn = sqlite3.connect(self.db_name)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return get_connection()
     
     def has_permission(self, employee_id: int, permission_name: str) -> bool:
         """
@@ -37,43 +34,44 @@ class PermissionManager:
             # Get employee's role_id
             cursor.execute("""
                 SELECT role_id FROM employees
-                WHERE employee_id = ? AND active = 1
+                WHERE employee_id = %s AND active = 1
             """, (employee_id,))
             
             role_result = cursor.fetchone()
             if not role_result:
                 return False
             
-            role_id = role_result[0]
+            role_id = role_result[0] if isinstance(role_result, tuple) else role_result['role_id']
             if role_id is None:
                 return False
             
             # Get permission_id
             cursor.execute("""
                 SELECT permission_id FROM permissions
-                WHERE permission_name = ?
+                WHERE permission_name = %s
             """, (permission_name,))
             
             perm_result = cursor.fetchone()
             if not perm_result:
                 return False
             
-            permission_id = perm_result[0]
+            permission_id = perm_result[0] if isinstance(perm_result, tuple) else perm_result['permission_id']
             
             # Check for employee-specific override first
             cursor.execute("""
                 SELECT granted FROM employee_permission_overrides
-                WHERE employee_id = ? AND permission_id = ?
+                WHERE employee_id = %s AND permission_id = %s
             """, (employee_id, permission_id))
             
             override = cursor.fetchone()
             if override:
-                return bool(override[0])
+                granted = override[0] if isinstance(override, tuple) else override['granted']
+                return bool(granted)
             
             # Check role permissions
             cursor.execute("""
                 SELECT granted FROM role_permissions
-                WHERE role_id = ? AND permission_id = ? AND granted = 1
+                WHERE role_id = %s AND permission_id = %s AND granted = 1
             """, (role_id, permission_id))
             
             role_perm = cursor.fetchone()
@@ -87,21 +85,24 @@ class PermissionManager:
         Get all permissions for an employee, grouped by category
         Returns dict with category as key and list of permissions as value
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
+        conn = None
         try:
+            conn = self.get_connection()
+            if conn is None or conn.closed:
+                return {}
+            
+            cursor = conn.cursor()
+            
             # Get employee's role
             cursor.execute("""
                 SELECT role_id FROM employees
-                WHERE employee_id = ? AND active = 1
+                WHERE employee_id = %s AND active = 1
             """, (employee_id,))
             
             role_result = cursor.fetchone()
-            if not role_result or role_result[0] is None:
+            role_id = role_result[0] if isinstance(role_result, tuple) else (role_result.get('role_id') if role_result else None)
+            if not role_result or role_id is None:
                 return {}
-            
-            role_id = role_result[0]
             
             # Get all permissions with role and override status
             cursor.execute("""
@@ -116,32 +117,65 @@ class PermissionManager:
                     END as granted
                 FROM permissions p
                 LEFT JOIN role_permissions rp 
-                    ON p.permission_id = rp.permission_id AND rp.role_id = ?
+                    ON p.permission_id = rp.permission_id AND rp.role_id = %s
                 LEFT JOIN employee_permission_overrides epo 
                     ON p.permission_id = epo.permission_id 
-                    AND epo.employee_id = ?
+                    AND epo.employee_id = %s
                 WHERE epo.granted = 1 OR rp.granted = 1
                 ORDER BY p.permission_category, p.permission_name
             """, (role_id, employee_id))
             
-            permissions = cursor.fetchall()
+            rows = cursor.fetchall()
+            
+            if rows is None:
+                return {}
+            
+            # Handle both dict-like rows (RealDictRow) and tuple rows
+            permissions = []
+            for row in rows:
+                if hasattr(row, '_asdict'):
+                    # Named tuple
+                    permissions.append(dict(row._asdict()))
+                elif isinstance(row, dict):
+                    permissions.append(row)
+                else:
+                    # Try to convert to dict
+                    try:
+                        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                        if column_names:
+                            permissions.append(dict(zip(column_names, row)))
+                        else:
+                            permissions.append(dict(row) if isinstance(row, dict) else {})
+                    except (TypeError, ValueError):
+                        # Fallback: create dict from row items if possible
+                        if hasattr(row, '__iter__') and not isinstance(row, str):
+                            permissions.append(dict(row))
+                        else:
+                            # Last resort: convert to dict manually
+                            permissions.append({str(i): val for i, val in enumerate(row)})
             
             # Group by category
             grouped = {}
             for perm in permissions:
-                if perm['granted']:
-                    category = perm['permission_category'] or 'other'
+                if perm.get('granted'):
+                    category = perm.get('permission_category') or 'other'
                     if category not in grouped:
                         grouped[category] = []
                     grouped[category].append({
-                        'name': perm['permission_name'],
-                        'description': perm['description'] or perm['permission_name']
+                        'name': perm.get('permission_name'),
+                        'description': perm.get('description') or perm.get('permission_name')
                     })
             
             return grouped
             
+        except Exception as e:
+            print(f"Error in get_employee_permissions: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
         finally:
-            conn.close()
+            if conn and not conn.closed:
+                conn.close()
     
     def grant_permission_to_employee(self, employee_id: int, permission_name: str,
                                     granted_by: int, reason: Optional[str] = None) -> bool:
@@ -153,24 +187,24 @@ class PermissionManager:
             # Get permission_id
             cursor.execute("""
                 SELECT permission_id FROM permissions
-                WHERE permission_name = ?
+                WHERE permission_name = %s
             """, (permission_name,))
             
             result = cursor.fetchone()
             if not result:
                 return False
             
-            permission_id = result[0]
+            permission_id = result[0] if isinstance(result, tuple) else result['permission_id']
             
             # Insert or update override
             cursor.execute("""
                 INSERT INTO employee_permission_overrides
                 (employee_id, permission_id, granted, reason, created_by)
-                VALUES (?, ?, 1, ?, ?)
+                VALUES (%s, %s, 1, %s, %s)
                 ON CONFLICT(employee_id, permission_id) DO UPDATE SET
                     granted = 1,
-                    reason = ?,
-                    created_by = ?,
+                    reason = %s,
+                    created_by = %s,
                     created_at = CURRENT_TIMESTAMP
             """, (employee_id, permission_id, reason, granted_by, reason, granted_by))
             
@@ -203,24 +237,24 @@ class PermissionManager:
             # Get permission_id
             cursor.execute("""
                 SELECT permission_id FROM permissions
-                WHERE permission_name = ?
+                WHERE permission_name = %s
             """, (permission_name,))
             
             result = cursor.fetchone()
             if not result:
                 return False
             
-            permission_id = result[0]
+            permission_id = result[0] if isinstance(result, tuple) else result['permission_id']
             
             # Insert or update override
             cursor.execute("""
                 INSERT INTO employee_permission_overrides
                 (employee_id, permission_id, granted, reason, created_by)
-                VALUES (?, ?, 0, ?, ?)
+                VALUES (%s, %s, 0, %s, %s)
                 ON CONFLICT(employee_id, permission_id) DO UPDATE SET
                     granted = 0,
-                    reason = ?,
-                    created_by = ?,
+                    reason = %s,
+                    created_by = %s,
                     created_at = CURRENT_TIMESTAMP
             """, (employee_id, permission_id, reason, revoked_by, reason, revoked_by))
             
@@ -253,7 +287,7 @@ class PermissionManager:
             cursor.execute("""
                 INSERT INTO activity_log
                 (employee_id, action, resource_type, resource_id, details, ip_address)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """, (employee_id, action, resource_type, resource_id, details, ip_address))
             
             conn.commit()
@@ -270,20 +304,20 @@ class PermissionManager:
         try:
             if employee_id:
                 cursor.execute("""
-                    SELECT al.*, e.first_name || ' ' || e.last_name as employee_name
+                    SELECT al.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name
                     FROM activity_log al
                     LEFT JOIN employees e ON al.employee_id = e.employee_id
-                    WHERE al.employee_id = ?
+                    WHERE al.employee_id = %s
                     ORDER BY al.created_at DESC
-                    LIMIT ?
+                    LIMIT %s
                 """, (employee_id, limit))
             else:
                 cursor.execute("""
-                    SELECT al.*, e.first_name || ' ' || e.last_name as employee_name
+                    SELECT al.*, CONCAT(e.first_name, ' ', e.last_name) as employee_name
                     FROM activity_log al
                     LEFT JOIN employees e ON al.employee_id = e.employee_id
                     ORDER BY al.created_at DESC
-                    LIMIT ?
+                    LIMIT %s
                 """, (limit,))
             
             rows = cursor.fetchall()
@@ -299,8 +333,8 @@ class PermissionManager:
         try:
             cursor.execute("""
                 UPDATE employees
-                SET role_id = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE employee_id = ?
+                SET role_id = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE employee_id = %s
             """, (role_id, employee_id))
             
             conn.commit()
@@ -412,14 +446,3 @@ def require_permission(permission_name: str):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
-
-
-
-
-
-
-
-
-
-
-

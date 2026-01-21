@@ -73,6 +73,7 @@ barcode_images/*.png
 !frontend/public/**/*.png
 
 # Test files
+test_*.pdf
 test_*.xlsx
 test_*.csv
 
