@@ -6226,38 +6226,45 @@ def api_accounting_accounts():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        # Get accounts with balances
-        cursor.execute("""
-            SELECT 
-                a.id,
-                a.account_number,
-                a.account_name,
-                a.account_type,
-                a.sub_type,
-                a.balance_type,
-                a.is_active,
-                COALESCE(calculate_account_balance(a.id, CURRENT_DATE), 0) as balance
-            FROM accounts a
-            WHERE a.is_active = true
-            ORDER BY a.account_type, a.account_number
-        """)
-        
-        rows = cursor.fetchall()
-        accounts = []
-        for row in rows:
-            accounts.append({
-                'id': row['id'],
-                'account_number': row['account_number'],
-                'account_name': row['account_name'],
-                'account_type': row['account_type'],
-                'sub_type': row['sub_type'],
-                'balance_type': row['balance_type'],
-                'is_active': row['is_active'],
-                'balance': float(row['balance']) if row['balance'] else 0.0
-            })
-        
-        cursor.close()
-        return jsonify(accounts), 200
+        try:
+            # Get accounts with balances
+            cursor.execute("""
+                SELECT 
+                    a.id,
+                    a.account_number,
+                    a.account_name,
+                    a.account_type,
+                    a.sub_type,
+                    a.balance_type,
+                    a.is_active,
+                    COALESCE(calculate_account_balance(a.id, CURRENT_DATE), 0) as balance
+                FROM accounts a
+                WHERE a.is_active = true
+                ORDER BY a.account_type, a.account_number
+            """)
+            
+            rows = cursor.fetchall()
+            accounts = []
+            for row in rows:
+                accounts.append({
+                    'id': row['id'],
+                    'account_number': row['account_number'],
+                    'account_name': row['account_name'],
+                    'account_type': row['account_type'],
+                    'sub_type': row['sub_type'],
+                    'balance_type': row['balance_type'],
+                    'is_active': row['is_active'],
+                    'balance': float(row['balance']) if row['balance'] else 0.0
+                })
+            
+            return jsonify(accounts), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_accounts: {db_error}")
+            # Return empty array instead of error
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_accounts: {e}")
@@ -6282,25 +6289,31 @@ def api_accounting_trial_balance():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        if as_of_date:
-            cursor.execute("SELECT * FROM get_trial_balance(%s)", (as_of_date,))
-        else:
-            cursor.execute("SELECT * FROM get_trial_balance(CURRENT_DATE)")
-        
-        rows = cursor.fetchall()
-        trial_balance = []
-        for row in rows:
-            trial_balance.append({
-                'account_id': row['account_id'],
-                'account_number': row['account_number'],
-                'account_name': row['account_name'],
-                'account_type': row['account_type'],
-                'debit_balance': float(row['debit_balance']) if row['debit_balance'] else 0.0,
-                'credit_balance': float(row['credit_balance']) if row['credit_balance'] else 0.0
-            })
-        
-        cursor.close()
-        return jsonify(trial_balance), 200
+        try:
+            if as_of_date:
+                cursor.execute("SELECT * FROM get_trial_balance(%s)", (as_of_date,))
+            else:
+                cursor.execute("SELECT * FROM get_trial_balance(CURRENT_DATE)")
+            
+            rows = cursor.fetchall()
+            trial_balance = []
+            for row in rows:
+                trial_balance.append({
+                    'account_id': row['account_id'],
+                    'account_number': row['account_number'],
+                    'account_name': row['account_name'],
+                    'account_type': row['account_type'],
+                    'debit_balance': float(row['debit_balance']) if row['debit_balance'] else 0.0,
+                    'credit_balance': float(row['credit_balance']) if row['credit_balance'] else 0.0
+                })
+            
+            return jsonify(trial_balance), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_trial_balance: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_trial_balance: {e}")
@@ -6324,19 +6337,25 @@ def api_accounting_profit_loss():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        cursor.execute("SELECT * FROM get_profit_and_loss(%s, %s)", (start_date, end_date))
-        
-        rows = cursor.fetchall()
-        pnl = []
-        for row in rows:
-            pnl.append({
-                'account_type': row['account_type'],
-                'account_name': row['account_name'],
-                'amount': float(row['amount']) if row['amount'] else 0.0
-            })
-        
-        cursor.close()
-        return jsonify(pnl), 200
+        try:
+            cursor.execute("SELECT * FROM get_profit_and_loss(%s, %s)", (start_date, end_date))
+            
+            rows = cursor.fetchall()
+            pnl = []
+            for row in rows:
+                pnl.append({
+                    'account_type': row['account_type'],
+                    'account_name': row['account_name'],
+                    'amount': float(row['amount']) if row['amount'] else 0.0
+                })
+            
+            return jsonify(pnl), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_profit_loss: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_profit_loss: {e}")
@@ -6356,22 +6375,28 @@ def api_accounting_balance_sheet():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        if as_of_date:
-            cursor.execute("SELECT * FROM get_balance_sheet(%s)", (as_of_date,))
-        else:
-            cursor.execute("SELECT * FROM get_balance_sheet(CURRENT_DATE)")
-        
-        rows = cursor.fetchall()
-        balance_sheet = []
-        for row in rows:
-            balance_sheet.append({
-                'account_type': row['account_type'],
-                'account_name': row['account_name'],
-                'amount': float(row['amount']) if row['amount'] else 0.0
-            })
-        
-        cursor.close()
-        return jsonify(balance_sheet), 200
+        try:
+            if as_of_date:
+                cursor.execute("SELECT * FROM get_balance_sheet(%s)", (as_of_date,))
+            else:
+                cursor.execute("SELECT * FROM get_balance_sheet(CURRENT_DATE)")
+            
+            rows = cursor.fetchall()
+            balance_sheet = []
+            for row in rows:
+                balance_sheet.append({
+                    'account_type': row['account_type'],
+                    'account_name': row['account_name'],
+                    'amount': float(row['amount']) if row['amount'] else 0.0
+                })
+            
+            return jsonify(balance_sheet), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_balance_sheet: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_balance_sheet: {e}")
@@ -6392,33 +6417,39 @@ def api_accounting_aging():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        if as_of_date:
-            if customer_id:
-                cursor.execute("SELECT * FROM get_aging_report(%s, %s)", (as_of_date, int(customer_id)))
+        try:
+            if as_of_date:
+                if customer_id:
+                    cursor.execute("SELECT * FROM get_aging_report(%s, %s)", (as_of_date, int(customer_id)))
+                else:
+                    cursor.execute("SELECT * FROM get_aging_report(%s, NULL)", (as_of_date,))
             else:
-                cursor.execute("SELECT * FROM get_aging_report(%s, NULL)", (as_of_date,))
-        else:
-            if customer_id:
-                cursor.execute("SELECT * FROM get_aging_report(CURRENT_DATE, %s)", (int(customer_id),))
-            else:
-                cursor.execute("SELECT * FROM get_aging_report(CURRENT_DATE, NULL)")
-        
-        rows = cursor.fetchall()
-        aging = []
-        for row in rows:
-            aging.append({
-                'customer_id': row['customer_id'],
-                'customer_name': row['customer_name'],
-                'current_balance': float(row['current_balance']) if row['current_balance'] else 0.0,
-                'days_0_30': float(row['days_0_30']) if row['days_0_30'] else 0.0,
-                'days_31_60': float(row['days_31_60']) if row['days_31_60'] else 0.0,
-                'days_61_90': float(row['days_61_90']) if row['days_61_90'] else 0.0,
-                'days_over_90': float(row['days_over_90']) if row['days_over_90'] else 0.0,
-                'total_balance': float(row['total_balance']) if row['total_balance'] else 0.0
-            })
-        
-        cursor.close()
-        return jsonify(aging), 200
+                if customer_id:
+                    cursor.execute("SELECT * FROM get_aging_report(CURRENT_DATE, %s)", (int(customer_id),))
+                else:
+                    cursor.execute("SELECT * FROM get_aging_report(CURRENT_DATE, NULL)")
+            
+            rows = cursor.fetchall()
+            aging = []
+            for row in rows:
+                aging.append({
+                    'customer_id': row['customer_id'],
+                    'customer_name': row['customer_name'],
+                    'current_balance': float(row['current_balance']) if row['current_balance'] else 0.0,
+                    'days_0_30': float(row['days_0_30']) if row['days_0_30'] else 0.0,
+                    'days_31_60': float(row['days_31_60']) if row['days_31_60'] else 0.0,
+                    'days_61_90': float(row['days_61_90']) if row['days_61_90'] else 0.0,
+                    'days_over_90': float(row['days_over_90']) if row['days_over_90'] else 0.0,
+                    'total_balance': float(row['total_balance']) if row['total_balance'] else 0.0
+                })
+            
+            return jsonify(aging), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_aging: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_aging: {e}")
@@ -6439,47 +6470,53 @@ def api_accounting_transactions():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        query = """
-            SELECT 
-                id,
-                transaction_number,
-                transaction_date,
-                transaction_type,
-                description,
-                is_posted,
-                is_void,
-                created_at
-            FROM transactions
-            WHERE 1=1
-        """
-        params = []
-        
-        if start_date:
-            query += " AND transaction_date >= %s"
-            params.append(start_date)
-        if end_date:
-            query += " AND transaction_date <= %s"
-            params.append(end_date)
-        
-        query += " ORDER BY transaction_date DESC, id DESC LIMIT 100"
-        
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        transactions = []
-        for row in rows:
-            transactions.append({
-                'id': row['id'],
-                'transaction_number': row['transaction_number'],
-                'transaction_date': row['transaction_date'].isoformat() if row['transaction_date'] else None,
-                'transaction_type': row['transaction_type'],
-                'description': row['description'],
-                'is_posted': row['is_posted'],
-                'is_void': row['is_void'],
-                'created_at': row['created_at'].isoformat() if row['created_at'] else None
-            })
-        
-        cursor.close()
-        return jsonify(transactions), 200
+        try:
+            query = """
+                SELECT 
+                    id,
+                    transaction_number,
+                    transaction_date,
+                    transaction_type,
+                    description,
+                    is_posted,
+                    is_void,
+                    created_at
+                FROM transactions
+                WHERE 1=1
+            """
+            params = []
+            
+            if start_date:
+                query += " AND transaction_date >= %s"
+                params.append(start_date)
+            if end_date:
+                query += " AND transaction_date <= %s"
+                params.append(end_date)
+            
+            query += " ORDER BY transaction_date DESC, id DESC LIMIT 100"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            transactions = []
+            for row in rows:
+                transactions.append({
+                    'id': row['id'],
+                    'transaction_number': row['transaction_number'],
+                    'transaction_date': row['transaction_date'].isoformat() if row['transaction_date'] else None,
+                    'transaction_type': row['transaction_type'],
+                    'description': row['description'],
+                    'is_posted': row['is_posted'],
+                    'is_void': row['is_void'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                })
+            
+            return jsonify(transactions), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_transactions: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_transactions: {e}")
@@ -6500,50 +6537,56 @@ def api_accounting_invoices():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        query = """
-            SELECT 
-                i.id,
-                i.invoice_number,
-                i.invoice_date,
-                i.due_date,
-                i.status,
-                i.total_amount,
-                i.amount_paid,
-                i.balance_due,
-                c.display_name as customer_name
-            FROM invoices i
-            LEFT JOIN accounting_customers c ON i.customer_id = c.id
-            WHERE 1=1
-        """
-        params = []
-        
-        if start_date:
-            query += " AND i.invoice_date >= %s"
-            params.append(start_date)
-        if end_date:
-            query += " AND i.invoice_date <= %s"
-            params.append(end_date)
-        
-        query += " ORDER BY i.invoice_date DESC, i.id DESC LIMIT 100"
-        
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        invoices = []
-        for row in rows:
-            invoices.append({
-                'id': row['id'],
-                'invoice_number': row['invoice_number'],
-                'invoice_date': row['invoice_date'].isoformat() if row['invoice_date'] else None,
-                'due_date': row['due_date'].isoformat() if row['due_date'] else None,
-                'status': row['status'],
-                'total_amount': float(row['total_amount']) if row['total_amount'] else 0.0,
-                'amount_paid': float(row['amount_paid']) if row['amount_paid'] else 0.0,
-                'balance_due': float(row['balance_due']) if row['balance_due'] else 0.0,
-                'customer_name': row['customer_name']
-            })
-        
-        cursor.close()
-        return jsonify(invoices), 200
+        try:
+            query = """
+                SELECT 
+                    i.id,
+                    i.invoice_number,
+                    i.invoice_date,
+                    i.due_date,
+                    i.status,
+                    i.total_amount,
+                    i.amount_paid,
+                    i.balance_due,
+                    c.display_name as customer_name
+                FROM invoices i
+                LEFT JOIN accounting_customers c ON i.customer_id = c.id
+                WHERE 1=1
+            """
+            params = []
+            
+            if start_date:
+                query += " AND i.invoice_date >= %s"
+                params.append(start_date)
+            if end_date:
+                query += " AND i.invoice_date <= %s"
+                params.append(end_date)
+            
+            query += " ORDER BY i.invoice_date DESC, i.id DESC LIMIT 100"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            invoices = []
+            for row in rows:
+                invoices.append({
+                    'id': row['id'],
+                    'invoice_number': row['invoice_number'],
+                    'invoice_date': row['invoice_date'].isoformat() if row['invoice_date'] else None,
+                    'due_date': row['due_date'].isoformat() if row['due_date'] else None,
+                    'status': row['status'],
+                    'total_amount': float(row['total_amount']) if row['total_amount'] else 0.0,
+                    'amount_paid': float(row['amount_paid']) if row['amount_paid'] else 0.0,
+                    'balance_due': float(row['balance_due']) if row['balance_due'] else 0.0,
+                    'customer_name': row['customer_name']
+                })
+            
+            return jsonify(invoices), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_invoices: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_invoices: {e}")
@@ -6564,50 +6607,56 @@ def api_accounting_bills():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        query = """
-            SELECT 
-                b.id,
-                b.bill_number,
-                b.bill_date,
-                b.due_date,
-                b.status,
-                b.total_amount,
-                b.amount_paid,
-                b.balance_due,
-                v.vendor_name
-            FROM bills b
-            LEFT JOIN accounting_vendors v ON b.vendor_id = v.id
-            WHERE 1=1
-        """
-        params = []
-        
-        if start_date:
-            query += " AND b.bill_date >= %s"
-            params.append(start_date)
-        if end_date:
-            query += " AND b.bill_date <= %s"
-            params.append(end_date)
-        
-        query += " ORDER BY b.bill_date DESC, b.id DESC LIMIT 100"
-        
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        bills = []
-        for row in rows:
-            bills.append({
-                'id': row['id'],
-                'bill_number': row['bill_number'],
-                'bill_date': row['bill_date'].isoformat() if row['bill_date'] else None,
-                'due_date': row['due_date'].isoformat() if row['due_date'] else None,
-                'status': row['status'],
-                'total_amount': float(row['total_amount']) if row['total_amount'] else 0.0,
-                'amount_paid': float(row['amount_paid']) if row['amount_paid'] else 0.0,
-                'balance_due': float(row['balance_due']) if row['balance_due'] else 0.0,
-                'vendor_name': row['vendor_name']
-            })
-        
-        cursor.close()
-        return jsonify(bills), 200
+        try:
+            query = """
+                SELECT 
+                    b.id,
+                    b.bill_number,
+                    b.bill_date,
+                    b.due_date,
+                    b.status,
+                    b.total_amount,
+                    b.amount_paid,
+                    b.balance_due,
+                    v.vendor_name
+                FROM bills b
+                LEFT JOIN accounting_vendors v ON b.vendor_id = v.id
+                WHERE 1=1
+            """
+            params = []
+            
+            if start_date:
+                query += " AND b.bill_date >= %s"
+                params.append(start_date)
+            if end_date:
+                query += " AND b.bill_date <= %s"
+                params.append(end_date)
+            
+            query += " ORDER BY b.bill_date DESC, b.id DESC LIMIT 100"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            bills = []
+            for row in rows:
+                bills.append({
+                    'id': row['id'],
+                    'bill_number': row['bill_number'],
+                    'bill_date': row['bill_date'].isoformat() if row['bill_date'] else None,
+                    'due_date': row['due_date'].isoformat() if row['due_date'] else None,
+                    'status': row['status'],
+                    'total_amount': float(row['total_amount']) if row['total_amount'] else 0.0,
+                    'amount_paid': float(row['amount_paid']) if row['amount_paid'] else 0.0,
+                    'balance_due': float(row['balance_due']) if row['balance_due'] else 0.0,
+                    'vendor_name': row['vendor_name']
+                })
+            
+            return jsonify(bills), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_bills: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_bills: {e}")
@@ -6625,36 +6674,42 @@ def api_accounting_customers():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        cursor.execute("""
-            SELECT 
-                id,
-                customer_number,
-                display_name,
-                email,
-                phone,
-                account_balance,
-                is_active
-            FROM accounting_customers
-            WHERE is_active = true
-            ORDER BY display_name
-            LIMIT 100
-        """)
-        
-        rows = cursor.fetchall()
-        customers = []
-        for row in rows:
-            customers.append({
-                'id': row['id'],
-                'customer_number': row['customer_number'],
-                'display_name': row['display_name'],
-                'email': row['email'],
-                'phone': row['phone'],
-                'account_balance': float(row['account_balance']) if row['account_balance'] else 0.0,
-                'is_active': row['is_active']
-            })
-        
-        cursor.close()
-        return jsonify(customers), 200
+        try:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    customer_number,
+                    display_name,
+                    email,
+                    phone,
+                    account_balance,
+                    is_active
+                FROM accounting_customers
+                WHERE is_active = true
+                ORDER BY display_name
+                LIMIT 100
+            """)
+            
+            rows = cursor.fetchall()
+            customers = []
+            for row in rows:
+                customers.append({
+                    'id': row['id'],
+                    'customer_number': row['customer_number'],
+                    'display_name': row['display_name'],
+                    'email': row['email'],
+                    'phone': row['phone'],
+                    'account_balance': float(row['account_balance']) if row['account_balance'] else 0.0,
+                    'is_active': row['is_active']
+                })
+            
+            return jsonify(customers), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_customers: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_customers: {e}")
@@ -6672,36 +6727,42 @@ def api_accounting_vendors():
         from database_postgres import get_cursor
         cursor = get_cursor()
         
-        cursor.execute("""
-            SELECT 
-                id,
-                vendor_number,
-                vendor_name,
-                email,
-                phone,
-                account_balance,
-                is_active
-            FROM accounting_vendors
-            WHERE is_active = true
-            ORDER BY vendor_name
-            LIMIT 100
-        """)
-        
-        rows = cursor.fetchall()
-        vendors = []
-        for row in rows:
-            vendors.append({
-                'id': row['id'],
-                'vendor_number': row['vendor_number'],
-                'vendor_name': row['vendor_name'],
-                'email': row['email'],
-                'phone': row['phone'],
-                'account_balance': float(row['account_balance']) if row['account_balance'] else 0.0,
-                'is_active': row['is_active']
-            })
-        
-        cursor.close()
-        return jsonify(vendors), 200
+        try:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    vendor_number,
+                    vendor_name,
+                    email,
+                    phone,
+                    account_balance,
+                    is_active
+                FROM accounting_vendors
+                WHERE is_active = true
+                ORDER BY vendor_name
+                LIMIT 100
+            """)
+            
+            rows = cursor.fetchall()
+            vendors = []
+            for row in rows:
+                vendors.append({
+                    'id': row['id'],
+                    'vendor_number': row['vendor_number'],
+                    'vendor_name': row['vendor_name'],
+                    'email': row['email'],
+                    'phone': row['phone'],
+                    'account_balance': float(row['account_balance']) if row['account_balance'] else 0.0,
+                    'is_active': row['is_active']
+                })
+            
+            return jsonify(vendors), 200
+        except Exception as db_error:
+            print(f"Database error in api_accounting_vendors: {db_error}")
+            return jsonify([]), 200
+        finally:
+            if cursor:
+                cursor.close()
         
     except Exception as e:
         print(f"Error in api_accounting_vendors: {e}")
