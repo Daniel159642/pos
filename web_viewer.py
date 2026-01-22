@@ -6197,6 +6197,549 @@ def api_daily_cash_count():
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
+# ============================================================================
+# ACCOUNTING API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/accounting/accounts', methods=['GET'])
+def api_accounting_accounts():
+    """Get all accounts from chart of accounts"""
+    try:
+        # Verify session
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        # Get accounts with balances
+        cursor.execute("""
+            SELECT 
+                a.id,
+                a.account_number,
+                a.account_name,
+                a.account_type,
+                a.sub_type,
+                a.balance_type,
+                a.is_active,
+                COALESCE(calculate_account_balance(a.id, CURRENT_DATE), 0) as balance
+            FROM accounts a
+            WHERE a.is_active = true
+            ORDER BY a.account_type, a.account_number
+        """)
+        
+        rows = cursor.fetchall()
+        accounts = []
+        for row in rows:
+            accounts.append({
+                'id': row['id'],
+                'account_number': row['account_number'],
+                'account_name': row['account_name'],
+                'account_type': row['account_type'],
+                'sub_type': row['sub_type'],
+                'balance_type': row['balance_type'],
+                'is_active': row['is_active'],
+                'balance': float(row['balance']) if row['balance'] else 0.0
+            })
+        
+        cursor.close()
+        return jsonify(accounts), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_accounts: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/trial-balance', methods=['GET'])
+def api_accounting_trial_balance():
+    """Get trial balance report"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        as_of_date = request.args.get('as_of_date', None)
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        if as_of_date:
+            cursor.execute("SELECT * FROM get_trial_balance(%s)", (as_of_date,))
+        else:
+            cursor.execute("SELECT * FROM get_trial_balance(CURRENT_DATE)")
+        
+        rows = cursor.fetchall()
+        trial_balance = []
+        for row in rows:
+            trial_balance.append({
+                'account_id': row['account_id'],
+                'account_number': row['account_number'],
+                'account_name': row['account_name'],
+                'account_type': row['account_type'],
+                'debit_balance': float(row['debit_balance']) if row['debit_balance'] else 0.0,
+                'credit_balance': float(row['credit_balance']) if row['credit_balance'] else 0.0
+            })
+        
+        cursor.close()
+        return jsonify(trial_balance), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_trial_balance: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/profit-loss', methods=['GET'])
+def api_accounting_profit_loss():
+    """Get profit & loss (income statement) report"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        if not start_date or not end_date:
+            return jsonify({'error': 'start_date and end_date required'}), 400
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        cursor.execute("SELECT * FROM get_profit_and_loss(%s, %s)", (start_date, end_date))
+        
+        rows = cursor.fetchall()
+        pnl = []
+        for row in rows:
+            pnl.append({
+                'account_type': row['account_type'],
+                'account_name': row['account_name'],
+                'amount': float(row['amount']) if row['amount'] else 0.0
+            })
+        
+        cursor.close()
+        return jsonify(pnl), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_profit_loss: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/balance-sheet', methods=['GET'])
+def api_accounting_balance_sheet():
+    """Get balance sheet report"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        as_of_date = request.args.get('as_of_date', None)
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        if as_of_date:
+            cursor.execute("SELECT * FROM get_balance_sheet(%s)", (as_of_date,))
+        else:
+            cursor.execute("SELECT * FROM get_balance_sheet(CURRENT_DATE)")
+        
+        rows = cursor.fetchall()
+        balance_sheet = []
+        for row in rows:
+            balance_sheet.append({
+                'account_type': row['account_type'],
+                'account_name': row['account_name'],
+                'amount': float(row['amount']) if row['amount'] else 0.0
+            })
+        
+        cursor.close()
+        return jsonify(balance_sheet), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_balance_sheet: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/aging', methods=['GET'])
+def api_accounting_aging():
+    """Get accounts receivable aging report"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        as_of_date = request.args.get('as_of_date', None)
+        customer_id = request.args.get('customer_id', None)
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        if as_of_date:
+            if customer_id:
+                cursor.execute("SELECT * FROM get_aging_report(%s, %s)", (as_of_date, int(customer_id)))
+            else:
+                cursor.execute("SELECT * FROM get_aging_report(%s, NULL)", (as_of_date,))
+        else:
+            if customer_id:
+                cursor.execute("SELECT * FROM get_aging_report(CURRENT_DATE, %s)", (int(customer_id),))
+            else:
+                cursor.execute("SELECT * FROM get_aging_report(CURRENT_DATE, NULL)")
+        
+        rows = cursor.fetchall()
+        aging = []
+        for row in rows:
+            aging.append({
+                'customer_id': row['customer_id'],
+                'customer_name': row['customer_name'],
+                'current_balance': float(row['current_balance']) if row['current_balance'] else 0.0,
+                'days_0_30': float(row['days_0_30']) if row['days_0_30'] else 0.0,
+                'days_31_60': float(row['days_31_60']) if row['days_31_60'] else 0.0,
+                'days_61_90': float(row['days_61_90']) if row['days_61_90'] else 0.0,
+                'days_over_90': float(row['days_over_90']) if row['days_over_90'] else 0.0,
+                'total_balance': float(row['total_balance']) if row['total_balance'] else 0.0
+            })
+        
+        cursor.close()
+        return jsonify(aging), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_aging: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/transactions', methods=['GET'])
+def api_accounting_transactions():
+    """Get transactions (journal entries)"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        query = """
+            SELECT 
+                id,
+                transaction_number,
+                transaction_date,
+                transaction_type,
+                description,
+                is_posted,
+                is_void,
+                created_at
+            FROM transactions
+            WHERE 1=1
+        """
+        params = []
+        
+        if start_date:
+            query += " AND transaction_date >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND transaction_date <= %s"
+            params.append(end_date)
+        
+        query += " ORDER BY transaction_date DESC, id DESC LIMIT 100"
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        transactions = []
+        for row in rows:
+            transactions.append({
+                'id': row['id'],
+                'transaction_number': row['transaction_number'],
+                'transaction_date': row['transaction_date'].isoformat() if row['transaction_date'] else None,
+                'transaction_type': row['transaction_type'],
+                'description': row['description'],
+                'is_posted': row['is_posted'],
+                'is_void': row['is_void'],
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None
+            })
+        
+        cursor.close()
+        return jsonify(transactions), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_transactions: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/invoices', methods=['GET'])
+def api_accounting_invoices():
+    """Get invoices"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        query = """
+            SELECT 
+                i.id,
+                i.invoice_number,
+                i.invoice_date,
+                i.due_date,
+                i.status,
+                i.total_amount,
+                i.amount_paid,
+                i.balance_due,
+                c.display_name as customer_name
+            FROM invoices i
+            LEFT JOIN accounting_customers c ON i.customer_id = c.id
+            WHERE 1=1
+        """
+        params = []
+        
+        if start_date:
+            query += " AND i.invoice_date >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND i.invoice_date <= %s"
+            params.append(end_date)
+        
+        query += " ORDER BY i.invoice_date DESC, i.id DESC LIMIT 100"
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        invoices = []
+        for row in rows:
+            invoices.append({
+                'id': row['id'],
+                'invoice_number': row['invoice_number'],
+                'invoice_date': row['invoice_date'].isoformat() if row['invoice_date'] else None,
+                'due_date': row['due_date'].isoformat() if row['due_date'] else None,
+                'status': row['status'],
+                'total_amount': float(row['total_amount']) if row['total_amount'] else 0.0,
+                'amount_paid': float(row['amount_paid']) if row['amount_paid'] else 0.0,
+                'balance_due': float(row['balance_due']) if row['balance_due'] else 0.0,
+                'customer_name': row['customer_name']
+            })
+        
+        cursor.close()
+        return jsonify(invoices), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_invoices: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/bills', methods=['GET'])
+def api_accounting_bills():
+    """Get vendor bills"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        query = """
+            SELECT 
+                b.id,
+                b.bill_number,
+                b.bill_date,
+                b.due_date,
+                b.status,
+                b.total_amount,
+                b.amount_paid,
+                b.balance_due,
+                v.vendor_name
+            FROM bills b
+            LEFT JOIN accounting_vendors v ON b.vendor_id = v.id
+            WHERE 1=1
+        """
+        params = []
+        
+        if start_date:
+            query += " AND b.bill_date >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND b.bill_date <= %s"
+            params.append(end_date)
+        
+        query += " ORDER BY b.bill_date DESC, b.id DESC LIMIT 100"
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        bills = []
+        for row in rows:
+            bills.append({
+                'id': row['id'],
+                'bill_number': row['bill_number'],
+                'bill_date': row['bill_date'].isoformat() if row['bill_date'] else None,
+                'due_date': row['due_date'].isoformat() if row['due_date'] else None,
+                'status': row['status'],
+                'total_amount': float(row['total_amount']) if row['total_amount'] else 0.0,
+                'amount_paid': float(row['amount_paid']) if row['amount_paid'] else 0.0,
+                'balance_due': float(row['balance_due']) if row['balance_due'] else 0.0,
+                'vendor_name': row['vendor_name']
+            })
+        
+        cursor.close()
+        return jsonify(bills), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_bills: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/customers', methods=['GET'])
+def api_accounting_customers():
+    """Get accounting customers"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        cursor.execute("""
+            SELECT 
+                id,
+                customer_number,
+                display_name,
+                email,
+                phone,
+                account_balance,
+                is_active
+            FROM accounting_customers
+            WHERE is_active = true
+            ORDER BY display_name
+            LIMIT 100
+        """)
+        
+        rows = cursor.fetchall()
+        customers = []
+        for row in rows:
+            customers.append({
+                'id': row['id'],
+                'customer_number': row['customer_number'],
+                'display_name': row['display_name'],
+                'email': row['email'],
+                'phone': row['phone'],
+                'account_balance': float(row['account_balance']) if row['account_balance'] else 0.0,
+                'is_active': row['is_active']
+            })
+        
+        cursor.close()
+        return jsonify(customers), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_customers: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accounting/vendors', methods=['GET'])
+def api_accounting_vendors():
+    """Get accounting vendors"""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        from database_postgres import get_cursor
+        cursor = get_cursor()
+        
+        cursor.execute("""
+            SELECT 
+                id,
+                vendor_number,
+                vendor_name,
+                email,
+                phone,
+                account_balance,
+                is_active
+            FROM accounting_vendors
+            WHERE is_active = true
+            ORDER BY vendor_name
+            LIMIT 100
+        """)
+        
+        rows = cursor.fetchall()
+        vendors = []
+        for row in rows:
+            vendors.append({
+                'id': row['id'],
+                'vendor_number': row['vendor_number'],
+                'vendor_name': row['vendor_name'],
+                'email': row['email'],
+                'phone': row['phone'],
+                'account_balance': float(row['account_balance']) if row['account_balance'] else 0.0,
+                'is_active': row['is_active']
+            })
+        
+        cursor.close()
+        return jsonify(vendors), 200
+        
+    except Exception as e:
+        print(f"Error in api_accounting_vendors: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     print("Starting web viewer...")
     print("Open your browser to: http://localhost:5001")
