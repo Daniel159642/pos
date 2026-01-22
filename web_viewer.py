@@ -6198,9 +6198,139 @@ def api_daily_cash_count():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 # ============================================================================
-# ACCOUNTING API ENDPOINTS
+# ACCOUNTING API ENDPOINTS - Using new backend structure
 # ============================================================================
 
+# Import backend modules
+try:
+    from backend.controllers.account_controller import account_controller
+    from backend.middleware.validators import validate_account_create, validate_account_update, validate_account_id
+    from backend.middleware.error_handler import handle_error, AppError
+    BACKEND_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Backend modules not available: {e}")
+    BACKEND_AVAILABLE = False
+
+# Chart of Accounts API Routes
+@app.route('/api/v1/accounts', methods=['GET'])
+def api_v1_accounts():
+    """Get all accounts - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.get_all_accounts()
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        # Fallback to old endpoint
+        return api_accounting_accounts()
+
+@app.route('/api/v1/accounts', methods=['POST'])
+def api_v1_accounts_create():
+    """Create new account - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.create_account()
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/<int:account_id>', methods=['GET'])
+def api_v1_accounts_get(account_id):
+    """Get account by ID - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.get_account_by_id(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/<int:account_id>', methods=['PUT'])
+def api_v1_accounts_update(account_id):
+    """Update account - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.update_account(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/<int:account_id>', methods=['DELETE'])
+def api_v1_accounts_delete(account_id):
+    """Delete account - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.delete_account(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/<int:account_id>/children', methods=['GET'])
+def api_v1_accounts_children(account_id):
+    """Get child accounts - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.get_account_children(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/tree', methods=['GET'])
+def api_v1_accounts_tree():
+    """Get account tree - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.get_account_tree()
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/<int:account_id>/balance', methods=['GET'])
+def api_v1_accounts_balance(account_id):
+    """Get account balance - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.get_account_balance(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/accounts/<int:account_id>/toggle-status', methods=['PATCH'])
+def api_v1_accounts_toggle_status(account_id):
+    """Toggle account status - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return account_controller.toggle_account_status(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+# Legacy endpoint (for backward compatibility)
 @app.route('/api/accounting/accounts', methods=['GET'])
 def api_accounting_accounts():
     """Get all accounts from chart of accounts"""
@@ -6770,9 +6900,23 @@ def api_accounting_vendors():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+# Register error handlers for backend
+if BACKEND_AVAILABLE:
+    @app.errorhandler(AppError)
+    def handle_app_error(error):
+        """Handle AppError exceptions"""
+        return handle_error(error)
+    
+    @app.errorhandler(Exception)
+    def handle_generic_error(error):
+        """Handle all other exceptions"""
+        return handle_error(error)
+
 if __name__ == '__main__':
     print("Starting web viewer...")
     print("Open your browser to: http://localhost:5001")
+    if BACKEND_AVAILABLE:
+        print("✅ Backend API modules loaded")
     if SOCKETIO_AVAILABLE and socketio:
         print("Socket.IO enabled - real-time features available")
         socketio.run(app, debug=True, host='0.0.0.0', port=5001, allow_unsafe_werkzeug=True)
