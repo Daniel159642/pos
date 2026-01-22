@@ -65,15 +65,23 @@ def run_migration():
                 
                 # Execute SQL (split by semicolons for better error reporting)
                 # But be careful with functions/triggers that contain semicolons
-                if 'FUNCTION' in sql or 'TRIGGER' in sql:
+                if 'FUNCTION' in sql or 'TRIGGER' in sql or 'CREATE OR REPLACE' in sql:
                     # Execute as single block for functions/triggers
                     cursor.execute(sql)
                 else:
-                    # Split and execute statements
+                    # Split and execute statements, handling errors gracefully
                     statements = [s.strip() for s in sql.split(';') if s.strip() and not s.strip().startswith('--')]
                     for statement in statements:
                         if statement:
-                            cursor.execute(statement)
+                            try:
+                                cursor.execute(statement)
+                            except Exception as e:
+                                # Ignore "already exists" errors for CREATE statements
+                                error_msg = str(e).lower()
+                                if 'already exists' in error_msg or 'duplicate' in error_msg:
+                                    print(f"   ⚠️  Skipping (already exists): {statement[:50]}...")
+                                else:
+                                    raise
                 
                 conn.commit()
                 print(f"✅ {description} completed successfully\n")
