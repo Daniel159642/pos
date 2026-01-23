@@ -120,13 +120,14 @@ class ReportService:
         total_debits = sum(entry.get('debit_amount', 0) or 0 for entry in ledger)
         total_credits = sum(entry.get('credit_amount', 0) or 0 for entry in ledger)
         
-        # For revenue accounts (credit balance), credits increase balance
-        # For expense/COGS accounts (debit balance), debits increase balance
+        # For revenue accounts (credit balance type), credits increase balance (positive)
+        # For expense/COGS accounts (debit balance type), debits increase balance (positive for expenses)
         if balance_type == 'credit':
-            # Revenue accounts: credits are positive
+            # Revenue accounts: credits are positive (income)
             return total_credits - total_debits
         else:
             # Expense/COGS accounts: debits are positive (expenses)
+            # Return as positive value for expenses
             return total_debits - total_credits
     
     @staticmethod
