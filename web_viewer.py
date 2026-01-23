@@ -6204,7 +6204,9 @@ def api_daily_cash_count():
 # Import backend modules
 try:
     from backend.controllers.account_controller import account_controller
+    from backend.controllers.transaction_controller import transaction_controller
     from backend.middleware.validators import validate_account_create, validate_account_update, validate_account_id
+    from backend.middleware.validators import validate_transaction_create, validate_transaction_update, validate_transaction_id
     from backend.middleware.error_handler import handle_error, AppError
     BACKEND_AVAILABLE = True
 except ImportError as e:
@@ -6323,6 +6325,140 @@ def api_v1_accounts_toggle_status(account_id):
     if BACKEND_AVAILABLE:
         try:
             return account_controller.toggle_account_status(account_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+# ============================================================================
+# TRANSACTION API ENDPOINTS - Using new backend structure
+# ============================================================================
+
+@app.route('/api/v1/transactions', methods=['GET'])
+def api_v1_transactions():
+    """Get all transactions - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.get_all_transactions()
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions', methods=['POST'])
+def api_v1_transactions_create():
+    """Create new transaction - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.create_transaction()
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/<int:transaction_id>', methods=['GET'])
+def api_v1_transactions_get(transaction_id):
+    """Get transaction by ID - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.get_transaction_by_id(transaction_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/<int:transaction_id>', methods=['PUT'])
+def api_v1_transactions_update(transaction_id):
+    """Update transaction - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.update_transaction(transaction_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/<int:transaction_id>', methods=['DELETE'])
+def api_v1_transactions_delete(transaction_id):
+    """Delete transaction - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.delete_transaction(transaction_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/<int:transaction_id>/post', methods=['POST'])
+def api_v1_transactions_post(transaction_id):
+    """Post transaction - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.post_transaction(transaction_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/<int:transaction_id>/unpost', methods=['POST'])
+def api_v1_transactions_unpost(transaction_id):
+    """Unpost transaction - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.unpost_transaction(transaction_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/<int:transaction_id>/void', methods=['POST'])
+def api_v1_transactions_void(transaction_id):
+    """Void transaction - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.void_transaction(transaction_id)
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/general-ledger', methods=['GET'])
+def api_v1_transactions_general_ledger():
+    """Get general ledger - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.get_general_ledger()
+        except AppError as e:
+            return handle_error(e)
+        except Exception as e:
+            return handle_error(e)
+    else:
+        return jsonify({'success': False, 'message': 'Backend not available'}), 500
+
+@app.route('/api/v1/transactions/account-ledger/<int:account_id>', methods=['GET'])
+def api_v1_transactions_account_ledger(account_id):
+    """Get account ledger - New backend API"""
+    if BACKEND_AVAILABLE:
+        try:
+            return transaction_controller.get_account_ledger(account_id)
         except AppError as e:
             return handle_error(e)
         except Exception as e:
