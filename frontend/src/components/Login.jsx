@@ -10,6 +10,7 @@ function Login({ onLogin }) {
   const [loading, setLoading] = useState(false)
   const [employees, setEmployees] = useState([])
   const [loadingEmployees, setLoadingEmployees] = useState(true)
+  const [employeesError, setEmployeesError] = useState('')
 
   const hexToRgb = (hex) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
@@ -22,12 +23,32 @@ function Login({ onLogin }) {
   }, [])
 
   const fetchEmployees = async () => {
+    setEmployeesError('')
     try {
       const response = await fetch('/api/employees')
-      const data = await response.json()
-      setEmployees(data.data || [])
+      const text = await response.text()
+      let data = null
+      try {
+        data = text ? JSON.parse(text) : null
+      } catch {
+        console.error('Error fetching employees: invalid JSON', { status: response.status, text: text.slice(0, 200) })
+        setEmployeesError(response.ok ? 'Invalid response from server.' : `Server error (${response.status}). Check that the backend is running.`)
+        setEmployees([])
+        setLoadingEmployees(false)
+        return
+      }
+      if (!response.ok) {
+        const msg = data?.error || data?.message || `Server error (${response.status})`
+        setEmployeesError(msg)
+        setEmployees([])
+        setLoadingEmployees(false)
+        return
+      }
+      setEmployees(data?.data ?? [])
     } catch (err) {
       console.error('Error fetching employees:', err)
+      setEmployeesError('Could not load employees. Check that the backend server is running.')
+      setEmployees([])
     } finally {
       setLoadingEmployees(false)
     }
@@ -137,6 +158,21 @@ function Login({ onLogin }) {
         </p>
 
         <form onSubmit={handleSubmit}>
+          {employeesError && (
+            <div
+              style={{
+                marginBottom: '16px',
+                padding: '12px',
+                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.4)',
+                color: 'var(--text-primary)',
+                fontSize: '14px'
+              }}
+            >
+              {employeesError}
+            </div>
+          )}
           <div style={{ marginBottom: '20px' }}>
             <select
               value={employeeCode}
@@ -171,7 +207,10 @@ function Login({ onLogin }) {
                 {loadingEmployees ? 'Loading employees...' : 'Select an employee...'}
               </option>
               {employees.map((emp) => (
-                <option key={emp.employee_id} value={emp.username || emp.employee_code}>
+                <option
+                  key={emp.employee_id}
+                  value={emp.username || emp.employee_code || String(emp.employee_id)}
+                >
                   {emp.first_name} {emp.last_name}{' '}
                   {emp.username ? `(${emp.username})` : emp.employee_code ? `(${emp.employee_code})` : ''}
                 </option>

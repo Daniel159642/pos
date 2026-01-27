@@ -2144,18 +2144,18 @@ def get_employee(employee_id: int) -> Optional[Dict[str, Any]]:
 
 def list_employees(active_only: bool = True) -> List[Dict[str, Any]]:
     """List all employees with tip summaries"""
-    conn = None
     try:
         from database_postgres import get_cursor
-        cursor = get_cursor()  # Use get_cursor which returns RealDictCursor
-        conn = cursor.connection
-        
+
+        cursor = get_cursor()
+        # Do NOT close the shared Postgres connection; it is reused by other requests.
+
         # Check if employee_tips table exists
         cursor.execute("""
             SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
         """)
         has_tips_table = cursor.fetchone() is not None
-        
+
         if active_only:
             if has_tips_table:
                 cursor.execute("""
@@ -2200,38 +2200,44 @@ def list_employees(active_only: bool = True) -> List[Dict[str, Any]]:
         
         # RealDictRow from psycopg2 is already dict-like, convert to regular dict for JSON serialization
         from datetime import date, datetime
+
         result = []
         for row in rows:
             if isinstance(row, dict):
-                # RealDictRow is a dict subclass - convert to regular dict
-                # Also convert date/datetime objects to strings for JSON serialization
                 row_dict = {}
                 for k, v in row.items():
-                    if isinstance(v, (date, datetime)):
-                        row_dict[k] = v.isoformat()
-                    else:
-                        row_dict[k] = v
+                    row_dict[k] = _json_safe_value(v)
                 result.append(row_dict)
             else:
-                # Fallback for other types
                 row_dict = {}
                 for k in (row.keys() if hasattr(row, 'keys') else range(len(row))):
-                    v = row[k]
-                    if isinstance(v, (date, datetime)):
-                        row_dict[k] = v.isoformat()
-                    else:
-                        row_dict[k] = v
+                    row_dict[k] = _json_safe_value(row[k])
                 result.append(row_dict)
-        
+
         return result
     except Exception as e:
         print(f"Error in list_employees: {e}")
         import traceback
         traceback.print_exc()
         return []
-    finally:
-        if conn and not conn.closed:
-            conn.close()
+
+
+def _json_safe_value(v):
+    """Convert DB values to JSON-serializable types."""
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    if v is None:
+        return None
+    if isinstance(v, (date, datetime)):
+        return v.isoformat()
+    if isinstance(v, Decimal):
+        return float(v)
+    if isinstance(v, (bytes, bytearray)):
+        return v.decode("utf-8", errors="replace")
+    if hasattr(v, "hex"):  # e.g. UUID
+        return str(v)
+    return v
 
 def update_employee(employee_id: int, **kwargs) -> bool:
     """Update employee information"""
@@ -4128,71 +4134,59 @@ def employee_login(
 ) -> Dict[str, Any]:
     """Authenticate employee and create session"""
     from database_postgres import get_cursor
-    cursor = get_cursor()  # Use RealDictCursor
+
+    cursor = get_cursor()
     conn = cursor.connection
-    
-    # Support both username and employee_code for backward compatibility
+    # Do NOT close the shared Postgres connection.
+
     login_identifier = username if username else employee_code
     if not login_identifier:
-        conn.close()
         return {'success': False, 'message': 'Username or employee code required'}
-    
+
     if not password:
-        conn.close()
         return {'success': False, 'message': 'Password is required'}
-    
+
     password_hash = hash_password(password)
-    
-    # Check if table has username column (RBAC migration)
+
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'employees' AND table_schema = 'public'")
     column_rows = cursor.fetchall()
-    # Handle both RealDictRow and tuple results
     if column_rows and isinstance(column_rows[0], dict):
         columns = [row.get('column_name') for row in column_rows]
     else:
         columns = [row[0] if isinstance(row, (tuple, list)) else row.get('column_name', row) for row in column_rows]
     has_username = 'username' in columns
-    
-    # Verify credentials - try username first if available, then employee_code
+
     if has_username:
         cursor.execute("""
-            SELECT employee_id, first_name, last_name, position, active, password_hash, username, employee_code
+            SELECT employee_id, first_name, last_name, position, active, password_hash, username, employee_code, establishment_id
             FROM employees
             WHERE username = %s OR employee_code = %s
         """, (login_identifier, login_identifier))
     else:
         cursor.execute("""
-            SELECT employee_id, first_name, last_name, position, active, password_hash, employee_code
+            SELECT employee_id, first_name, last_name, position, active, password_hash, employee_code, establishment_id
             FROM employees
             WHERE employee_code = %s
         """, (login_identifier,))
-    
+
     employee = cursor.fetchone()
-    
+
     if not employee:
-        conn.close()
         return {'success': False, 'message': 'Invalid credentials'}
-    
-    # Convert to dict - handle both RealDictRow and tuple
+
     if isinstance(employee, dict):
         employee = dict(employee)
     else:
-        # Tuple - convert using column names
-        columns = [desc[0] for desc in cursor.description]
-        employee = {col: val for col, val in zip(columns, employee)}
-    
-    # Check if employee has a password set
+        cols = [desc[0] for desc in cursor.description]
+        employee = {col: val for col, val in zip(cols, employee)}
+
     if not employee.get('password_hash'):
-        conn.close()
         return {'success': False, 'message': 'Account has no password set. Please contact administrator.'}
-    
-    # Check password
+
     if employee['password_hash'] != password_hash:
-        conn.close()
         return {'success': False, 'message': 'Invalid credentials'}
-    
-    if not employee['active']:
-        conn.close()
+
+    if not employee.get('active'):
         return {'success': False, 'message': 'Account is inactive'}
     
     # Generate session token
@@ -4233,10 +4227,10 @@ def employee_login(
         SET last_login = CURRENT_TIMESTAMP
         WHERE employee_id = %s
     """, (employee['employee_id'],))
-    
+
     conn.commit()
-    conn.close()
-    
+    # Do NOT close the shared Postgres connection.
+
     # Log login action (don't fail login if audit logging fails)
     try:
         log_audit_action(

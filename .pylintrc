@@ -1,0 +1,29 @@
+[MASTER]
+# Python code to execute, usually for sys.path manipulation
+init-hook='import sys; sys.path.append(".")'
+
+[MESSAGES CONTROL]
+# Disable specific warnings
+disable=
+    missing-docstring,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    import-error
+
+[FORMAT]
+max-line-length=100
+indent-string='    '
+
+[BASIC]
+# Good variable names
+good-names=i,j,k,ex,Run,_,id,db
+
+[DESIGN]
+max-args=10
+max-locals=20
+max-returns=10
+max-branches=15
+max-statements=60

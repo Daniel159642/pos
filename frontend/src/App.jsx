@@ -8,7 +8,6 @@ import POS from './components/POS'
 import Tables from './pages/Tables'
 import Returns from './pages/Returns'
 import RecentOrders from './pages/RecentOrders'
-import Inventory from './pages/Inventory'
 import Calendar from './components/Calendar'
 import CalendarSubscription from './components/CalendarSubscription'
 import EmployeeManagement from './components/EmployeeManagement'
@@ -18,6 +17,13 @@ import StatisticsPage from './pages/Statistics'
 import Settings from './pages/Settings'
 import Accounting from './pages/Accounting'
 import CashRegister from './pages/CashRegister'
+import Customers from './pages/Customers'
+import Invoices from './pages/Invoices'
+import Payments from './pages/Payments'
+import Vendors from './pages/Vendors'
+import Bills from './pages/Bills'
+import BillPayments from './pages/BillPayments'
+import Inventory from './pages/Inventory'
 import './index.css'
 
 function ProtectedRoute({ children, sessionToken, employee, onLogout }) {
@@ -176,6 +182,55 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
           </Layout>
         </ProtectedRoute>
       } />
+      <Route path="/customers" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Customers />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/invoices" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Invoices />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/payments" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Payments />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/vendors" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Vendors />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/bills" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Bills />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/bill-payments" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <BillPayments />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/inventory" element={
+        <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
+          <Layout employee={employee} onLogout={onLogout}>
+            <Inventory />
+          </Layout>
+        </ProtectedRoute>
+      } />
       <Route path="/" element={
         sessionToken && employee ? (
           <Navigate to="/dashboard" replace />
@@ -247,6 +302,104 @@ function Layout({ children, employee, onLogout }) {
                 }}
               >
                 Accounting
+              </button>
+              <button
+                onClick={() => navigate('/customers')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Customers
+              </button>
+              <button
+                onClick={() => navigate('/invoices')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Invoices
+              </button>
+              <button
+                onClick={() => navigate('/payments')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Payments
+              </button>
+              <button
+                onClick={() => navigate('/vendors')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Vendors
+              </button>
+              <button
+                onClick={() => navigate('/bills')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Bills & Expenses
+              </button>
+              <button
+                onClick={() => navigate('/bill-payments')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Bill Payments
+              </button>
+              <button
+                onClick={() => navigate('/inventory')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 500,
+                  color: 'var(--text-tertiary, #666)'
+                }}
+              >
+                Inventory
               </button>
               <button
                 onClick={() => navigate('/settings')}
