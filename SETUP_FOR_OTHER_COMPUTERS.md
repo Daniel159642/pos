@@ -59,14 +59,42 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pos_db
 
 **Note:** If your PostgreSQL user is different, update the connection string accordingly.
 
-## Step 5: Run Database Schema
+## Step 5: Run Complete Database Setup (RECOMMENDED)
 
+**Easiest way - runs everything automatically:**
 ```bash
-# Run the schema to create all tables
-psql -U postgres -d pos_db -f schema_postgres.sql
+python3 setup_complete_database.py
+```
 
-# Or if using a different user:
-psql -U your_username -d pos_db -f schema_postgres.sql
+This script will:
+- Create the database if needed
+- Run all schemas (main, accounting, returns)
+- Run all migrations
+- Create admin account (ADMIN001 / 123456)
+- Initialize permissions
+
+**OR manually step by step:**
+
+### Step 5a: Run Main Schema
+```bash
+psql -U postgres -d pos_db -f schema_postgres.sql
+```
+
+### Step 5b: Run Accounting Schema
+```bash
+psql -U postgres -d pos_db -f accounting_schema.sql
+```
+
+### Step 5c: Run Returns Schema
+```bash
+psql -U postgres -d pos_db -f returns_schema.sql
+```
+
+### Step 5d: Run Migrations
+```bash
+for file in migrations/*.sql; do 
+    psql -U postgres -d pos_db -f "$file"
+done
 ```
 
 ## Step 6: Create Admin Account
@@ -82,7 +110,7 @@ Follow the prompts:
 - Last Name: `User` (or your name)
 - Password: `123456` (or your choice - remember this!)
 
-## Step 6b: Initialize Admin Permissions (CRITICAL!)
+## Step 7: Initialize Admin Permissions (CRITICAL!)
 
 ```bash
 # This sets up roles and permissions - REQUIRED for admin to have access
@@ -100,13 +128,13 @@ This script:
 - Sets up all permissions
 - Assigns Admin role to your admin account
 
-## Step 7: Install Python Dependencies
+## Step 8: Install Python Dependencies
 
 ```bash
 pip3 install -r requirements.txt
 ```
 
-## Step 8: Install Frontend Dependencies
+## Step 9: Install Frontend Dependencies
 
 ```bash
 cd frontend
@@ -114,7 +142,7 @@ npm install
 cd ..
 ```
 
-## Step 9: Verify Setup
+## Step 10: Verify Setup
 
 ```bash
 # Test database connection
@@ -123,7 +151,7 @@ python3 check_postgres_connection.py
 # Should show: ✓ All checks passed!
 ```
 
-## Step 10: Start the Application
+## Step 11: Start the Application
 
 ### Terminal 1 - Backend
 ```bash
@@ -150,7 +178,7 @@ VITE v5.x.x  ready in xxx ms
 ➜  Local:   http://localhost:3000/
 ```
 
-## Step 11: Log In
+## Step 12: Log In
 
 1. Open browser to: **http://localhost:3000**
 2. Select employee: **ADMIN001** (or the code you created)
