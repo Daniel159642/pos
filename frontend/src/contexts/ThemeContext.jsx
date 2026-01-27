@@ -3,9 +3,10 @@ import { createContext, useContext, useState, useEffect } from 'react'
 const ThemeContext = createContext()
 
 export function ThemeProvider({ children }) {
+  // Temporarily force blue color - pause theme color selection
   const [themeColor, setThemeColor] = useState(() => {
-    const saved = localStorage.getItem('app_theme_color')
-    return saved || '#8400ff' // Default purple
+    // Always return blue, ignoring saved preference
+    return '#6ba3f0' // Blue color
   })
 
   const [themeMode, setThemeMode] = useState(() => {
@@ -20,12 +21,15 @@ export function ThemeProvider({ children }) {
   })
 
   useEffect(() => {
-    localStorage.setItem('app_theme_color', themeColor)
+    // Temporarily force blue color - pause theme color selection
+    const forcedColor = '#6ba3f0'
+    // Don't save to localStorage - keep it temporary
+    // localStorage.setItem('app_theme_color', themeColor)
     // Update CSS variables
     const root = document.documentElement
-    const rgb = hexToRgb(themeColor)
+    const rgb = hexToRgb(forcedColor)
     if (rgb) {
-      root.style.setProperty('--theme-color', themeColor)
+      root.style.setProperty('--theme-color', forcedColor)
       root.style.setProperty('--theme-color-rgb', `${rgb.r}, ${rgb.g}, ${rgb.b}`)
     }
   }, [themeColor])
@@ -69,8 +73,11 @@ export function ThemeProvider({ children }) {
     } : null
   }
 
+  // Temporarily override themeColor to always be blue
+  const forcedThemeColor = '#6ba3f0'
+  
   return (
-    <ThemeContext.Provider value={{ themeColor, setThemeColor, themeMode, setThemeMode }}>
+    <ThemeContext.Provider value={{ themeColor: forcedThemeColor, setThemeColor, themeMode, setThemeMode }}>
       {children}
     </ThemeContext.Provider>
   )

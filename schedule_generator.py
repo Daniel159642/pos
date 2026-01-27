@@ -1,26 +1,38 @@
 #!/usr/bin/env python3
 """
 Automated Schedule Generator with AI-powered scheduling
-Adapted for SQLite database
+Uses PostgreSQL database
 """
 
-import sqlite3
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, date
+from decimal import Decimal
 from collections import defaultdict
 import json
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
+import psycopg2.extras
+from database import get_connection
 
-DB_NAME = 'inventory.db'
+
+def _serialize_for_json(obj: Any) -> Any:
+    """Convert date/time/Decimal to JSON-serializable types."""
+    if obj is None:
+        return None
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.strftime('%H:%M:%S')
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _serialize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_serialize_for_json(v) for v in obj]
+    return obj
 
 class AutomatedScheduleGenerator:
     
     def __init__(self):
-        self.db_name = DB_NAME
-    
-    def get_connection(self):
-        conn = sqlite3.connect(self.db_name)
-        conn.row_factory = sqlite3.Row
-        return conn
+        pass
     
     def generate_schedule(self, week_start_date, settings=None, created_by=1):
         """
@@ -33,8 +45,8 @@ class AutomatedScheduleGenerator:
         - distribute_hours_evenly: bool
         """
         
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
         # Default settings
         default_settings = {
@@ -64,13 +76,16 @@ class AutomatedScheduleGenerator:
         # Check if a period already exists for this week_start_date
         cursor.execute("""
             SELECT period_id, status FROM Schedule_Periods
-            WHERE week_start_date = ?
+            WHERE week_start_date = %s
         """, (week_start_date,))
         
         existing_period = cursor.fetchone()
         
         if existing_period:
-            existing_period_dict = dict(existing_period)
+            existing_period_dict = dict(existing_period) if isinstance(existing_period, dict) else {
+                'period_id': existing_period[0],
+                'status': existing_period[1]
+            }
             # If it's a published schedule, we shouldn't overwrite it
             if existing_period_dict.get('status') == 'published':
                 conn.rollback()
@@ -83,12 +98,12 @@ class AutomatedScheduleGenerator:
             
             # Delete all shifts for this period
             cursor.execute("""
-                DELETE FROM Scheduled_Shifts WHERE period_id = ?
+                DELETE FROM Scheduled_Shifts WHERE period_id = %s
             """, (period_id,))
             
             # Delete the period
             cursor.execute("""
-                DELETE FROM Schedule_Periods WHERE period_id = ?
+                DELETE FROM Schedule_Periods WHERE period_id = %s
             """, (period_id,))
             
             conn.commit()
@@ -98,11 +113,13 @@ class AutomatedScheduleGenerator:
             INSERT INTO Schedule_Periods 
             (week_start_date, week_end_date, status, created_by, 
              generation_method, generation_settings)
-            VALUES (?, ?, 'draft', ?, 'auto', ?)
+            VALUES (%s, %s, 'draft', %s, 'auto', %s)
+            RETURNING period_id
         """, (week_start_date, week_end_date, created_by,
               json.dumps(settings)))
         
-        period_id = cursor.lastrowid
+        row = cursor.fetchone()
+        period_id = row[0] if isinstance(row, tuple) else row['period_id']
         conn.commit()
         
         # Get all necessary data
@@ -161,31 +178,35 @@ class AutomatedScheduleGenerator:
                 INSERT INTO Scheduled_Shifts
                 (period_id, employee_id, shift_date, start_time, end_time,
                  break_duration, position, conflicts, is_draft)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
             """, (period_id, shift['employee_id'], shift['shift_date'],
                   shift['start_time'], shift['end_time'], shift['break_duration'],
                   shift['position'], json.dumps(shift.get('conflicts', []))))
         
-        # Calculate totals
+        # Calculate totals (PostgreSQL uses EXTRACT(EPOCH FROM ...) for time differences)
         cursor.execute("""
             SELECT 
-                SUM((julianday(end_time) - julianday(start_time)) * 24 - (break_duration/60.0)) as total_hours,
-                SUM(((julianday(end_time) - julianday(start_time)) * 24 - (break_duration/60.0)) * 
+                SUM(EXTRACT(EPOCH FROM (end_time::time - start_time::time)) / 3600.0 - (break_duration/60.0)) as total_hours,
+                SUM((EXTRACT(EPOCH FROM (end_time::time - start_time::time)) / 3600.0 - (break_duration/60.0)) * 
                     COALESCE(ep.hourly_rate, 15)) as estimated_cost
             FROM Scheduled_Shifts ss
             LEFT JOIN Employee_Positions ep ON ss.employee_id = ep.employee_id 
                 AND ss.position = ep.position_name
-            WHERE ss.period_id = ?
+            WHERE ss.period_id = %s
         """, (period_id,))
         
         totals = cursor.fetchone()
+        totals_dict = dict(totals) if isinstance(totals, dict) else {
+            'total_hours': totals[0] if totals else 0,
+            'estimated_cost': totals[1] if totals and len(totals) > 1 else 0
+        }
         
         cursor.execute("""
             UPDATE Schedule_Periods
-            SET total_labor_hours = ?,
-                estimated_labor_cost = ?
-            WHERE period_id = ?
-        """, (totals['total_hours'] or 0, totals['estimated_cost'] or 0, period_id))
+            SET total_labor_hours = %s,
+                estimated_labor_cost = %s
+            WHERE period_id = %s
+        """, (totals_dict['total_hours'] or 0, totals_dict['estimated_cost'] or 0, period_id))
         
         conn.commit()
         cursor.close()
@@ -193,8 +214,8 @@ class AutomatedScheduleGenerator:
         
         return {
             'period_id': period_id,
-            'total_hours': float(totals['total_hours'] or 0),
-            'estimated_cost': float(totals['estimated_cost'] or 0),
+            'total_hours': float(totals_dict['total_hours'] or 0),
+            'estimated_cost': float(totals_dict['estimated_cost'] or 0),
             'shifts_generated': len(all_shifts)
         }
     
@@ -213,30 +234,41 @@ class AutomatedScheduleGenerator:
         
         employees = [dict(row) for row in cursor.fetchall()]
         
+        # Check if employee_availability exists and uses new structure (is_recurring column)
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'employee_availability'
+            )
+        """)
+        has_avail_table = cursor.fetchone()['exists']
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = 'employee_availability' 
+                AND column_name = 'is_recurring'
+            )
+        """)
+        has_new_avail_structure = cursor.fetchone()['exists']
+
         # Get availability for each employee
         for emp in employees:
-            # Check if Employee_Availability table exists (new structure)
-            cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='Employee_Availability'
-            """)
-            has_new_table = cursor.fetchone()
-            
-            if has_new_table:
-                # Use new structure with day_of_week
+            if has_avail_table and has_new_avail_structure:
+                # Use structure with day_of_week, is_recurring, effective_date, end_date
                 cursor.execute("""
-                    SELECT * FROM Employee_Availability
-                    WHERE employee_id = ?
+                    SELECT * FROM employee_availability
+                    WHERE employee_id = %s
                     AND is_recurring = 1
-                    AND (effective_date IS NULL OR effective_date <= ?)
-                    AND (end_date IS NULL OR end_date >= ?)
+                    AND (effective_date IS NULL OR effective_date <= %s)
+                    AND (end_date IS NULL OR end_date >= %s)
                 """, (emp['employee_id'], end_date, start_date))
-                emp['availability'] = [dict(row) for row in cursor.fetchall()]
-            else:
+                rows = cursor.fetchall()
+                emp['availability'] = [dict(row) for row in rows] if rows else []
+            elif has_avail_table:
                 # Use old structure with JSON strings per day
                 cursor.execute("""
                     SELECT * FROM employee_availability
-                    WHERE employee_id = ?
+                    WHERE employee_id = %s
                 """, (emp['employee_id'],))
                 row = cursor.fetchone()
                 if row:
@@ -260,41 +292,55 @@ class AutomatedScheduleGenerator:
                                 pass
                 else:
                     emp['availability'] = []
+            else:
+                emp['availability'] = []
             
             # Get positions
             cursor.execute("""
                 SELECT position_name FROM Employee_Positions
-                WHERE employee_id = ?
+                WHERE employee_id = %s
             """, (emp['employee_id'],))
             
-            positions = [row[0] for row in cursor.fetchall()]
+            positions = [row['position_name'] for row in cursor.fetchall()]
             emp['positions'] = positions if positions else [emp.get('position', 'general')]
         
         return employees
     
     def _get_schedule_requirements(self, cursor):
         """Get business requirements for scheduling"""
-        
         cursor.execute("""
-            SELECT * FROM Schedule_Requirements
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'schedule_requirements'
+            )
+        """)
+        if not cursor.fetchone()['exists']:
+            return []
+        cursor.execute("""
+            SELECT * FROM schedule_requirements
             WHERE is_active = 1
             ORDER BY day_of_week, time_block_start
         """)
-        
         return [dict(row) for row in cursor.fetchall()]
-    
+
     def _get_time_off_requests(self, cursor, start_date, end_date):
         """Get approved time off requests"""
-        
         cursor.execute("""
-            SELECT * FROM Time_Off_Requests
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'time_off_requests'
+            )
+        """)
+        if not cursor.fetchone()['exists']:
+            return []
+        cursor.execute("""
+            SELECT * FROM time_off_requests
             WHERE status = 'approved'
-            AND ((start_date BETWEEN ? AND ?)
-                 OR (end_date BETWEEN ? AND ?)
-                 OR (start_date <= ? AND end_date >= ?))
-        """, (start_date, end_date, start_date, end_date, 
+            AND ((start_date BETWEEN %s AND %s)
+                 OR (end_date BETWEEN %s AND %s)
+                 OR (start_date <= %s AND end_date >= %s))
+        """, (start_date, end_date, start_date, end_date,
               start_date, end_date))
-        
         return [dict(row) for row in cursor.fetchall()]
     
     def _get_employees_available_on_day(self, employees, day_name, date, 
@@ -727,8 +773,8 @@ class AutomatedScheduleGenerator:
     def copy_schedule_from_template(self, template_id, week_start_date, created_by):
         """Copy schedule from existing template"""
         
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
         if isinstance(week_start_date, str):
             week_start_date = datetime.strptime(week_start_date, '%Y-%m-%d').date()
@@ -736,7 +782,7 @@ class AutomatedScheduleGenerator:
         
         # Get template's original period
         cursor.execute("""
-            SELECT * FROM Schedule_Periods WHERE template_id = ?
+            SELECT * FROM Schedule_Periods WHERE template_id = %s
         """, (template_id,))
         
         template_period = cursor.fetchone()
@@ -746,22 +792,27 @@ class AutomatedScheduleGenerator:
             conn.close()
             return None
         
-        template_period = dict(template_period)
+        template_period = dict(template_period) if isinstance(template_period, dict) else {
+            'period_id': template_period[0],
+            'week_start_date': template_period[1] if len(template_period) > 1 else None
+        }
         
         # Create new period
         cursor.execute("""
             INSERT INTO Schedule_Periods 
             (week_start_date, week_end_date, status, created_by, 
              generation_method, template_id)
-            VALUES (?, ?, 'draft', ?, 'template', ?)
+            VALUES (%s, %s, 'draft', %s, 'template', %s)
+            RETURNING period_id
         """, (week_start_date, week_end_date, created_by, template_id))
         
-        new_period_id = cursor.lastrowid
+        row = cursor.fetchone()
+        new_period_id = row[0] if isinstance(row, tuple) else row['period_id']
         
         # Get all shifts from template period
         cursor.execute("""
             SELECT * FROM Scheduled_Shifts 
-            WHERE period_id = ?
+            WHERE period_id = %s
         """, (template_period['period_id'],))
         
         template_shifts = cursor.fetchall()
@@ -776,22 +827,30 @@ class AutomatedScheduleGenerator:
             shift_date = datetime.strptime(shift['shift_date'], '%Y-%m-%d').date()
             new_date = shift_date + timedelta(days=day_offset)
             
+            shift_dict = dict(shift) if isinstance(shift, dict) else {
+                'employee_id': shift[2] if len(shift) > 2 else None,
+                'start_time': shift[4] if len(shift) > 4 else None,
+                'end_time': shift[5] if len(shift) > 5 else None,
+                'break_duration': shift[6] if len(shift) > 6 else None,
+                'position': shift[7] if len(shift) > 7 else None,
+                'notes': shift[8] if len(shift) > 8 else None
+            }
             cursor.execute("""
                 INSERT INTO Scheduled_Shifts
                 (period_id, employee_id, shift_date, start_time, end_time,
                  break_duration, position, notes, is_draft)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-            """, (new_period_id, shift['employee_id'], new_date,
-                  shift['start_time'], shift['end_time'], 
-                  shift['break_duration'], shift.get('position'), 
-                  shift.get('notes')))
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
+            """, (new_period_id, shift_dict['employee_id'], new_date,
+                  shift_dict['start_time'], shift_dict['end_time'], 
+                  shift_dict['break_duration'], shift_dict.get('position'), 
+                  shift_dict.get('notes')))
         
         # Update template use count
         cursor.execute("""
             UPDATE Schedule_Templates
             SET use_count = use_count + 1,
                 last_used = CURRENT_TIMESTAMP
-            WHERE template_id = ?
+            WHERE template_id = %s
         """, (template_id,))
         
         conn.commit()
@@ -803,22 +862,24 @@ class AutomatedScheduleGenerator:
     def save_as_template(self, period_id, template_name, description, created_by):
         """Save current schedule as template"""
         
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
         cursor.execute("""
             INSERT INTO Schedule_Templates
             (template_name, description, created_by)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
+            RETURNING template_id
         """, (template_name, description, created_by))
         
-        template_id = cursor.lastrowid
+        row = cursor.fetchone()
+        template_id = row[0] if isinstance(row, tuple) else row['template_id']
         
         # Link the period to template
         cursor.execute("""
             UPDATE Schedule_Periods
-            SET template_id = ?
-            WHERE period_id = ?
+            SET template_id = %s
+            WHERE period_id = %s
         """, (template_id, period_id))
         
         conn.commit()
@@ -830,47 +891,52 @@ class AutomatedScheduleGenerator:
     def publish_schedule(self, period_id, published_by):
         """Publish schedule and notify employees"""
         
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
         # Update status
         cursor.execute("""
             UPDATE Schedule_Periods
             SET status = 'published',
-                published_by = ?,
+                published_by = %s,
                 published_at = CURRENT_TIMESTAMP
-            WHERE period_id = ?
+            WHERE period_id = %s
         """, (published_by, period_id))
         
         # Mark all shifts as not draft
         cursor.execute("""
             UPDATE Scheduled_Shifts
             SET is_draft = 0
-            WHERE period_id = ?
+            WHERE period_id = %s
         """, (period_id,))
         
         # Get all employees in this schedule
         cursor.execute("""
             SELECT DISTINCT employee_id FROM Scheduled_Shifts
-            WHERE period_id = ?
+            WHERE period_id = %s
         """, (period_id,))
         
         employees = cursor.fetchall()
         
-        # Create notifications
-        for emp in employees:
-            cursor.execute("""
-                INSERT INTO Schedule_Notifications
-                (period_id, employee_id, notification_type, sent_via)
-                VALUES (?, ?, 'new_schedule', 'all')
-            """, (period_id, emp[0]))
+        try:
+            for emp in employees:
+                emp_id = emp['employee_id'] if isinstance(emp, dict) else emp[0]
+                cursor.execute("""
+                    INSERT INTO Schedule_Notifications
+                    (period_id, employee_id, notification_type, sent_via)
+                    VALUES (%s, %s, 'new_schedule', 'all')
+                """, (period_id, emp_id))
+        except Exception:
+            pass  # Schedule_Notifications table may not exist
         
-        # Log change
-        cursor.execute("""
-            INSERT INTO Schedule_Changes
-            (period_id, change_type, changed_by, reason)
-            VALUES (?, 'published', ?, 'Schedule published to all employees')
-        """, (period_id, published_by))
+        try:
+            cursor.execute("""
+                INSERT INTO Schedule_Changes
+                (period_id, change_type, changed_by, reason)
+                VALUES (%s, 'published', %s, 'Schedule published to all employees')
+            """, (period_id, published_by))
+        except Exception:
+            pass  # Schedule_Changes table may not exist
         
         conn.commit()
         cursor.close()
@@ -881,12 +947,12 @@ class AutomatedScheduleGenerator:
     def get_schedule_summary(self, period_id):
         """Get schedule summary with stats"""
         
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
         # Get period info
         cursor.execute("""
-            SELECT * FROM Schedule_Periods WHERE period_id = ?
+            SELECT * FROM Schedule_Periods WHERE period_id = %s
         """, (period_id,))
         
         period_row = cursor.fetchone()
@@ -895,35 +961,43 @@ class AutomatedScheduleGenerator:
             conn.close()
             return None
         
-        period = dict(period_row)
+        period = dict(period_row) if isinstance(period_row, dict) else {
+            'period_id': period_row[0] if period_row else None
+        }
         
         # Get all shifts
         cursor.execute("""
             SELECT ss.*, e.first_name, e.last_name, e.employee_code as username
             FROM Scheduled_Shifts ss
             JOIN employees e ON ss.employee_id = e.employee_id
-            WHERE ss.period_id = ?
+            WHERE ss.period_id = %s
             ORDER BY ss.shift_date, ss.start_time
         """, (period_id,))
         
-        shifts = [dict(row) for row in cursor.fetchall()]
+        shifts = [dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()]
         
-        # Calculate stats by employee
+        # Calculate stats by employee (PostgreSQL uses EXTRACT(EPOCH FROM ...))
         cursor.execute("""
             SELECT 
                 e.employee_id,
                 e.first_name,
                 e.last_name,
                 COUNT(ss.scheduled_shift_id) as shift_count,
-                SUM((julianday(ss.end_time) - julianday(ss.start_time)) * 24 - 
+                SUM(EXTRACT(EPOCH FROM (ss.end_time::time - ss.start_time::time)) / 3600.0 - 
                     (ss.break_duration/60.0)) as total_hours
             FROM employees e
             JOIN Scheduled_Shifts ss ON e.employee_id = ss.employee_id
-            WHERE ss.period_id = ?
+            WHERE ss.period_id = %s
             GROUP BY e.employee_id
         """, (period_id,))
         
-        employee_stats = [dict(row) for row in cursor.fetchall()]
+        employee_stats = [dict(row) if isinstance(row, dict) else {
+            'employee_id': row[0],
+            'first_name': row[1],
+            'last_name': row[2],
+            'shift_count': row[3],
+            'total_hours': row[4]
+        } for row in cursor.fetchall()]
         
         # Check for conflicts
         conflicts = self._detect_schedule_conflicts(cursor, period_id)
@@ -931,12 +1005,13 @@ class AutomatedScheduleGenerator:
         cursor.close()
         conn.close()
         
-        return {
+        out = {
             'period': period,
             'shifts': shifts,
             'employee_stats': employee_stats,
             'conflicts': conflicts
         }
+        return _serialize_for_json(out)
     
     def _detect_schedule_conflicts(self, cursor, period_id):
         """Detect scheduling conflicts"""
@@ -959,13 +1034,21 @@ class AutomatedScheduleGenerator:
                 AND ss1.shift_date = ss2.shift_date
                 AND ss1.scheduled_shift_id < ss2.scheduled_shift_id
             JOIN employees e ON ss1.employee_id = e.employee_id
-            WHERE ss1.period_id = ?
+            WHERE ss1.period_id = %s
             AND (
                 (ss1.start_time < ss2.end_time AND ss1.end_time > ss2.start_time)
             )
         """, (period_id,))
         
-        double_bookings = [dict(row) for row in cursor.fetchall()]
+        double_bookings = [dict(row) if isinstance(row, dict) else {
+            'first_name': row[1],
+            'last_name': row[2],
+            'shift_date': row[3],
+            'start1': row[4],
+            'end1': row[5],
+            'start2': row[6],
+            'end2': row[7]
+        } for row in cursor.fetchall()]
         
         for db in double_bookings:
             conflicts.append({
@@ -976,23 +1059,29 @@ class AutomatedScheduleGenerator:
                 'message': f"Overlapping shifts: {db['start1']}-{db['end1']} and {db['start2']}-{db['end2']}"
             })
         
-        # Over max hours
+        # Over max hours (PostgreSQL uses EXTRACT(EPOCH FROM ...))
         cursor.execute("""
             SELECT 
                 e.employee_id,
                 e.first_name,
                 e.last_name,
                 COALESCE(e.max_hours_per_week, 40) as max_hours_per_week,
-                SUM((julianday(ss.end_time) - julianday(ss.start_time)) * 24 - 
+                SUM(EXTRACT(EPOCH FROM (ss.end_time::time - ss.start_time::time)) / 3600.0 - 
                     (ss.break_duration/60.0)) as scheduled_hours
             FROM employees e
             JOIN Scheduled_Shifts ss ON e.employee_id = ss.employee_id
-            WHERE ss.period_id = ?
+            WHERE ss.period_id = %s
             GROUP BY e.employee_id
-            HAVING scheduled_hours > COALESCE(e.max_hours_per_week, 40)
+            HAVING SUM(EXTRACT(EPOCH FROM (ss.end_time::time - ss.start_time::time)) / 3600.0 - 
+                    (ss.break_duration/60.0)) > COALESCE(e.max_hours_per_week, 40)
         """, (period_id,))
         
-        over_hours = [dict(row) for row in cursor.fetchall()]
+        over_hours = [dict(row) if isinstance(row, dict) else {
+            'first_name': row[1],
+            'last_name': row[2],
+            'max_hours_per_week': row[3],
+            'scheduled_hours': row[4]
+        } for row in cursor.fetchall()]
         
         for oh in over_hours:
             conflicts.append({

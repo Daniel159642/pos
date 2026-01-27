@@ -1,15 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
+import { ChevronDown } from 'lucide-react'
 import '../index.css'
 
 function Login({ onLogin }) {
   const { themeColor } = useTheme()
   const [employeeCode, setEmployeeCode] = useState('')
   const [password, setPassword] = useState('')
+  const [revealLastDigit, setRevealLastDigit] = useState(false)
+  const revealTimeoutRef = useRef(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [employees, setEmployees] = useState([])
   const [loadingEmployees, setLoadingEmployees] = useState(true)
+  const [passwordJitter, setPasswordJitter] = useState(false)
 
   const hexToRgb = (hex) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
@@ -17,9 +21,124 @@ function Login({ onLogin }) {
   }
   const themeColorRgb = hexToRgb(themeColor)
 
+  function CustomDropdown({ value, onChange, options, placeholder = 'Select…', isDarkMode, themeColorRgb, style = {} }) {
+    const [isOpen, setIsOpen] = useState(false)
+    const dropdownRef = useRef(null)
+
+    useEffect(() => {
+      const handleClickOutside = (e) => {
+        if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setIsOpen(false)
+      }
+      if (isOpen) document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [isOpen])
+
+    const selected = options.find((o) => o.value === value)
+
+    return (
+      <div ref={dropdownRef} style={{ position: 'relative', ...style }}>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setIsOpen(!isOpen)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen((o) => !o) } }}
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            border: isOpen ? `2px solid rgba(${themeColorRgb}, 0.7)` : `2px solid rgba(${themeColorRgb}, 0.4)`,
+            borderRadius: '12px',
+            fontSize: '15px',
+            backgroundColor: '#fff',
+            color: selected ? '#111' : '#999',
+            cursor: loadingEmployees ? 'wait' : 'pointer',
+            opacity: loadingEmployees ? 0.6 : 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            transition: 'all 0.2s ease',
+            outline: 'none',
+            boxShadow: isOpen ? `0 4px 12px rgba(${themeColorRgb}, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+          }}
+          onMouseEnter={(e) => {
+            if (!isOpen && !loadingEmployees) e.currentTarget.style.borderColor = `rgba(${themeColorRgb}, 0.7)`
+          }}
+          onMouseLeave={(e) => {
+            if (!isOpen) e.currentTarget.style.borderColor = `rgba(${themeColorRgb}, 0.4)`
+          }}
+        >
+          <span>{selected ? selected.label : (loadingEmployees ? 'Loading employees...' : placeholder)}</span>
+          <ChevronDown size={16} style={{ flexShrink: 0, transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+        </div>
+        {isOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              right: 0,
+              marginTop: '4px',
+              backgroundColor: '#fff',
+              border: '1px solid #ddd',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              zIndex: 1000,
+              maxHeight: '200px',
+              overflowY: 'auto',
+              overflowX: 'hidden'
+            }}
+          >
+            {options.map((opt) => (
+              <div
+                key={opt.value}
+                role="option"
+                aria-selected={value === opt.value}
+                onClick={() => { onChange({ target: { value: opt.value } }); setIsOpen(false) }}
+                style={{
+                  padding: '10px 14px',
+                  cursor: 'pointer',
+                  fontSize: '15px',
+                  color: '#111',
+                  backgroundColor: value === opt.value ? `rgba(${themeColorRgb}, 0.2)` : 'transparent',
+                  borderLeft: value === opt.value ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
+                  transition: 'background-color 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (value !== opt.value) e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = value === opt.value ? `rgba(${themeColorRgb}, 0.2)` : 'transparent'
+                }}
+              >
+                {opt.label}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   useEffect(() => {
     fetchEmployees()
   }, [])
+
+  useEffect(() => {
+    return () => {
+      if (revealTimeoutRef.current) {
+        clearTimeout(revealTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!password) {
+      if (revealTimeoutRef.current) {
+        clearTimeout(revealTimeoutRef.current)
+        revealTimeoutRef.current = null
+      }
+      setRevealLastDigit(false)
+    }
+  }, [password])
 
   const fetchEmployees = async () => {
     try {
@@ -33,13 +152,52 @@ function Login({ onLogin }) {
     }
   }
 
-  const handleNumpadClick = (value) => {
+  const handleNumpadClick = useCallback((value) => {
     if (value === 'backspace') {
+      if (revealTimeoutRef.current) {
+        clearTimeout(revealTimeoutRef.current)
+        revealTimeoutRef.current = null
+      }
+      setRevealLastDigit(false)
       setPassword((prev) => prev.slice(0, -1))
     } else {
+      if (password.length >= 6) return
+      if (revealTimeoutRef.current) clearTimeout(revealTimeoutRef.current)
+      setRevealLastDigit(true)
+      revealTimeoutRef.current = setTimeout(() => {
+        revealTimeoutRef.current = null
+        setRevealLastDigit(false)
+      }, 600)
       setPassword((prev) => (prev.length >= 6 ? prev : prev + value))
     }
-  }
+  }, [password])
+
+  // Handle keyboard number input for numpad PIN
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Skip only when typing in text inputs (not select—allow PIN entry after choosing employee)
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return
+      }
+
+      // Handle number keys (0-9), including top row and numpad
+      if ((e.key >= '0' && e.key <= '9') || (e.key >= 'NumPad0' && e.key <= 'NumPad9')) {
+        e.preventDefault()
+        const digit = e.key.startsWith('NumPad') ? e.key.replace('NumPad', '') : e.key
+        handleNumpadClick(digit)
+      }
+      // Handle backspace
+      else if (e.key === 'Backspace') {
+        e.preventDefault()
+        handleNumpadClick('backspace')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [handleNumpadClick])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -69,6 +227,13 @@ function Login({ onLogin }) {
         } catch {
           setError(`Server error: ${response.status} - ${errorText}`)
         }
+        // Trigger jitter animation and clear password after animation
+        setError('')
+        setPasswordJitter(true)
+        setTimeout(() => {
+          setPasswordJitter(false)
+          setPassword('')
+        }, 600)
         setLoading(false)
         return
       }
@@ -77,7 +242,13 @@ function Login({ onLogin }) {
       if (result.success) {
         onLogin(result)
       } else {
-        setError(result.message || 'Login failed')
+        // Trigger jitter animation and clear password after animation
+        setError('')
+        setPasswordJitter(true)
+        setTimeout(() => {
+          setPasswordJitter(false)
+          setPassword('')
+        }, 600)
       }
     } catch (err) {
       clearTimeout(timeoutId)
@@ -86,6 +257,7 @@ function Login({ onLogin }) {
       } else {
         setError('Connection error. Please make sure the backend server is running on port 5001.')
       }
+      setPassword('') // Clear password on error
       console.error('Login error:', err)
     } finally {
       setLoading(false)
@@ -95,198 +267,99 @@ function Login({ onLogin }) {
   return (
     <div
       style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
         minHeight: '100vh',
-        backgroundColor: 'var(--bg-secondary)',
-        padding: '20px'
+        backgroundColor: '#fff',
+        padding: '24px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center'
       }}
     >
-      <div
+      <h1
         style={{
-          backgroundColor: 'var(--bg-primary)',
-          padding: '24px 40px 40px 40px',
-          borderRadius: '8px',
-          boxShadow: '0 2px 8px var(--shadow)',
-          width: '100%',
-          maxWidth: '400px',
-          border: '1px solid var(--border-light)'
+          fontSize: '22px',
+          fontWeight: 600,
+          color: '#111',
+          marginBottom: '8px',
+          textAlign: 'center'
         }}
       >
-        <h1
+        Sign in to Swift
+      </h1>
+      <p
+        style={{
+          fontSize: '14px',
+          color: '#555',
+          marginBottom: '24px',
+          textAlign: 'center'
+        }}
+      >
+        Select employee and enter password
+      </p>
+
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '320px' }}>
+        <div style={{ marginBottom: '20px', width: '100%' }}>
+          <CustomDropdown
+            value={employeeCode}
+            onChange={(e) => setEmployeeCode(e.target.value)}
+            options={loadingEmployees ? [] : employees.map((emp) => ({
+              value: emp.username || emp.employee_code,
+              label: `${emp.first_name} ${emp.last_name} ${emp.username ? `(${emp.username})` : emp.employee_code ? `(${emp.employee_code})` : ''}`
+            }))}
+            placeholder={loadingEmployees ? 'Loading employees...' : 'Select an employee...'}
+            isDarkMode={false}
+            themeColorRgb={themeColorRgb}
+            style={{ width: '100%' }}
+          />
+        </div>
+
+        <div
           style={{
-            fontSize: '22px',
-            fontWeight: 600,
-            color: 'var(--text-primary)',
-            marginBottom: '8px',
-            textAlign: 'center'
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'flex-end',
+            minHeight: '50px',
+            marginBottom: '15px',
+            paddingBottom: '8px',
+            borderBottom: '2px solid #333',
+            width: '100%',
+            maxWidth: '200px'
           }}
         >
-          Sign in to Swift
-        </h1>
-        <p
-          style={{
-            fontSize: '14px',
-            color: 'var(--text-secondary)',
-            marginBottom: '24px',
-            textAlign: 'center'
-          }}
-        >
-          Select employee and enter password
-        </p>
-
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '20px' }}>
-            <select
-              value={employeeCode}
-              onChange={(e) => setEmployeeCode(e.target.value)}
-              required
-              disabled={loadingEmployees}
-              style={{
-                width: '100%',
-                padding: '14px 16px',
-                border: `2px solid rgba(${themeColorRgb}, 0.4)`,
-                borderRadius: '12px',
-                fontSize: '15px',
-                fontFamily: 'inherit',
-                background: 'var(--bg-primary)',
-                color: 'var(--text-primary)',
-                cursor: loadingEmployees ? 'wait' : 'pointer',
-                opacity: loadingEmployees ? 0.6 : 1,
-                outline: 'none',
-                transition: 'all 0.2s ease',
-                boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.1)`
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = `rgba(${themeColorRgb}, 0.7)`
-                e.target.style.boxShadow = `0 4px 12px rgba(${themeColorRgb}, 0.2)`
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = `rgba(${themeColorRgb}, 0.4)`
-                e.target.style.boxShadow = `0 2px 8px rgba(${themeColorRgb}, 0.1)`
-              }}
-            >
-              <option value="">
-                {loadingEmployees ? 'Loading employees...' : 'Select an employee...'}
-              </option>
-              {employees.map((emp) => (
-                <option key={emp.employee_id} value={emp.username || emp.employee_code}>
-                  {emp.first_name} {emp.last_name}{' '}
-                  {emp.username ? `(${emp.username})` : emp.employee_code ? `(${emp.employee_code})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div
+          <span
+            className={passwordJitter ? 'password-jitter' : ''}
             style={{
-              textAlign: 'center',
-              fontSize: '36px',
-              letterSpacing: '12px',
               fontFamily: 'monospace',
-              minHeight: '50px',
-              padding: '15px 0',
-              marginBottom: '15px',
-              display: 'flex',
-              justifyContent: 'center',
-              gap: '8px'
+              fontSize: '28px',
+              letterSpacing: '8px',
+              color: '#111',
+              textAlign: 'center',
+              display: 'inline-block'
             }}
           >
-            {Array.from({ length: 6 }, (_, i) => (
-              <div
-                key={i}
-                style={{
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '50%',
-                  backgroundColor: i < password.length ? '#666' : 'transparent',
-                  border: '2px solid #666',
-                  transition: 'background-color 0.2s ease'
-                }}
-              />
-            ))}
-          </div>
+            {password.split('').map((char, i) =>
+              i === password.length - 1 && revealLastDigit ? char : '•'
+            ).join('')}
+          </span>
+        </div>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '8px',
-              marginTop: '15px',
-              marginBottom: '8px',
-              justifyContent: 'center'
-            }}
-          >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-              <button
-                key={num}
-                type="button"
-                onClick={() => handleNumpadClick(num.toString())}
-                style={{
-                  width: '80px',
-                  height: '80px',
-                  padding: 0,
-                  fontSize: '28px',
-                  fontWeight: 600,
-                  backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                  backdropFilter: 'blur(10px)',
-                  WebkitBackdropFilter: 'blur(10px)',
-                  color: '#fff',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  borderRadius: '50%',
-                  cursor: 'pointer',
-                  boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-                  transition: 'all 0.3s ease',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  margin: '0 auto'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.85)`
-                  e.target.style.transform = 'scale(0.95)'
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-                  e.target.style.transform = 'scale(1)'
-                }}
-              >
-                {num}
-              </button>
-            ))}
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '8px',
-              marginBottom: '20px',
-              justifyContent: 'center'
-            }}
-          >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '8px',
+            marginTop: '15px',
+            marginBottom: '8px',
+            width: '100%',
+            maxWidth: '264px'
+          }}
+        >
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
             <button
+              key={num}
               type="button"
-              onClick={() => handleNumpadClick('backspace')}
-              style={{
-                background: 'none',
-                border: 'none',
-                padding: 0,
-                fontSize: '24px',
-                fontWeight: 500,
-                color: 'var(--text-primary)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto'
-              }}
-            >
-              ⌫
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNumpadClick('0')}
+              onClick={() => handleNumpadClick(num.toString())}
               style={{
                 width: '80px',
                 height: '80px',
@@ -316,36 +389,95 @@ function Login({ onLogin }) {
                 e.target.style.transform = 'scale(1)'
               }}
             >
-              0
+              {num}
             </button>
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                background: 'none',
-                border: 'none',
-                padding: 0,
-                fontSize: '16px',
-                fontWeight: 500,
-                color: loading ? 'var(--text-tertiary)' : 'var(--text-primary)',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto'
-              }}
-            >
-              {loading ? '...' : 'Login'}
-            </button>
-          </div>
+          ))}
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '8px',
+            marginBottom: '20px',
+            width: '100%',
+            maxWidth: '264px'
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => handleNumpadClick('backspace')}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              fontSize: '24px',
+              fontWeight: 500,
+              color: '#111',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto'
+            }}
+          >
+            ⌫
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNumpadClick('0')}
+            style={{
+              width: '80px',
+              height: '80px',
+              padding: 0,
+              fontSize: '28px',
+              fontWeight: 600,
+              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              color: '#fff',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              borderRadius: '50%',
+              cursor: 'pointer',
+              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+              transition: 'all 0.3s ease',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.85)`
+              e.target.style.transform = 'scale(0.95)'
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+              e.target.style.transform = 'scale(1)'
+            }}
+          >
+            0
+          </button>
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              fontSize: '16px',
+              fontWeight: 500,
+              color: loading ? '#999' : '#111',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto'
+            }}
+          >
+            {loading ? '...' : 'Login'}
+          </button>
+        </div>
 
-          {error && (
-            <div className="alert alert-error" style={{ marginTop: '20px', marginBottom: '0' }}>
-              {error}
-            </div>
-          )}
-        </form>
-      </div>
+      </form>
     </div>
   )
 }

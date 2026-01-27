@@ -8,7 +8,7 @@ import './MagicBento.css'
 
 function Dashboard() {
   const navigate = useNavigate()
-  const { hasPermission } = usePermissions()
+  const { hasPermission, employee } = usePermissions()
   const { themeColor } = useTheme()
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
@@ -53,13 +53,14 @@ function Dashboard() {
       size: 'large',
       onClick: () => navigate('/shipment-verification')
     },
-    {
-      id: 'inventory',
-      title: 'Inventory',
-      description: 'Manage inventory',
-      size: 'medium',
-      onClick: () => navigate('/inventory')
-    }
+    // Admin-only boxes
+    ...(hasPermission('manage_permissions') || hasPermission('add_employee') || employee?.position?.toLowerCase() === 'admin' ? [{
+      id: 'accounting',
+      title: 'Accounting',
+      description: 'Financial reports and accounting',
+      size: 'large',
+      onClick: () => navigate('/accounting')
+    }] : [])
   ]
 
   // Right column boxes
@@ -92,14 +93,13 @@ function Dashboard() {
       size: 'medium',
       onClick: () => navigate('/returns')
     },
-    // Admin-only boxes
-    ...(hasPermission('manage_permissions') || hasPermission('add_employee') ? [{
-      id: 'employee-management',
-      title: 'Management',
-      description: 'Manage employees and schedules',
-      size: 'large',
-      onClick: () => navigate('/employee-management')
-    }] : []),
+    {
+      id: 'inventory',
+      title: 'Inventory',
+      description: 'Manage inventory',
+      size: 'medium',
+      onClick: () => navigate('/inventory')
+    },
     {
       id: 'tables',
       title: 'Tables',
@@ -117,7 +117,7 @@ function Dashboard() {
     
     const boxContent = (
       <div
-        className={`magic-bento-card magic-bento-card--border-glow ${!isComponentBox ? 'magic-bento-card--text-autohide' : ''} ${isPOS || isStatistics ? 'magic-bento-card--lighter' : ''} ${isPOS ? 'magic-bento-card--pos' : ''} ${isStatistics && !isDarkMode ? 'magic-bento-card--white' : ''}`}
+        className={`magic-bento-card magic-bento-card--border-glow ${!isComponentBox ? 'magic-bento-card--text-autohide' : ''} ${isPOS || isStatistics ? 'magic-bento-card--lighter' : ''} ${isPOS ? 'magic-bento-card--pos' : ''} ${isStatistics && !isDarkMode ? 'magic-bento-card--white' : ''} ${isStatistics ? 'magic-bento-card--statistics-outline' : ''}`}
         style={{
           cursor: 'pointer',
           minHeight: 0,
@@ -125,38 +125,31 @@ function Dashboard() {
           gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
           gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
           '--glow-color': themeColorRgb,
-          '--theme-color-rgb': themeColorRgb,
-          ...(isPOS ? {
-            background: `rgba(${themeColorRgb}, 1.0)`
-          } : isStatistics && !isDarkMode ? {
-            background: '#ffffff',
-            color: '#333'
-          } : isStatistics ? {
-            background: `rgba(${themeColorRgb}, 0.95)`
-          } : {})
+          '--theme-color-rgb': themeColorRgb
         }}
       >
         {isComponentBox && Component ? (
           <>
-            <div 
-              className="magic-bento-card__header" 
-              style={{ flexShrink: 0, cursor: 'pointer' }}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (box.onClick) box.onClick()
-              }}
-            >
+            {!isStatistics && (
               <div 
-                className="magic-bento-card__label"
-                style={{
-                  fontStyle: 'italic',
-                  fontFamily: 'Georgia, "Times New Roman", serif',
-                  fontSize: '18px'
+                className="magic-bento-card__header" 
+                style={{ flexShrink: 0, cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (box.onClick) box.onClick()
                 }}
               >
-                {box.title}
+                <div 
+                  className="magic-bento-card__label"
+                  style={{
+                    fontFamily: '-apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif',
+                    fontSize: '18px'
+                  }}
+                >
+                  {box.title}
+                </div>
               </div>
-            </div>
+            )}
             <div className="magic-bento-card__content" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
               <Component />
             </div>
@@ -173,8 +166,7 @@ function Dashboard() {
             <div 
               className="magic-bento-card__label"
               style={{
-                fontStyle: 'italic',
-                fontFamily: 'Georgia, "Times New Roman", serif',
+                fontFamily: '-apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif',
                 fontSize: '18px'
               }}
             >

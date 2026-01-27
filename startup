@@ -1,2 +1,4 @@
 cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py
-cd frontend npm run dev
+cd frontend 
+npm run dev
+cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 wipe_database.py

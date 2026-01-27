@@ -23,8 +23,8 @@ except ImportError:
     SOCKETIO_AVAILABLE = False
     print("Warning: flask-socketio not installed. Real-time features will be disabled.")
 from database import (
-    list_products, list_vendors, list_shipments, get_sales,
-    get_shipment_items, get_shipment_details,
+    list_products, list_vendors, list_categories, list_shipments, get_sales,
+    get_shipment_items, get_shipment_details, get_product,
     employee_login, verify_session, employee_logout,
     list_employees, get_employee, add_employee, update_employee, delete_employee, list_orders,
     get_employee_by_clerk_user_id, link_clerk_user_to_employee, verify_pin_login, generate_pin,
@@ -37,6 +37,7 @@ from database import (
     get_verification_progress, complete_verification,
     get_pending_shipments_with_progress, get_shipment_items,
     create_shipment_from_document, update_pending_item_verification, add_vendor,
+    create_pending_shipment, add_pending_shipment_item, generate_unique_barcode,
     clock_in, clock_out, get_current_clock_status, get_schedule,
     get_store_location_settings, update_store_location_settings,
     get_customer_rewards_settings, update_customer_rewards_settings, calculate_rewards,
@@ -44,6 +45,7 @@ from database import (
     generate_balance_sheet, generate_income_statement,
     generate_trial_balance,
     add_product, create_or_get_category_with_hierarchy,
+    suggest_categories_for_product, assign_category_to_product,
     # Stripe integration functions
     get_payment_settings, update_payment_settings,
     create_stripe_connect_account, update_stripe_connect_account, get_stripe_connect_account,
@@ -51,12 +53,22 @@ from database import (
 )
 from permission_manager import get_permission_manager
 from sms_service_email_to_aws import EmailToAWSSMSService
-import sqlite3
 import os
 import json
-from datetime import datetime, time
+from datetime import datetime, time, date
+from decimal import Decimal
 import tempfile
 import traceback
+import io
+from psycopg2 import sql
+from psycopg2.extras import RealDictCursor
+
+try:
+    import barcode
+    from barcode.writer import ImageWriter
+    _BARCODE_GEN_AVAILABLE = True
+except ImportError:
+    _BARCODE_GEN_AVAILABLE = False
 
 # Initialize image matcher and barcode scanner (lazy loading)
 _image_matcher = None
@@ -98,7 +110,6 @@ def get_barcode_scanner():
     return _barcode_scanner
 
 app = Flask(__name__)
-DB_NAME = 'inventory.db'
 
 # Initialize SMS service
 sms_service = EmailToAWSSMSService()
@@ -129,7 +140,7 @@ try:
     except Exception as conn_err:
         print(f"❌ ERROR: PostgreSQL connection failed: {conn_err}")
         print("❌ This system requires PostgreSQL. Please check your database connection settings.")
-        print("❌ Set DATABASE_URL or DB_HOST, DB_NAME, DB_USER, DB_PASSWORD in .env file")
+        print("❌ Set DATABASE_URL or DB_HOST, DB_USER, DB_PASSWORD (and DB_NAME) in .env file")
         raise SystemExit("Cannot start without PostgreSQL connection")
 except ImportError as e:
     print(f"❌ ERROR: PostgreSQL module not found: {e}")
@@ -231,69 +242,93 @@ def after_request(response):
 BUILD_DIR = 'frontend/dist'
 HAS_BUILD = os.path.exists(BUILD_DIR) and os.path.exists(os.path.join(BUILD_DIR, 'index.html'))
 
+def _pg_conn():
+    """PostgreSQL connection with dict-like rows."""
+    conn = get_connection()
+    return conn, conn.cursor(cursor_factory=RealDictCursor)
+
+
+def _json_serial(obj):
+    """Convert date/time/Decimal to JSON-serializable types."""
+    if obj is None:
+        return None
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.strftime('%H:%M:%S')
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _sanitize_for_json(obj):
+    """Recursively convert date/time/Decimal in dicts/lists to JSON-serializable types."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(x) for x in obj]
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.strftime('%H:%M:%S')
+    if isinstance(obj, Decimal):
+        return float(obj)
+    return obj
+
+def _pg_allowed_tables():
+    """List public table names (PostgreSQL)."""
+    conn, cursor = _pg_conn()
+    try:
+        cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE 'pg_%%'")
+        return [r['tablename'] for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
 def get_table_data(table_name):
-    """Get all data from a table"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    cursor.execute(f"SELECT * FROM {table_name}")
-    rows = cursor.fetchall()
-    
-    # Get column names
-    columns = [description[0] for description in cursor.description]
-    
-    conn.close()
-    
-    # Convert rows to dictionaries
-    data = []
-    for row in rows:
-        data.append({col: row[col] for col in columns})
-    
-    return columns, data
+    """Get all data from a table (PostgreSQL)."""
+    conn, cursor = _pg_conn()
+    try:
+        cursor.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name)))
+        rows = cursor.fetchall()
+        columns = list(rows[0].keys()) if rows else []
+        return columns, [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 def get_table_primary_key_columns(table_name):
-    """Return a list of primary key column names for a table (can be empty)."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    cols = cursor.fetchall()
-    conn.close()
-    # PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
-    pk_cols = [c[1] for c in cols if c[5]]
-    # If composite PK, pk is >0 indicating ordering; preserve ordering
-    if len(pk_cols) > 1:
-        pk_cols = [c[1] for c in sorted(cols, key=lambda x: x[5]) if x[5]]
-    return pk_cols
+    """Return primary key column names for a table (PostgreSQL)."""
+    conn, cursor = _pg_conn()
+    try:
+        cursor.execute("""
+            SELECT a.attname
+            FROM pg_index i
+            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) AND NOT a.attisdropped
+            WHERE i.indrelid = %s::regclass AND i.indisprimary
+            ORDER BY array_position(i.indkey, a.attnum)
+        """, (table_name,))
+        return [r['attname'] for r in cursor.fetchall()]
+    finally:
+        conn.close()
 
 def get_table_data_for_admin(table_name):
-    """
-    Get table data plus metadata needed for safe row identification/deletion.
-    If table has no primary key, include SQLite rowid as '__rowid__'.
-    """
+    """Get table data plus PK metadata (PostgreSQL). No rowid fallback."""
     pk_cols = get_table_primary_key_columns(table_name)
-
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    if pk_cols:
-        cursor.execute(f"SELECT * FROM {table_name}")
-    else:
-        cursor.execute(f"SELECT rowid as __rowid__, * FROM {table_name}")
-
-    rows = cursor.fetchall()
-    columns = [description[0] for description in cursor.description]
-    conn.close()
-
-    data = [{col: row[col] for col in columns} for row in rows]
-
-    return {
-        'columns': columns,
-        'data': data,
-        'primary_key': pk_cols,
-        'rowid_column': None if pk_cols else '__rowid__'
-    }
+    conn, cursor = _pg_conn()
+    try:
+        cursor.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name)))
+        rows = cursor.fetchall()
+        columns = list(rows[0].keys()) if rows else []
+        data = [dict(r) for r in rows]
+        return {
+            'columns': columns,
+            'data': data,
+            'primary_key': pk_cols,
+            'rowid_column': None
+        }
+    finally:
+        conn.close()
 
 @app.route('/')
 def index():
@@ -372,14 +407,15 @@ def api_inventory():
             
             # If vendor is a string name, try to find vendor_id
             if not vendor_id and vendor:
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute("SELECT vendor_id FROM vendors WHERE vendor_name = ?", (vendor,))
-                vendor_row = cursor.fetchone()
-                if vendor_row:
-                    vendor_id = vendor_row[0]
-                conn.close()
-            
+                conn, cursor = _pg_conn()
+                try:
+                    cursor.execute("SELECT vendor_id FROM vendors WHERE vendor_name = %s LIMIT 1", (vendor,))
+                    row = cursor.fetchone()
+                    if row:
+                        vendor_id = row['vendor_id']
+                finally:
+                    conn.close()
+
             # Create product
             product_id = add_product(
                 product_name=product_name,
@@ -406,37 +442,40 @@ def api_inventory():
             traceback.print_exc()
             return jsonify({'success': False, 'message': str(e)}), 500
     else:
-        # GET request
+        # GET request (PostgreSQL)
         try:
-            conn = sqlite3.connect(DB_NAME)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT 
-                    i.*,
-                    v.vendor_name,
-                    pm.keywords,
-                    pm.tags,
-                    pm.attributes
-                FROM inventory i
-                LEFT JOIN vendors v ON i.vendor_id = v.vendor_id
-                LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
-                ORDER BY i.product_name
-            """)
-            
-            rows = cursor.fetchall()
-            columns = [description[0] for description in cursor.description]
-            data = [{col: row[col] for col in columns} for row in rows]
-            
-            conn.close()
-            return jsonify({'columns': columns, 'data': data})
+            from database import ensure_metadata_tables
+            ensure_metadata_tables()
+            conn, cursor = _pg_conn()
+            try:
+                cursor.execute("""
+                    SELECT 
+                        i.*,
+                        v.vendor_name,
+                        pm.keywords,
+                        pm.tags,
+                        pm.attributes,
+                        pm.brand,
+                        pm.color,
+                        pm.size,
+                        pm.category_id as metadata_category_id,
+                        c.category_name as metadata_category_name,
+                        pm.category_confidence
+                    FROM inventory i
+                    LEFT JOIN vendors v ON i.vendor_id = v.vendor_id
+                    LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
+                    LEFT JOIN categories c ON pm.category_id = c.category_id
+                    ORDER BY i.product_name
+                """)
+                rows = cursor.fetchall()
+                columns = list(rows[0].keys()) if rows else []
+                data = [dict(r) for r in rows]
+                return jsonify({'columns': columns, 'data': data})
+            finally:
+                conn.close()
         except Exception as e:
             print(f"Error in api_inventory: {e}")
-            import traceback
             traceback.print_exc()
-            if 'conn' in locals():
-                conn.close()
             return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
 
 @app.route('/api/inventory/<int:product_id>', methods=['PUT'])
@@ -485,6 +524,32 @@ def api_update_inventory(product_id):
         traceback.print_exc()
         return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
 
+@app.route('/api/vendors/<int:vendor_id>', methods=['PUT'])
+def api_update_vendor(vendor_id):
+    """Update a vendor"""
+    try:
+        from database import update_vendor
+        data = request.json if request.is_json else request.form.to_dict()
+        
+        success = update_vendor(
+            vendor_id=vendor_id,
+            vendor_name=data.get('vendor_name'),
+            contact_person=data.get('contact_person'),
+            email=data.get('email'),
+            phone=data.get('phone'),
+            address=data.get('address')
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Vendor updated successfully'
+            })
+        return jsonify({'success': False, 'message': 'Vendor not found or no changes made'}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/vendors', methods=['GET', 'POST'])
 def api_vendors():
     """Get vendors data or create a new vendor"""
@@ -514,33 +579,167 @@ def api_vendors():
             return jsonify({'success': False, 'message': str(e)}), 500
     else:
         # GET request
-        vendors = list_vendors()
-        if not vendors:
-            return jsonify({'columns': [], 'data': []})
-        
-        columns = list(vendors[0].keys())
-        return jsonify({'columns': columns, 'data': vendors})
+        try:
+            vendors = list_vendors()
+            if not vendors:
+                return jsonify({'columns': [], 'data': []})
+            
+            columns = list(vendors[0].keys())
+            return jsonify({'columns': columns, 'data': vendors})
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
 
-@app.route('/api/categories', methods=['POST'])
-def api_create_category():
-    """Create a new category"""
+@app.route('/api/categories/<int:category_id>', methods=['PUT'])
+def api_update_category(category_id):
+    """Update a category - supports updating the full category path"""
     try:
+        from database import get_connection, create_or_get_category_with_hierarchy
         data = request.json if request.is_json else request.form.to_dict()
-        category_path = data.get('category_path') or data.get('category_name')
+        category_path = data.get('category_name') or data.get('category_path')
         
         if not category_path:
-            return jsonify({'success': False, 'message': 'category_path or category_name is required'}), 400
+            return jsonify({'success': False, 'message': 'category_name or category_path is required'}), 400
         
-        category_id = create_or_get_category_with_hierarchy(category_path)
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        if category_id:
+        # Check if category exists
+        cursor.execute("SELECT category_id, category_name, parent_category_id FROM categories WHERE category_id = %s", (category_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Category not found'}), 404
+        
+        # If the path contains ">", it's a hierarchical path
+        if '>' in category_path:
+            # Parse the path to get the leaf name and parent path
+            parts = [p.strip() for p in category_path.split('>')]
+            leaf_name = parts[-1]
+            
+            # Get the parent category_id for the new path (everything except the leaf)
+            parent_path = ' > '.join(parts[:-1]) if len(parts) > 1 else None
+            parent_id = None
+            if parent_path:
+                parent_id = create_or_get_category_with_hierarchy(parent_path, conn)
+            
+            # Update the category's name and parent
+            cursor.execute(
+                "UPDATE categories SET category_name = %s, parent_category_id = %s WHERE category_id = %s",
+                (leaf_name, parent_id, category_id)
+            )
+        else:
+            # Simple category name update (no hierarchy) - set parent to NULL
+            cursor.execute(
+                "UPDATE categories SET category_name = %s, parent_category_id = NULL WHERE category_id = %s",
+                (category_path, category_id)
+            )
+        
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        
+        if success:
             return jsonify({
                 'success': True,
-                'category_id': category_id,
-                'message': 'Category created successfully'
+                'message': 'Category updated successfully'
             })
-        else:
+        return jsonify({'success': False, 'message': 'Category not found or no changes made'}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/categories', methods=['GET', 'POST'])
+def api_categories():
+    """Get categories (with category_path) or create a new category"""
+    if request.method == 'POST':
+        try:
+            data = request.json if request.is_json else request.form.to_dict()
+            category_path = data.get('category_path') or data.get('category_name')
+
+            if not category_path:
+                return jsonify({'success': False, 'message': 'category_path or category_name is required'}), 400
+
+            category_id = create_or_get_category_with_hierarchy(category_path)
+
+            if category_id:
+                return jsonify({
+                    'success': True,
+                    'category_id': category_id,
+                    'message': 'Category created successfully'
+                })
             return jsonify({'success': False, 'message': 'Failed to create category'}), 500
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'success': False, 'message': str(e)}), 500
+    try:
+        categories = list_categories(include_path=True)
+        if not categories:
+            return jsonify({'columns': [], 'data': []})
+        columns = list(categories[0].keys())
+        return jsonify({'columns': columns, 'data': categories})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'columns': [], 'data': []})
+
+
+@app.route('/api/categories/suggest', methods=['POST'])
+def api_categories_suggest():
+    """Suggest categories for a product (product_name, optional barcode). No DB write."""
+    try:
+        data = request.json if request.is_json else {}
+        product_name = data.get('product_name') or ''
+        barcode = data.get('barcode')
+        if not product_name:
+            return jsonify({'success': False, 'message': 'product_name is required'}), 400
+        suggestions = suggest_categories_for_product(product_name=product_name, barcode=barcode)
+        return jsonify({'success': True, 'suggestions': suggestions})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/inventory/<int:product_id>/category', methods=['PATCH', 'PUT'])
+def api_inventory_category(product_id):
+    """Assign category to product. Body: {category_id} or {category_path}."""
+    try:
+        data = request.json if request.is_json else {}
+        category_id = data.get('category_id')
+        category_path = data.get('category_path')
+        if category_id is None and not category_path:
+            return jsonify({'success': False, 'message': 'category_id or category_path required'}), 400
+        ok = assign_category_to_product(
+            product_id=product_id,
+            category_id=category_id,
+            category_path=category_path,
+            confidence=1.0
+        )
+        if ok:
+            return jsonify({'success': True, 'message': 'Category assigned'})
+        return jsonify({'success': False, 'message': 'Assign failed'}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/categories/bulk-assign', methods=['POST'])
+def api_categories_bulk_assign():
+    """Bulk assign categories. Body: {assignments: [{product_id, category_id}|{product_id, category_path}]}."""
+    try:
+        data = request.json if request.is_json else {}
+        assignments = data.get('assignments') or []
+        if not assignments:
+            return jsonify({'success': False, 'message': 'assignments array required'}), 400
+        updated = 0
+        for item in assignments:
+            pid = item.get('product_id')
+            cid = item.get('category_id')
+            path = item.get('category_path')
+            if pid is None:
+                continue
+            if assign_category_to_product(product_id=pid, category_id=cid, category_path=path, confidence=1.0):
+                updated += 1
+        return jsonify({'success': True, 'updated': updated, 'total': len(assignments)})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -688,15 +887,13 @@ def api_update_item_verification(item_id):
                 
                 # Get product_id from pending item and update product photo if it doesn't have one
                 try:
-                    from database import get_connection, get_product, update_product
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT product_id FROM pending_shipment_items WHERE pending_item_id = ?", (item_id,))
-                    row = cursor.fetchone()
-                    conn.close()
-                    
-                    if row and row[0]:  # product_id exists
-                        product_id = row[0]
+                    from database import get_product, update_product
+                    conn, cursor = _pg_conn()
+                    try:
+                        cursor.execute("SELECT product_id FROM pending_shipment_items WHERE pending_item_id = %s", (item_id,))
+                        row = cursor.fetchone()
+                        if row and row.get('product_id'):
+                            product_id = row['product_id']
                         product = get_product(product_id)
                         # Always update product photo with verification photo (even if product already has a photo)
                         if product:
@@ -705,6 +902,8 @@ def api_update_item_verification(item_id):
                                 photo=verification_photo
                             )
                             print(f"Updated product {product_id} photo with verification photo: {verification_photo}")
+                    finally:
+                        conn.close()
                 except Exception as e:
                     print(f"Warning: Could not update product photo: {e}")
         
@@ -799,87 +998,31 @@ def api_complete_verification(shipment_id):
         if not employee_id:
             return jsonify({'success': False, 'message': 'Employee ID required'}), 401
         
-        # Get workflow settings
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT setting_value FROM shipment_verification_settings 
-            WHERE setting_key = 'workflow_mode'
-        """)
-        setting = cursor.fetchone()
-        workflow_mode = setting['setting_value'] if setting else 'simple'
+        # Get workflow_step from shipment (for three-step workflow support)
+        # But verification_mode comes from the shipment record, not settings
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("SELECT workflow_step, status FROM pending_shipments WHERE pending_shipment_id = %s", (shipment_id,))
+            shipment = cursor.fetchone()
+            current_step = shipment['workflow_step'] if shipment else None
+        finally:
+            conn.close()
         
-        cursor.execute("""
-            SELECT setting_value FROM shipment_verification_settings 
-            WHERE setting_key = 'auto_add_to_inventory'
-        """)
-        setting = cursor.fetchone()
-        auto_add = setting['setting_value'] == 'true' if setting else True
-        
-        # Check current workflow step
-        cursor.execute("SELECT workflow_step, status FROM pending_shipments WHERE pending_shipment_id = ?", (shipment_id,))
-        shipment = cursor.fetchone()
-        current_step = shipment['workflow_step'] if shipment else None
-        
-        conn.close()
-        
-        # For simple workflow: complete and add to inventory immediately
-        if workflow_mode == 'simple' and auto_add:
-            result = complete_verification(shipment_id, employee_id, data.get('notes'))
-            if result.get('success'):
-                # Mark as completed and added to inventory
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
+        # Support three-step workflow if needed (but verification_mode is from shipment, not settings)
+        if current_step == 'confirm_pricing':
+            conn, cursor = _pg_conn()
+            try:
                 cursor.execute("""
-                    UPDATE pending_shipments 
-                    SET status = 'completed',
-                        workflow_step = 'completed',
-                        added_to_inventory = 1
-                    WHERE pending_shipment_id = ?
+                    UPDATE pending_shipments SET workflow_step = 'ready_for_inventory'
+                    WHERE pending_shipment_id = %s
                 """, (shipment_id,))
                 conn.commit()
+                return jsonify({'success': True, 'step': 'ready_for_inventory', 'message': 'Ready for step 3: Add to inventory'})
+            finally:
                 conn.close()
-            return jsonify(result)
         
-        # For three-step workflow: move to next step
-        elif workflow_mode == 'three_step':
-            # Step 1 (verify): Move to step 2 (confirm pricing)
-            if current_step is None or current_step == 'verify':
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE pending_shipments 
-                    SET workflow_step = 'confirm_pricing',
-                        status = 'in_progress'
-                    WHERE pending_shipment_id = ?
-                """, (shipment_id,))
-                conn.commit()
-                conn.close()
-                return jsonify({
-                    'success': True,
-                    'step': 'confirm_pricing',
-                    'message': 'Move to step 2: Confirm pricing'
-                })
-            
-            # Step 2 (confirm_pricing): Ready for step 3 (add to inventory)
-            elif current_step == 'confirm_pricing':
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE pending_shipments 
-                    SET workflow_step = 'ready_for_inventory'
-                    WHERE pending_shipment_id = ?
-                """, (shipment_id,))
-                conn.commit()
-                conn.close()
-                return jsonify({
-                    'success': True,
-                    'step': 'ready_for_inventory',
-                    'message': 'Ready for step 3: Add to inventory'
-                })
-        
-        # Default: complete normally
+        # Complete verification - uses verification_mode from the shipment record
+        # (set when shipment was created, not from settings)
         result = complete_verification(shipment_id, employee_id, data.get('notes'))
         return jsonify(result)
         
@@ -896,6 +1039,256 @@ def api_get_shipment_items(shipment_id):
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/shipments/preview', methods=['POST'])
+def api_preview_shipment():
+    """Preview scraped data from a vendor shipment document without creating shipment"""
+    try:
+        # Check if file is present
+        if 'document' not in request.files:
+            return jsonify({'success': False, 'message': 'No document file provided'}), 400
+        
+        file = request.files['document']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No file selected'}), 400
+        
+        # Save uploaded file temporarily
+        filename = secure_filename(f"preview_{datetime.now().timestamp()}_{file.filename}")
+        upload_dir = 'uploads/shipments'
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, filename)
+        file.save(file_path)
+        
+        # Scrape the document
+        from document_scraper import scrape_document
+        try:
+            items = scrape_document(file_path)
+        except Exception as e:
+            # Clean up file on error
+            try:
+                os.remove(file_path)
+            except:
+                pass
+            return jsonify({'success': False, 'message': f'Error scraping document: {str(e)}'}), 400
+        
+        if not items:
+            # Clean up file if no items
+            try:
+                os.remove(file_path)
+            except:
+                pass
+            return jsonify({'success': False, 'message': 'No items found in document'}), 400
+        
+        return jsonify({
+            'success': True,
+            'items': items,
+            'file_path': file_path,
+            'filename': file.filename
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/shipments/draft/save', methods=['POST'])
+def api_save_shipment_draft():
+    """Save a shipment draft"""
+    try:
+        employee_id = None
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not session_token:
+            session_token = request.form.get('session_token')
+        if session_token:
+            session_data = verify_session(session_token)
+            if session_data and session_data.get('valid'):
+                employee_id = session_data.get('employee_id')
+        
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Employee ID required'}), 401
+        
+        items_data = request.form.get('items')
+        file_path = request.form.get('file_path')
+        draft_id = request.form.get('draft_id')  # Optional: for updating existing draft
+        
+        if not items_data:
+            return jsonify({'success': False, 'message': 'Items data required'}), 400
+        
+        import json
+        try:
+            items = json.loads(items_data)
+        except:
+            return jsonify({'success': False, 'message': 'Invalid items data'}), 400
+        
+        vendor_id = request.form.get('vendor_id')
+        if not vendor_id:
+            return jsonify({'success': False, 'message': 'Vendor ID required'}), 400
+        
+        try:
+            vendor_id = int(vendor_id)
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Invalid vendor ID'}), 400
+        
+        purchase_order_number = request.form.get('purchase_order_number', '').strip() or None
+        expected_delivery_date = request.form.get('expected_delivery_date', '').strip() or None
+        tracking_number = request.form.get('tracking_number', '').strip() or None
+        
+        draft_id_int = int(draft_id) if draft_id else None
+        
+        from database import save_shipment_draft
+        saved_draft_id = save_shipment_draft(
+            vendor_id=vendor_id,
+            items=items,
+            file_path=file_path,
+            expected_date=expected_delivery_date,
+            purchase_order_number=purchase_order_number,
+            tracking_number=tracking_number,
+            uploaded_by=employee_id,
+            draft_id=draft_id_int
+        )
+        
+        return jsonify({
+            'success': True,
+            'draft_id': saved_draft_id,
+            'message': 'Draft saved successfully'
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/shipments/draft/<int:draft_id>', methods=['GET'])
+def api_load_draft(draft_id):
+    """Load a shipment draft"""
+    try:
+        from database import get_pending_shipment_details
+        draft = get_pending_shipment_details(draft_id)
+        
+        if not draft:
+            return jsonify({'success': False, 'message': 'Draft not found'}), 404
+        
+        if draft.get('status') != 'draft':
+            return jsonify({'success': False, 'message': 'Not a draft'}), 400
+        
+        # Format items for frontend
+        items = []
+        for item in draft.get('items', []):
+            items.append({
+                'product_sku': item.get('product_sku', ''),
+                'product_name': item.get('product_name', ''),
+                'quantity_expected': item.get('quantity_expected', 0),
+                'unit_cost': float(item.get('unit_cost', 0.0)),
+                'lot_number': item.get('lot_number', ''),
+                'expiration_date': item.get('expiration_date', ''),
+                'barcode': item.get('barcode', '')
+            })
+        
+        return jsonify({
+            'success': True,
+            'draft': {
+                'draft_id': draft.get('pending_shipment_id'),
+                'vendor_id': draft.get('vendor_id'),
+                'file_path': draft.get('file_path'),
+                'expected_date': draft.get('expected_date'),
+                'purchase_order_number': draft.get('purchase_order_number'),
+                'tracking_number': draft.get('tracking_number'),
+                'items': items
+            }
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/shipments/draft/<int:draft_id>/confirm', methods=['POST'])
+def api_confirm_draft(draft_id):
+    """Confirm a draft - change status from 'draft' to 'in_progress'"""
+    try:
+        employee_id = None
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not session_token:
+            session_token = request.form.get('session_token')
+        if session_token:
+            session_data = verify_session(session_token)
+            if session_data and session_data.get('valid'):
+                employee_id = session_data.get('employee_id')
+        
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Employee ID required'}), 401
+        
+        # Get items data if provided (for updating items before confirming)
+        items_data = request.form.get('items')
+        if items_data:
+            import json
+            try:
+                items = json.loads(items_data)
+            except:
+                return jsonify({'success': False, 'message': 'Invalid items data'}), 400
+            
+            # Update draft with new items
+            from database import save_shipment_draft
+            vendor_id = request.form.get('vendor_id')
+            if vendor_id:
+                try:
+                    vendor_id = int(vendor_id)
+                except ValueError:
+                    return jsonify({'success': False, 'message': 'Invalid vendor ID'}), 400
+                
+                # Get current draft to preserve other fields
+                from database import get_pending_shipment
+                current_draft = get_pending_shipment(draft_id)
+                if not current_draft or current_draft.get('status') != 'draft':
+                    return jsonify({'success': False, 'message': 'Draft not found'}), 404
+                
+                # Update draft with new items
+                save_shipment_draft(
+                    vendor_id=vendor_id or current_draft.get('vendor_id'),
+                    items=items,
+                    file_path=request.form.get('file_path') or current_draft.get('file_path'),
+                    expected_date=request.form.get('expected_delivery_date') or current_draft.get('expected_date'),
+                    purchase_order_number=request.form.get('purchase_order_number') or current_draft.get('purchase_order_number'),
+                    tracking_number=request.form.get('tracking_number') or current_draft.get('tracking_number'),
+                    uploaded_by=employee_id,
+                    draft_id=draft_id
+                )
+        
+        # Update status to 'in_progress'
+        from database import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                UPDATE pending_shipments
+                SET status = 'in_progress',
+                    upload_timestamp = NOW()
+                WHERE pending_shipment_id = %s AND status = 'draft'
+            """, (draft_id,))
+            
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return jsonify({'success': False, 'message': 'Draft not found or already confirmed'}), 404
+            
+            conn.commit()
+            
+            # Get updated shipment info
+            from database import get_pending_shipment_details
+            shipment = get_pending_shipment_details(draft_id)
+            
+            return jsonify({
+                'success': True,
+                'pending_shipment_id': draft_id,
+                'items_added': len(shipment.get('items', [])) if shipment else 0,
+                'message': 'Draft confirmed and moved to in progress'
+            })
+        except Exception as e:
+            conn.rollback()
+            raise
+        finally:
+            pass
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/shipments/upload', methods=['POST'])
 def api_upload_shipment():
@@ -914,6 +1307,92 @@ def api_upload_shipment():
         if not employee_id:
             return jsonify({'success': False, 'message': 'Employee ID required'}), 401
         
+        # Check if this is a preview confirmation (has items data)
+        items_data = request.form.get('items')
+        file_path = request.form.get('file_path')
+        
+        if items_data and file_path:
+            # This is a confirmation from preview - use the edited items
+            import json
+            try:
+                items = json.loads(items_data)
+            except:
+                return jsonify({'success': False, 'message': 'Invalid items data'}), 400
+            
+            # Get form data
+            vendor_id = request.form.get('vendor_id')
+            if not vendor_id:
+                return jsonify({'success': False, 'message': 'Vendor ID required'}), 400
+            
+            try:
+                vendor_id = int(vendor_id)
+            except ValueError:
+                return jsonify({'success': False, 'message': 'Invalid vendor ID'}), 400
+            
+            purchase_order_number = request.form.get('purchase_order_number', '').strip()
+            expected_delivery_date = request.form.get('expected_delivery_date', '').strip() or None
+            verification_mode = request.form.get('verification_mode', 'auto_add').strip()
+            
+            # Validate verification_mode
+            if verification_mode not in ('auto_add', 'verify_whole_shipment'):
+                verification_mode = 'auto_add'
+            
+            # Create pending shipment with the edited items
+            try:
+                pending_shipment_id = create_pending_shipment(
+                    vendor_id=vendor_id,
+                    file_path=file_path,
+                    expected_date=expected_delivery_date,
+                    purchase_order_number=purchase_order_number if purchase_order_number else None,
+                    uploaded_by=employee_id,
+                    verification_mode=verification_mode
+                )
+            except Exception as e:
+                return jsonify({'success': False, 'message': f'Error creating pending shipment: {str(e)}'}), 400
+            
+            # Add items to pending shipment
+            items_added = 0
+            total_expected = 0
+            total_cost = 0.0
+            
+            for idx, item in enumerate(items):
+                try:
+                    # Auto-generate barcode if not provided
+                    barcode = item.get('barcode')
+                    if not barcode or barcode.strip() == '':
+                        barcode = generate_unique_barcode(
+                            pending_shipment_id=pending_shipment_id,
+                            line_number=idx + 1,
+                            product_sku=item.get('product_sku', '')
+                        )
+                    
+                    add_pending_shipment_item(
+                        pending_shipment_id=pending_shipment_id,
+                        product_sku=item.get('product_sku', ''),
+                        product_name=item.get('product_name'),
+                        quantity_expected=item.get('quantity_expected', 0),
+                        unit_cost=item.get('unit_cost', 0.0),
+                        lot_number=item.get('lot_number'),
+                        expiration_date=item.get('expiration_date'),
+                        barcode=barcode,
+                        line_number=idx + 1
+                    )
+                    items_added += 1
+                    total_expected += item.get('quantity_expected', 0)
+                    total_cost += item.get('quantity_expected', 0) * item.get('unit_cost', 0.0)
+                except Exception as e:
+                    print(f"Error adding item {idx}: {e}")
+                    continue
+            
+            return jsonify({
+                'success': True,
+                'pending_shipment_id': pending_shipment_id,
+                'items_added': items_added,
+                'total_expected': total_expected,
+                'total_cost': total_cost
+            })
+        
+        # Original flow: file upload
         # Check if file is present
         if 'document' not in request.files:
             return jsonify({'success': False, 'message': 'No document file provided'}), 400
@@ -934,11 +1413,11 @@ def api_upload_shipment():
         
         purchase_order_number = request.form.get('purchase_order_number', '').strip()
         expected_delivery_date = request.form.get('expected_delivery_date', '').strip() or None
-        verification_mode = request.form.get('verification_mode', 'verify_whole_shipment').strip()
+        verification_mode = request.form.get('verification_mode', 'auto_add').strip()
         
         # Validate verification_mode
         if verification_mode not in ('auto_add', 'verify_whole_shipment'):
-            verification_mode = 'verify_whole_shipment'
+            verification_mode = 'auto_add'
         
         # Save uploaded file
         filename = secure_filename(f"{vendor_id}_{datetime.now().timestamp()}_{file.filename}")
@@ -1157,35 +1636,16 @@ def api_get_receipt_settings():
 
 @app.route('/api/receipt-settings', methods=['POST'])
 def api_update_receipt_settings():
-    """Update receipt settings"""
+    """Update receipt settings (PostgreSQL)"""
     try:
         if not request.is_json:
             return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
-        
         data = request.json
-        
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        # Check if settings exist
-        cursor.execute("SELECT COUNT(*) FROM receipt_settings")
-        count = cursor.fetchone()[0]
-        
-        # Add return_policy column if it doesn't exist
+        conn, cursor = _pg_conn()
         try:
-            cursor.execute("ALTER TABLE receipt_settings ADD COLUMN return_policy TEXT")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-        
-        if count == 0:
-            # Insert new settings
-            cursor.execute("""
-                INSERT INTO receipt_settings (
-                    store_name, store_address, store_city, store_state, store_zip,
-                    store_phone, store_email, store_website, footer_message, return_policy,
-                    show_tax_breakdown, show_payment_method, show_signature
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
+            cursor.execute("SELECT COUNT(*) AS c FROM receipt_settings")
+            count = cursor.fetchone()['c']
+            vals = (
                 data.get('store_name', 'Store'),
                 data.get('store_address', ''),
                 data.get('store_city', ''),
@@ -1198,157 +1658,87 @@ def api_update_receipt_settings():
                 data.get('return_policy', ''),
                 data.get('show_tax_breakdown', 1),
                 data.get('show_payment_method', 1),
-                data.get('show_signature', 0)
-            ))
-        else:
-            # Update existing settings
-            cursor.execute("""
-                UPDATE receipt_settings SET
-                    store_name = ?,
-                    store_address = ?,
-                    store_city = ?,
-                    store_state = ?,
-                    store_zip = ?,
-                    store_phone = ?,
-                    store_email = ?,
-                    store_website = ?,
-                    footer_message = ?,
-                    return_policy = ?,
-                    show_tax_breakdown = ?,
-                    show_payment_method = ?,
-                    show_signature = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
-            """, (
-                data.get('store_name', 'Store'),
-                data.get('store_address', ''),
-                data.get('store_city', ''),
-                data.get('store_state', ''),
-                data.get('store_zip', ''),
-                data.get('store_phone', ''),
-                data.get('store_email', ''),
-                data.get('store_website', ''),
-                data.get('footer_message', 'Thank you for your business!'),
-                data.get('return_policy', ''),
-                data.get('show_tax_breakdown', 1),
-                data.get('show_payment_method', 1),
-                data.get('show_signature', 0)
-            ))
-        
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'success': True, 'message': 'Receipt settings updated successfully'})
+                data.get('show_signature', 0),
+            )
+            if count == 0:
+                cursor.execute("""
+                    INSERT INTO receipt_settings (
+                        store_name, store_address, store_city, store_state, store_zip,
+                        store_phone, store_email, store_website, footer_message, return_policy,
+                        show_tax_breakdown, show_payment_method, show_signature
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, vals)
+            else:
+                cursor.execute("""
+                    UPDATE receipt_settings SET
+                        store_name = %s, store_address = %s, store_city = %s, store_state = %s,
+                        store_zip = %s, store_phone = %s, store_email = %s, store_website = %s,
+                        footer_message = %s, return_policy = %s,
+                        show_tax_breakdown = %s, show_payment_method = %s, show_signature = %s,
+                        updated_at = NOW()
+                    WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
+                """, vals)
+            conn.commit()
+            return jsonify({'success': True, 'message': 'Receipt settings updated successfully'})
+        finally:
+            conn.close()
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/pos-settings', methods=['GET'])
 def api_get_pos_settings():
-    """Get POS settings"""
+    """Get POS settings (PostgreSQL)"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        # Create pos_settings table if it doesn't exist
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pos_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                num_registers INTEGER DEFAULT 1,
-                register_type TEXT DEFAULT 'one_screen',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        
-        # Get settings
-        cursor.execute("SELECT * FROM pos_settings ORDER BY id DESC LIMIT 1")
-        row = cursor.fetchone()
-        
-        if row:
-            settings = {
-                'num_registers': row[1],
-                'register_type': row[2]
-            }
-        else:
-            # Return defaults if no settings exist
-            settings = {
-                'num_registers': 1,
-                'register_type': 'one_screen'
-            }
-        
-        conn.close()
-        return jsonify({'success': True, 'settings': settings})
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("SELECT * FROM pos_settings ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                settings = {'num_registers': row.get('num_registers', 1), 'register_type': row.get('register_type', 'one_screen')}
+            else:
+                settings = {'num_registers': 1, 'register_type': 'one_screen'}
+            return jsonify({'success': True, 'settings': settings})
+        finally:
+            conn.close()
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/pos-settings', methods=['POST'])
 def api_update_pos_settings():
-    """Update POS settings"""
+    """Update POS settings (PostgreSQL)"""
     try:
         if not request.is_json:
             return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
-        
         data = request.get_json()
         if data is None:
             return jsonify({'success': False, 'message': 'Invalid JSON in request body'}), 400
-        
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        # Create pos_settings table if it doesn't exist
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pos_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                num_registers INTEGER DEFAULT 1,
-                register_type TEXT DEFAULT 'one_screen',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        
-        # Check if settings exist
-        cursor.execute("SELECT COUNT(*) FROM pos_settings")
-        count = cursor.fetchone()[0]
-        
         num_registers = data.get('num_registers', 1)
         register_type = data.get('register_type', 'one_screen')
-        
-        # Validate register_type
         if register_type not in ['one_screen', 'two_screen']:
             register_type = 'one_screen'
-        
-        # Validate num_registers
         try:
             num_registers = int(num_registers)
             if num_registers < 1:
                 num_registers = 1
         except (ValueError, TypeError):
             num_registers = 1
-        
-        if count == 0:
-            # Insert new settings
-            cursor.execute("""
-                INSERT INTO pos_settings (num_registers, register_type)
-                VALUES (?, ?)
-            """, (num_registers, register_type))
-        else:
-            # Update existing settings
-            cursor.execute("""
-                UPDATE pos_settings SET
-                    num_registers = ?,
-                    register_type = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = (SELECT id FROM pos_settings ORDER BY id DESC LIMIT 1)
-            """, (num_registers, register_type))
-        
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'success': True, 'message': 'POS settings updated successfully'})
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("SELECT COUNT(*) AS c FROM pos_settings")
+            count = cursor.fetchone()['c']
+            if count == 0:
+                cursor.execute("INSERT INTO pos_settings (num_registers, register_type) VALUES (%s, %s)", (num_registers, register_type))
+            else:
+                cursor.execute("""
+                    UPDATE pos_settings SET num_registers = %s, register_type = %s, updated_at = NOW()
+                    WHERE id = (SELECT id FROM pos_settings ORDER BY id DESC LIMIT 1)
+                """, (num_registers, register_type))
+            conn.commit()
+            return jsonify({'success': True, 'message': 'POS settings updated successfully'})
+        finally:
+            conn.close()
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -1358,44 +1748,30 @@ def api_update_pos_settings():
 def api_list_tables():
     """Get list of all tables in the database (excluding receipt_preferences)"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-        tables = [row[0] for row in cursor.fetchall()]
-        # Exclude receipt_preferences table since it's now part of the orders table
-        tables = [t for t in tables if t != 'receipt_preferences']
-        conn.close()
+        tables = _pg_allowed_tables()
+        tables = sorted([t for t in tables if t != 'receipt_preferences'])
         return jsonify({'tables': tables})
     except Exception as e:
         print(f"Error listing tables: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({'tables': [], 'error': str(e)}), 500
 
 # Raw table endpoints for admin table viewer (always direct table access + metadata)
 @app.route('/api/tables/<table_name>', methods=['GET'])
 def api_tables_table(table_name):
-    """Raw table access for the Tables UI (includes PK/rowid metadata)."""
-    # Get all tables dynamically for security check
+    """Raw table access for the Tables UI (includes PK metadata)."""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        allowed_tables = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        allowed_tables = _pg_allowed_tables()
     except Exception as e:
         print(f"Error getting table list: {e}")
         return jsonify({'columns': [], 'data': [], 'error': 'Database error'}), 500
-
     if table_name not in allowed_tables:
         return jsonify({'columns': [], 'data': [], 'error': 'Table not found'}), 404
-
     try:
         result = get_table_data_for_admin(table_name)
         return jsonify(result)
     except Exception as e:
         print(f"Error loading table {table_name}: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({'columns': [], 'data': [], 'error': str(e)}), 500
 
@@ -1403,26 +1779,18 @@ def api_tables_table(table_name):
 @app.route('/api/<table_name>', methods=['GET'])
 def api_table(table_name):
     """Generic endpoint for any table (read-only)"""
-    # Get all tables dynamically for security check
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        allowed_tables = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        allowed_tables = _pg_allowed_tables()
     except Exception as e:
         print(f"Error getting table list: {e}")
         return jsonify({'columns': [], 'data': [], 'error': 'Database error'}), 500
-    
     if table_name not in allowed_tables:
         return jsonify({'columns': [], 'data': [], 'error': 'Table not found'}), 404
-    
     try:
         result = get_table_data_for_admin(table_name)
         return jsonify(result)
     except Exception as e:
         print(f"Error loading table {table_name}: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({'columns': [], 'data': [], 'error': str(e)}), 500
 
@@ -1430,96 +1798,58 @@ def api_table(table_name):
 @app.route('/api/<table_name>/rows', methods=['DELETE'])
 def api_delete_table_rows(table_name):
     """
-    Delete one or more rows from a table.
-
-    Request JSON:
-    - If table has single-column PK: { "ids": [1,2,3] }
-    - If table has composite PK: { "keys": [ {"pk1":..., "pk2":...}, ... ] }
-    - If table has no PK: { "rowids": [123,124] }  (uses SQLite rowid)
+    Delete one or more rows from a table (PostgreSQL).
+    Request JSON: single-column PK { "ids": [1,2,3] } or composite PK { "keys": [ {"pk1":..., "pk2":...}, ... ] }.
     """
-    # Get all tables dynamically for security check
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        allowed_tables = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        allowed_tables = _pg_allowed_tables()
     except Exception as e:
         print(f"Error getting table list: {e}")
         return jsonify({'success': False, 'message': 'Database error'}), 500
-
     if table_name not in allowed_tables:
         return jsonify({'success': False, 'message': 'Table not found'}), 404
-
     if not request.is_json:
         return jsonify({'success': False, 'message': 'Invalid request data'}), 400
-
     payload = request.get_json(silent=True) or {}
-
+    pk_cols = get_table_primary_key_columns(table_name)
+    if not pk_cols:
+        return jsonify({'success': False, 'message': 'Table has no primary key; delete by ids/keys not supported'}), 400
     try:
-        pk_cols = get_table_primary_key_columns(table_name)
-
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-
+        conn, cursor = _pg_conn()
         deleted = 0
-
-        if pk_cols:
+        try:
             if len(pk_cols) == 1:
                 pk = pk_cols[0]
                 ids = payload.get('ids', [])
                 if not isinstance(ids, list) or len(ids) == 0:
-                    conn.close()
                     return jsonify({'success': False, 'message': 'No ids provided'}), 400
-
-                placeholders = ','.join(['?'] * len(ids))
-                cursor.execute(f"DELETE FROM {table_name} WHERE {pk} IN ({placeholders})", ids)
+                ph = sql.SQL(',').join([sql.Placeholder()] * len(ids))
+                cursor.execute(sql.SQL("DELETE FROM {} WHERE {} IN ({})").format(
+                    sql.Identifier(table_name), sql.Identifier(pk), ph), ids)
                 deleted = cursor.rowcount
             else:
                 keys = payload.get('keys', [])
                 if not isinstance(keys, list) or len(keys) == 0:
-                    conn.close()
                     return jsonify({'success': False, 'message': 'No keys provided'}), 400
-
                 clauses = []
                 params = []
                 for k in keys:
-                    if not isinstance(k, dict):
+                    if not isinstance(k, dict) or any(col not in k for col in pk_cols):
                         continue
-                    if any(col not in k for col in pk_cols):
-                        continue
-                    clauses.append('(' + ' AND '.join([f"{col} = ?" for col in pk_cols]) + ')')
+                    clauses.append('(' + ' AND '.join([f"{c} = %s" for c in pk_cols]) + ')')
                     params.extend([k[col] for col in pk_cols])
-
                 if not clauses:
-                    conn.close()
                     return jsonify({'success': False, 'message': 'Invalid keys provided'}), 400
-
-                cursor.execute(f"DELETE FROM {table_name} WHERE " + " OR ".join(clauses), params)
+                q = "DELETE FROM {} WHERE " + " OR ".join(clauses)
+                cursor.execute(sql.SQL(q).format(sql.Identifier(table_name)), params)
                 deleted = cursor.rowcount
-        else:
-            rowids = payload.get('rowids', [])
-            if not isinstance(rowids, list) or len(rowids) == 0:
-                conn.close()
-                return jsonify({'success': False, 'message': 'No rowids provided'}), 400
-
-            placeholders = ','.join(['?'] * len(rowids))
-            cursor.execute(f"DELETE FROM {table_name} WHERE rowid IN ({placeholders})", rowids)
-            deleted = cursor.rowcount
-
-        conn.commit()
-        conn.close()
-
-        return jsonify({'success': True, 'deleted': deleted})
+            conn.commit()
+            return jsonify({'success': True, 'deleted': deleted})
+        finally:
+            conn.close()
     except Exception as e:
         print(f"Error deleting rows from {table_name}: {e}")
-        import traceback
         traceback.print_exc()
-        try:
-            if 'conn' in locals():
-                conn.close()
-        except Exception:
-            pass
         return jsonify({'success': False, 'message': str(e)}), 500
 
 # Specialized endpoints with joins
@@ -1539,63 +1869,126 @@ def api_orders():
         traceback.print_exc()
         return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
 
+@app.route('/api/orders/search', methods=['GET'])
+def api_search_orders():
+    """Search orders by order_number or order_id"""
+    try:
+        order_number = request.args.get('order_number')
+        order_id = request.args.get('order_id')
+        
+        if not order_number and not order_id:
+            return jsonify({'error': 'order_number or order_id required', 'data': []}), 400
+        
+        conn, cursor = _pg_conn()
+        try:
+            if order_id:
+                # Search by order_id
+                cursor.execute("""
+                    SELECT 
+                        o.*,
+                        e.first_name || ' ' || e.last_name as employee_name,
+                        c.customer_name
+                    FROM orders o
+                    LEFT JOIN employees e ON o.employee_id = e.employee_id
+                    LEFT JOIN customers c ON o.customer_id = c.customer_id
+                    WHERE o.order_id = %s
+                """, (int(order_id),))
+            else:
+                # Search by order_number (exact match, case-insensitive, or partial)
+                cursor.execute("""
+                    SELECT 
+                        o.*,
+                        e.first_name || ' ' || e.last_name as employee_name,
+                        c.customer_name
+                    FROM orders o
+                    LEFT JOIN employees e ON o.employee_id = e.employee_id
+                    LEFT JOIN customers c ON o.customer_id = c.customer_id
+                    WHERE o.order_number::text ILIKE %s
+                       OR o.order_number::text = %s
+                    ORDER BY o.order_date DESC
+                    LIMIT 10
+                """, (f'%{order_number}%', order_number))
+            
+            rows = cursor.fetchall()
+            data = [dict(r) for r in rows]
+            return jsonify({'data': data})
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error in api_search_orders: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'data': []}), 500
+
 @app.route('/api/order_items')
 def api_order_items():
     """Get order items with product details"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT 
-                oi.*,
-                i.product_name,
-                i.sku,
-                o.order_number
-            FROM order_items oi
-            LEFT JOIN inventory i ON oi.product_id = i.product_id
-            LEFT JOIN orders o ON oi.order_id = o.order_id
-            ORDER BY oi.order_id DESC, oi.order_item_id
-        """)
-        
-        rows = cursor.fetchall()
-        columns = [description[0] for description in cursor.description]
-        data = [{col: row[col] for col in columns} for row in rows]
-        
-        conn.close()
-        return jsonify({'columns': columns, 'data': data})
+        order_id = request.args.get('order_id')
+        conn, cursor = _pg_conn()
+        try:
+            if order_id:
+                # Fetch items for specific order
+                cursor.execute("""
+                    SELECT 
+                        oi.*,
+                        i.product_name,
+                        i.sku,
+                        o.order_number
+                    FROM order_items oi
+                    LEFT JOIN inventory i ON oi.product_id = i.product_id
+                    LEFT JOIN orders o ON oi.order_id = o.order_id
+                    WHERE oi.order_id = %s
+                    ORDER BY oi.order_item_id
+                """, (int(order_id),))
+            else:
+                # Fetch all order items
+                cursor.execute("""
+                    SELECT 
+                        oi.*,
+                        i.product_name,
+                        i.sku,
+                        o.order_number
+                    FROM order_items oi
+                    LEFT JOIN inventory i ON oi.product_id = i.product_id
+                    LEFT JOIN orders o ON oi.order_id = o.order_id
+                    ORDER BY oi.order_id DESC, oi.order_item_id
+                """)
+            rows = cursor.fetchall()
+            columns = list(rows[0].keys()) if rows else []
+            data = [dict(r) for r in rows]
+            return jsonify({'columns': columns, 'data': data})
+        finally:
+            conn.close()
     except Exception as e:
         print(f"Error in api_order_items: {e}")
-        import traceback
         traceback.print_exc()
-        if 'conn' in locals():
-            conn.close()
         return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
 
 @app.route('/api/payment_transactions')
 def api_payment_transactions():
     """Get payment transactions with order details"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT 
-            pt.*,
-            o.order_number,
-            o.total as order_total
-        FROM payment_transactions pt
-        JOIN orders o ON pt.order_id = o.order_id
-        ORDER BY pt.transaction_date DESC
-    """)
-    
-    rows = cursor.fetchall()
-    columns = [description[0] for description in cursor.description]
-    data = [{col: row[col] for col in columns} for row in rows]
-    
-    conn.close()
-    return jsonify({'columns': columns, 'data': data})
+    try:
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("""
+                SELECT 
+                    pt.*,
+                    o.order_number,
+                    o.total as order_total
+                FROM payment_transactions pt
+                JOIN orders o ON pt.order_id = o.order_id
+                ORDER BY pt.transaction_date DESC
+            """)
+            rows = cursor.fetchall()
+            columns = list(rows[0].keys()) if rows else []
+            data = [dict(r) for r in rows]
+            return jsonify({'columns': columns, 'data': data})
+        finally:
+            conn.close()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
 
 @app.route('/api/employees')
 def api_employees():
@@ -1624,9 +2017,7 @@ def api_employee_schedule():
     """Get or create employee schedule"""
     if request.method == 'GET':
         # Get employee schedule with employee names
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Get query parameters
         start_date = request.args.get('start_date')
@@ -1646,27 +2037,27 @@ def api_employee_schedule():
         params = []
         
         if start_date:
-            query += " AND es.schedule_date >= ?"
+            query += " AND es.schedule_date >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND es.schedule_date <= ?"
+            query += " AND es.schedule_date <= %s"
             params.append(end_date)
         
         if employee_id:
-            query += " AND es.employee_id = ?"
+            query += " AND es.employee_id = %s"
             params.append(employee_id)
         
         cursor.execute(query, params)
         old_schedules = cursor.fetchall()
         
         # Also get published schedules from Scheduled_Shifts (new system)
-        # Check if Scheduled_Shifts table exists
         cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name='Scheduled_Shifts'
+            SELECT EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'scheduled_shifts') AS ok
         """)
-        has_scheduled_shifts = cursor.fetchone()
+        row = cursor.fetchone()
+        has_scheduled_shifts = row and row.get('ok')
         
         new_schedules = []
         if has_scheduled_shifts:
@@ -1696,15 +2087,15 @@ def api_employee_schedule():
             new_params = []
             
             if start_date:
-                new_query += " AND ss.shift_date >= ?"
+                new_query += " AND ss.shift_date >= %s"
                 new_params.append(start_date)
             
             if end_date:
-                new_query += " AND ss.shift_date <= ?"
+                new_query += " AND ss.shift_date <= %s"
                 new_params.append(end_date)
             
             if employee_id:
-                new_query += " AND ss.employee_id = ?"
+                new_query += " AND ss.employee_id = %s"
                 new_params.append(employee_id)
             
             new_query += " ORDER BY ss.shift_date DESC, ss.start_time"
@@ -1738,7 +2129,7 @@ def api_employee_schedule():
             columns = [description[0] for description in cursor.description] if old_schedules else []
         
         conn.close()
-        return jsonify({'columns': columns, 'data': all_schedules})
+        return jsonify({'columns': columns, 'data': _sanitize_for_json(all_schedules)})
     
     elif request.method == 'POST':
         # Create new schedule
@@ -1804,9 +2195,7 @@ def api_employee_schedule():
 @app.route('/api/time_clock')
 def api_time_clock():
     """Get time clock entries with employee names"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn, cursor = _pg_conn()
     
     cursor.execute("""
         SELECT 
@@ -1828,9 +2217,7 @@ def api_time_clock():
 @app.route('/api/employee_sessions')
 def api_employee_sessions():
     """Get employee sessions with employee names"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn, cursor = _pg_conn()
     
     cursor.execute("""
         SELECT 
@@ -1902,36 +2289,33 @@ def api_clock_in():
         current_time = clock_in_time.time()
         
         # Get schedule for today
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Check for schedule in employee_schedule table
         cursor.execute("""
             SELECT schedule_id, start_time, end_time, schedule_date
             FROM employee_schedule
-            WHERE employee_id = ? AND schedule_date = ?
+            WHERE employee_id = %s AND schedule_date = %s
             ORDER BY start_time
             LIMIT 1
         """, (employee_id, today))
         
         schedule = cursor.fetchone()
         
-        # Also check Scheduled_Shifts table
         if not schedule:
             cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='Scheduled_Shifts'
+                SELECT EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'scheduled_shifts') AS ok
             """)
-            has_scheduled_shifts = cursor.fetchone()
-            
+            r = cursor.fetchone()
+            has_scheduled_shifts = r and r.get('ok')
             if has_scheduled_shifts:
                 cursor.execute("""
                     SELECT ss.scheduled_shift_id, ss.shift_date, ss.start_time, ss.end_time
                     FROM Scheduled_Shifts ss
                     JOIN Schedule_Periods sp ON ss.period_id = sp.period_id
-                    WHERE ss.employee_id = ? 
-                      AND ss.shift_date = ?
+                    WHERE ss.employee_id = %s 
+                      AND ss.shift_date = %s
                       AND ss.is_draft = 0 
                       AND sp.status = 'published'
                     ORDER BY ss.start_time
@@ -2104,13 +2488,12 @@ def api_register_face():
             return jsonify({'success': False, 'message': 'Face descriptor must have 128 values'}), 400
         
         # Store face encoding in database
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Check if face encoding already exists
         cursor.execute("""
             SELECT face_id FROM employee_face_encodings 
-            WHERE employee_id = ?
+            WHERE employee_id = %s
         """, (employee_id,))
         
         existing = cursor.fetchone()
@@ -2119,16 +2502,16 @@ def api_register_face():
             # Update existing encoding
             cursor.execute("""
                 UPDATE employee_face_encodings
-                SET face_descriptor = ?,
+                SET face_descriptor = %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE employee_id = ?
+                WHERE employee_id = %s
             """, (json.dumps(face_descriptor), employee_id))
         else:
             # Insert new encoding
             cursor.execute("""
                 INSERT INTO employee_face_encodings (
                     employee_id, face_descriptor
-                ) VALUES (?, ?)
+                ) VALUES (%s, %s)
             """, (employee_id, json.dumps(face_descriptor)))
         
         conn.commit()
@@ -2162,12 +2545,11 @@ def api_verify_face():
             return jsonify({'success': False, 'message': 'Invalid face descriptor'}), 400
         
         # Get stored face encoding for this employee
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         cursor.execute("""
             SELECT face_descriptor FROM employee_face_encodings
-            WHERE employee_id = ?
+            WHERE employee_id = %s
         """, (employee_id,))
         
         row = cursor.fetchone()
@@ -2212,13 +2594,12 @@ def api_face_status():
         if not employee_id:
             return jsonify({'success': False, 'message': 'Authentication required'}), 401
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         cursor.execute("""
             SELECT face_id, registered_at, updated_at
             FROM employee_face_encodings
-            WHERE employee_id = ?
+            WHERE employee_id = %s
         """, (employee_id,))
         
         row = cursor.fetchone()
@@ -2271,9 +2652,7 @@ def api_identify_face():
             return jsonify({'success': False, 'message': 'Invalid face descriptor'}), 400
         
         # Get all registered face encodings with employee info
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         cursor.execute("""
             SELECT 
@@ -2368,9 +2747,7 @@ def api_face_clock():
         identify_data['threshold'] = data.get('threshold', 0.6)
         
         # Call internal identify function (simulate by calling the logic)
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         cursor.execute("""
             SELECT 
@@ -2436,16 +2813,14 @@ def api_face_clock():
             current_time = clock_in_time.time()
             
             # Get schedule for today
-            conn = sqlite3.connect(DB_NAME)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn, cursor = _pg_conn()
             
             # Check for schedule in employee_schedule table
             cursor.execute("""
                 SELECT schedule_id, start_time, end_time, schedule_date
                 FROM employee_schedule
-                WHERE employee_id = ? 
-                  AND schedule_date = ?
+                WHERE employee_id = %s 
+                  AND schedule_date = %s
                   AND clock_in_time IS NULL
                 ORDER BY start_time ASC
                 LIMIT 1
@@ -2462,8 +2837,8 @@ def api_face_clock():
                     SELECT ss.shift_id as schedule_id, ss.start_time, ss.end_time, ss.shift_date as schedule_date
                     FROM Scheduled_Shifts ss
                     JOIN Schedule_Periods sp ON ss.period_id = sp.period_id
-                    WHERE ss.employee_id = ?
-                      AND ss.shift_date = ?
+                    WHERE ss.employee_id = %s
+                      AND ss.shift_date = %s
                       AND ss.published = 1
                       AND NOT EXISTS (
                           SELECT 1 FROM employee_schedule es
@@ -2589,9 +2964,7 @@ def api_face_clock():
 @app.route('/api/journal_entries')
 def api_journal_entries():
     """Get journal entries with employee names"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn, cursor = _pg_conn()
     
     cursor.execute("""
         SELECT 
@@ -2612,9 +2985,7 @@ def api_journal_entries():
 @app.route('/api/journal_entry_lines')
 def api_journal_entry_lines():
     """Get journal entry lines with account details"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn, cursor = _pg_conn()
     
     cursor.execute("""
         SELECT 
@@ -2657,88 +3028,243 @@ def api_audit_log():
     columns = list(audit_trail[0].keys())
     return jsonify({'columns': columns, 'data': audit_trail})
 
-@app.route('/api/dashboard/statistics')
+@app.route('/api/dashboard/statistics', methods=['GET'])
 def api_dashboard_statistics():
     """Get comprehensive dashboard statistics"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    try:
+        conn, cursor = _pg_conn()
+        is_postgres = True
+    except Exception as e:
+        import traceback
+        return jsonify({'error': 'Database connection failed', 'detail': str(e), 'traceback': traceback.format_exc()}), 500
     
     try:
+        # Import datetime at the top level to avoid issues
         from datetime import datetime, timedelta
+        import sys
         
-        # Get total orders count
-        cursor.execute("SELECT COUNT(*) as total FROM orders")
-        total_orders = cursor.fetchone()['total']
+        def get_result_value(result, key, index=0):
+            """Helper to get value from result dict or tuple"""
+            if result is None:
+                return 0
+            if isinstance(result, dict):
+                value = result.get(key, 0)
+                return value if value is not None else 0
+            elif isinstance(result, (list, tuple)):
+                return result[index] if result and len(result) > index and result[index] is not None else 0
+            return 0
+        
+        # Get total orders count (check if table exists first)
+        total_orders = 0
+        try:
+            if is_postgres:
+                # Check if orders table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'orders'
+                    )
+                """)
+                table_exists_result = cursor.fetchone()
+                table_exists = False
+                if table_exists_result:
+                    if isinstance(table_exists_result, dict):
+                        table_exists = table_exists_result.get('exists', False)
+                    elif isinstance(table_exists_result, (list, tuple)) and len(table_exists_result) > 0:
+                        table_exists = bool(table_exists_result[0])
+                
+                if table_exists:
+                    cursor.execute("SELECT COUNT(*) as total FROM orders")
+                    result = cursor.fetchone()
+                    total_orders = get_result_value(result, 'total', 0)
+            else:
+                cursor.execute("SELECT COUNT(*) as total FROM orders")
+                result = cursor.fetchone()
+                total_orders = get_result_value(result, 'total', 0)
+        except Exception as e:
+            print(f"Error getting total orders: {e}")
+            total_orders = 0
         
         # Get total returns count (check if table exists first)
+        total_returns = 0
         try:
-            cursor.execute("SELECT COUNT(*) as total FROM pending_returns")
-            total_returns = cursor.fetchone()['total']
-        except sqlite3.OperationalError:
+            if is_postgres:
+                # Check if table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'pending_returns'
+                    )
+                """)
+                table_exists_result = cursor.fetchone()
+                table_exists = False
+                if table_exists_result:
+                    if isinstance(table_exists_result, dict):
+                        table_exists = table_exists_result.get('exists', False)
+                    elif isinstance(table_exists_result, (list, tuple)) and len(table_exists_result) > 0:
+                        table_exists = bool(table_exists_result[0])
+                
+                if table_exists:
+                    cursor.execute("SELECT COUNT(*) as total FROM pending_returns")
+                    result = cursor.fetchone()
+                    total_returns = get_result_value(result, 'total', 0)
+            else:
+                cursor.execute("SELECT COUNT(*) as total FROM pending_returns")
+                result = cursor.fetchone()
+                total_returns = get_result_value(result, 'total', 0)
+        except Exception as e:
+            print(f"Error getting total returns: {e}")
             total_returns = 0
         
         # Revenue by period
         # All time revenue
-        cursor.execute("""
-            SELECT COALESCE(SUM(total), 0) as revenue
-            FROM orders
-            WHERE order_status != 'voided'
-        """)
-        all_time_revenue = cursor.fetchone()['revenue'] or 0
+        all_time_revenue = 0.0
+        try:
+            cursor.execute("""
+                SELECT COALESCE(SUM(total), 0) as revenue
+                FROM orders
+                WHERE (order_status != 'voided' OR order_status IS NULL)
+            """)
+            result = cursor.fetchone()
+            all_time_revenue = get_result_value(result, 'revenue', 0)
+        except Exception as e:
+            print(f"Error getting all time revenue: {e}")
+            all_time_revenue = 0.0
         
         # Today's revenue
-        cursor.execute("""
-            SELECT COALESCE(SUM(total), 0) as revenue
-            FROM orders
-            WHERE DATE(order_date) = DATE('now')
-                AND order_status != 'voided'
-        """)
-        today_revenue = cursor.fetchone()['revenue'] or 0
+        today_revenue = 0.0
+        try:
+            if is_postgres:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date::date = CURRENT_DATE
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                """)
+            else:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE DATE(order_date) = DATE('now')
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                """)
+            result = cursor.fetchone()
+            today_revenue = get_result_value(result, 'revenue', 0)
+        except Exception as e:
+            print(f"Error getting today's revenue: {e}")
+            today_revenue = 0.0
         
         # This week's revenue
-        cursor.execute("""
-            SELECT COALESCE(SUM(total), 0) as revenue
-            FROM orders
-            WHERE order_date >= datetime('now', '-7 days')
-                AND order_status != 'voided'
-        """)
-        week_revenue = cursor.fetchone()['revenue'] or 0
+        week_revenue = 0.0
+        try:
+            if is_postgres:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= CURRENT_DATE - INTERVAL '7 days'
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                """)
+            else:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= datetime('now', '-7 days')
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                """)
+            result = cursor.fetchone()
+            week_revenue = get_result_value(result, 'revenue', 0)
+        except Exception as e:
+            print(f"Error getting week revenue: {e}")
+            week_revenue = 0.0
         
         # This month's revenue
-        cursor.execute("""
-            SELECT COALESCE(SUM(total), 0) as revenue
-            FROM orders
-            WHERE order_date >= datetime('now', 'start of month')
-                AND order_status != 'voided'
-        """)
-        month_revenue = cursor.fetchone()['revenue'] or 0
+        month_revenue = 0.0
+        try:
+            if is_postgres:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= DATE_TRUNC('month', CURRENT_DATE)
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                """)
+            else:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= datetime('now', 'start of month')
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                """)
+            result = cursor.fetchone()
+            month_revenue = get_result_value(result, 'revenue', 0)
+        except Exception as e:
+            print(f"Error getting month revenue: {e}")
+            month_revenue = 0.0
         
         # Average order value
-        cursor.execute("""
-            SELECT 
-                COALESCE(AVG(total), 0) as avg_order_value,
-                COUNT(*) as order_count
-            FROM orders
-            WHERE order_status != 'voided'
-        """)
-        avg_result = cursor.fetchone()
-        avg_order_value = avg_result['avg_order_value'] or 0 if avg_result['order_count'] > 0 else 0
+        avg_order_value = 0.0
+        try:
+            cursor.execute("""
+                SELECT 
+                    COALESCE(AVG(total), 0) as avg_order_value,
+                    COUNT(*) as order_count
+                FROM orders
+                WHERE (order_status != 'voided' OR order_status IS NULL)
+            """)
+            avg_result = cursor.fetchone()
+            avg_order_value = get_result_value(avg_result, 'avg_order_value', 0)
+            order_count = get_result_value(avg_result, 'order_count', 1)
+            if order_count == 0:
+                avg_order_value = 0
+        except Exception as e:
+            print(f"Error getting avg order value: {e}")
+            avg_order_value = 0.0
         
         # Weekly revenue (last 7 days) - detailed
-        cursor.execute("""
-            SELECT 
-                strftime('%Y-%m-%d', order_date) as date,
-                COALESCE(SUM(total), 0) as revenue
-            FROM orders
-            WHERE order_date >= datetime('now', '-7 days')
-                AND order_status != 'voided'
-            GROUP BY strftime('%Y-%m-%d', order_date)
-            ORDER BY date ASC
-        """)
-        
-        revenue_rows = cursor.fetchall()
-        weekly_revenue = {row['date']: row['revenue'] for row in revenue_rows}
+        revenue_rows = []
+        try:
+            if is_postgres:
+                cursor.execute("""
+                    SELECT 
+                        order_date::date::text as date,
+                        COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= CURRENT_DATE - INTERVAL '7 days'
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                    GROUP BY order_date::date
+                    ORDER BY date ASC
+                """)
+            else:
+                cursor.execute("""
+                    SELECT 
+                        strftime('%Y-%m-%d', order_date) as date,
+                        COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= datetime('now', '-7 days')
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                    GROUP BY strftime('%Y-%m-%d', order_date)
+                    ORDER BY date ASC
+                """)
+            
+            revenue_rows = cursor.fetchall()
+        except Exception as e:
+            print(f"Error getting weekly revenue: {e}")
+            revenue_rows = []
+        weekly_revenue = {}
+        for row in revenue_rows:
+            if row:
+                if isinstance(row, dict):
+                    date_key = row.get('date', '')
+                    revenue_val = row.get('revenue', 0)
+                    if date_key:
+                        weekly_revenue[date_key] = revenue_val
+                else:
+                    if len(row) > 0:
+                        date_key = str(row[0]) if row[0] else ''
+                        revenue_val = row[1] if len(row) > 1 else 0
+                        if date_key:
+                            weekly_revenue[date_key] = revenue_val
         
         today = datetime.now().date()
         week_data = []
@@ -2750,84 +3276,202 @@ def api_dashboard_statistics():
             week_data.append({
                 'date': date_str,
                 'day': day_name,
-                'revenue': revenue
+                'revenue': float(revenue) if revenue else 0
             })
         
-        # Monthly revenue (last 12 months)
-        cursor.execute("""
-            SELECT 
-                strftime('%Y-%m', order_date) as month,
-                COALESCE(SUM(total), 0) as revenue
-            FROM orders
-            WHERE order_date >= datetime('now', '-12 months')
-                AND order_status != 'voided'
-            GROUP BY strftime('%Y-%m', order_date)
-            ORDER BY month ASC
-        """)
-        
-        monthly_rows = cursor.fetchall()
-        monthly_revenue = {row['month']: row['revenue'] for row in monthly_rows}
+        # Monthly revenue (last 12 months) - still needed for other parts
+        monthly_rows = []
+        try:
+            if is_postgres:
+                cursor.execute("""
+                    SELECT 
+                        TO_CHAR(order_date, 'YYYY-MM') as month,
+                        COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= CURRENT_DATE - INTERVAL '12 months'
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                    GROUP BY TO_CHAR(order_date, 'YYYY-MM')
+                    ORDER BY month ASC
+                """)
+            else:
+                cursor.execute("""
+                    SELECT 
+                        strftime('%Y-%m', order_date) as month,
+                        COALESCE(SUM(total), 0) as revenue
+                    FROM orders
+                    WHERE order_date >= datetime('now', '-12 months')
+                        AND (order_status != 'voided' OR order_status IS NULL)
+                    GROUP BY strftime('%Y-%m', order_date)
+                    ORDER BY month ASC
+                """)
+            
+            monthly_rows = cursor.fetchall()
+        except Exception as e:
+            print(f"Error getting monthly revenue: {e}")
+            monthly_rows = []
+        monthly_revenue = {}
+        for row in monthly_rows:
+            if row:
+                if isinstance(row, dict):
+                    month_key = row.get('month', '')
+                    revenue_val = row.get('revenue', 0)
+                    if month_key:
+                        monthly_revenue[month_key] = revenue_val
+                else:
+                    if len(row) > 0:
+                        month_key = str(row[0]) if row[0] else ''
+                        revenue_val = row[1] if len(row) > 1 else 0
+                        if month_key:
+                            monthly_revenue[month_key] = revenue_val
         
         # Generate last 12 months
         monthly_data = []
-        for i in range(11, -1, -1):
-            month_date = (datetime.now() - timedelta(days=30*i)).replace(day=1)
-            month_str = month_date.strftime('%Y-%m')
-            month_name = month_date.strftime('%b')
-            revenue = monthly_revenue.get(month_str, 0)
-            monthly_data.append({
-                'month': month_str,
-                'month_name': month_name,
-                'revenue': revenue
-            })
+        try:
+            today = datetime.now().date()
+            current_year = today.year
+            current_month = today.month
+            
+            for i in range(11, -1, -1):
+                # Calculate month by going back i months
+                target_month = current_month - i
+                target_year = current_year
+                
+                # Handle year rollover
+                while target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                month_date = datetime(target_year, target_month, 1).date()
+                month_str = month_date.strftime('%Y-%m')
+                month_name = month_date.strftime('%b')
+                revenue = monthly_revenue.get(month_str, 0)
+                monthly_data.append({
+                    'month': month_str,
+                    'month_name': month_name,
+                    'revenue': float(revenue) if revenue else 0
+                })
+        except Exception as e:
+            print(f"Error generating monthly data: {e}")
+            import traceback
+            traceback.print_exc()
+            monthly_data = []
         
         # Order status breakdown
-        cursor.execute("""
-            SELECT 
-                order_status,
-                COUNT(*) as count
-            FROM orders
-            GROUP BY order_status
-        """)
-        status_rows = cursor.fetchall()
-        order_status_breakdown = {row['order_status']: row['count'] for row in status_rows}
+        order_status_breakdown = {}
+        try:
+            # Check if cursor is still valid, create new one if needed
+            try:
+                cursor.execute("SELECT 1")
+            except:
+                # Cursor is closed, create a new one
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute("""
+                SELECT 
+                    order_status,
+                    COUNT(*) as count
+                FROM orders
+                GROUP BY order_status
+            """)
+            status_rows = cursor.fetchall()
+            for row in status_rows:
+                if row:
+                    if isinstance(row, dict):
+                        status_key = row.get('order_status', '')
+                        count_val = row.get('count', 0)
+                        if status_key:
+                            order_status_breakdown[status_key] = count_val
+                    else:
+                        if len(row) > 0:
+                            status_key = str(row[0]) if row[0] else ''
+                            count_val = row[1] if len(row) > 1 else 0
+                            if status_key:
+                                order_status_breakdown[status_key] = count_val
+        except Exception as e:
+            print(f"Error getting order status breakdown: {e}")
+            order_status_breakdown = {}
         
-        # Top selling products (last 30 days)
-        cursor.execute("""
-            SELECT 
-                i.product_id,
-                i.product_name,
-                SUM(oi.quantity) as total_quantity,
-                SUM(oi.subtotal) as total_revenue
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.order_id
-            JOIN inventory i ON oi.product_id = i.product_id
-            WHERE o.order_date >= datetime('now', '-30 days')
-                AND o.order_status != 'voided'
-            GROUP BY i.product_id, i.product_name
-            ORDER BY total_quantity DESC
-            LIMIT 10
-        """)
-        top_products = [dict(row) for row in cursor.fetchall()]
+        # Top selling products (last 30 days) - not needed for current UI but keeping for API compatibility
+        top_products = []
+        try:
+            if is_postgres:
+                cursor.execute("""
+                    SELECT 
+                        i.product_id,
+                        i.product_name,
+                        SUM(oi.quantity)::integer as total_quantity,
+                        SUM(oi.subtotal) as total_revenue
+                    FROM order_items oi
+                    JOIN orders o ON oi.order_id = o.order_id
+                    JOIN inventory i ON oi.product_id = i.product_id
+                    WHERE o.order_date >= CURRENT_DATE - INTERVAL '30 days'
+                        AND o.order_status != 'voided'
+                    GROUP BY i.product_id, i.product_name
+                    ORDER BY total_quantity DESC
+                    LIMIT 10
+                """)
+            else:
+                cursor.execute("""
+                    SELECT 
+                        i.product_id,
+                        i.product_name,
+                        SUM(oi.quantity) as total_quantity,
+                        SUM(oi.subtotal) as total_revenue
+                    FROM order_items oi
+                    JOIN orders o ON oi.order_id = o.order_id
+                    JOIN inventory i ON oi.product_id = i.product_id
+                    WHERE o.order_date >= datetime('now', '-30 days')
+                        AND o.order_status != 'voided'
+                    GROUP BY i.product_id, i.product_name
+                    ORDER BY total_quantity DESC
+                    LIMIT 10
+                """)
+            for row in cursor.fetchall():
+                if isinstance(row, dict):
+                    top_products.append(dict(row))
+                else:
+                    top_products.append({
+                        'product_id': row[0],
+                        'product_name': row[1],
+                        'total_quantity': row[2] if len(row) > 2 else 0,
+                        'total_revenue': row[3] if len(row) > 3 else 0
+                    })
+        except Exception as e:
+            print(f"Error getting top products: {e}")
+            top_products = []
         
         # Inventory statistics
         try:
             cursor.execute("SELECT COUNT(*) as total FROM inventory")
-            total_products = cursor.fetchone()['total']
+            result = cursor.fetchone()
+            total_products = get_result_value(result, 'total', 0)
+            
+            # Check if reorder_point column exists
+            try:
+                if is_postgres:
+                    cursor.execute("""
+                        SELECT COUNT(*) as low_stock
+                        FROM inventory
+                        WHERE current_quantity <= 10
+                    """)
+                else:
+                    cursor.execute("""
+                        SELECT COUNT(*) as low_stock
+                        FROM inventory
+                        WHERE current_quantity <= 10
+                    """)
+                result = cursor.fetchone()
+                low_stock = get_result_value(result, 'low_stock', 0)
+            except:
+                low_stock = 0
             
             cursor.execute("""
-                SELECT COUNT(*) as low_stock
-                FROM inventory
-                WHERE quantity <= reorder_point
-            """)
-            low_stock = cursor.fetchone()['low_stock']
-            
-            cursor.execute("""
-                SELECT COALESCE(SUM(quantity * cost), 0) as total_value
+                SELECT COALESCE(SUM(current_quantity * product_cost), 0) as total_value
                 FROM inventory
             """)
-            inventory_value = cursor.fetchone()['total_value'] or 0
-        except sqlite3.OperationalError:
+            result = cursor.fetchone()
+            inventory_value = get_result_value(result, 'total_value', 0)
+        except Exception:
             total_products = 0
             low_stock = 0
             inventory_value = 0
@@ -2835,33 +3479,111 @@ def api_dashboard_statistics():
         # Returns rate
         returns_rate = (total_returns / total_orders * 100) if total_orders > 0 else 0
         
-        conn.close()
-        return jsonify({
-            'total_orders': total_orders,
-            'total_returns': total_returns,
-            'returns_rate': round(returns_rate, 2),
-            'revenue': {
-                'all_time': all_time_revenue,
-                'today': today_revenue,
-                'week': week_revenue,
-                'month': month_revenue
-            },
-            'avg_order_value': round(avg_order_value, 2),
-            'weekly_revenue': week_data,
-            'monthly_revenue': monthly_data,
-            'order_status_breakdown': order_status_breakdown,
-            'top_products': top_products,
-            'inventory': {
-                'total_products': total_products,
-                'low_stock': low_stock,
-                'total_value': inventory_value
+        # Today's returns count and amount
+        today_returns_count = 0
+        today_returns_amount = 0
+        try:
+            # Check if pending_returns table exists first
+            if is_postgres:
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'pending_returns'
+                    )
+                """)
+                table_exists_result = cursor.fetchone()
+                table_exists = False
+                if table_exists_result:
+                    if isinstance(table_exists_result, dict):
+                        table_exists = table_exists_result.get('exists', False)
+                    elif isinstance(table_exists_result, (list, tuple)) and len(table_exists_result) > 0:
+                        table_exists = bool(table_exists_result[0])
+                
+                if table_exists:
+                    cursor.execute("""
+                        SELECT 
+                            COUNT(*) as count,
+                            COALESCE(SUM(total_refund_amount), 0) as amount
+                        FROM pending_returns
+                        WHERE return_date::date = CURRENT_DATE
+                            AND status = 'approved'
+                    """)
+                    today_returns_result = cursor.fetchone()
+                    if isinstance(today_returns_result, dict):
+                        today_returns_count = today_returns_result.get('count', 0) or 0
+                        today_returns_amount = today_returns_result.get('amount', 0) or 0
+                    else:
+                        today_returns_count = today_returns_result[0] if today_returns_result and len(today_returns_result) > 0 else 0
+                        today_returns_amount = today_returns_result[1] if today_returns_result and len(today_returns_result) > 1 else 0
+        except Exception as e:
+            import traceback
+            print(f"Error getting today's returns: {e}")
+            traceback.print_exc()
+            today_returns_count = 0
+            today_returns_amount = 0
+        
+        # Don't close connection here - it's a global connection that should stay open
+        # conn.close()  # Commented out to keep connection alive
+        
+        # Ensure all values are JSON-serializable
+        try:
+            response_data = {
+                'total_orders': int(total_orders) if total_orders is not None else 0,
+                'total_returns': int(total_returns) if total_returns is not None else 0,
+                'returns_rate': round(float(returns_rate), 2) if returns_rate is not None else 0.0,
+                'returns': {
+                    'today': int(today_returns_count) if today_returns_count is not None else 0,
+                    'today_amount': float(today_returns_amount) if today_returns_amount is not None else 0.0
+                },
+                'revenue': {
+                    'all_time': float(all_time_revenue) if all_time_revenue is not None else 0.0,
+                    'today': float(today_revenue) if today_revenue is not None else 0.0,
+                    'week': float(week_revenue) if week_revenue is not None else 0.0,
+                    'month': float(month_revenue) if month_revenue is not None else 0.0
+                },
+                'avg_order_value': round(float(avg_order_value), 2) if avg_order_value is not None else 0.0,
+                'weekly_revenue': week_data if week_data else [],
+                'monthly_revenue': monthly_data if monthly_data else [],
+                'order_status_breakdown': {str(k): int(v) for k, v in order_status_breakdown.items()} if order_status_breakdown else {},
+                'top_products': top_products if top_products else [],
+                'inventory': {
+                    'total_products': int(total_products) if total_products is not None else 0,
+                    'low_stock': int(low_stock) if low_stock is not None else 0,
+                    'total_value': float(inventory_value) if inventory_value is not None else 0.0
+                }
             }
-        })
+            return jsonify(response_data)
+        except Exception as json_err:
+            import traceback
+            print(f"Error serializing response: {json_err}")
+            traceback.print_exc()
+            return jsonify({
+                'error': 'Failed to serialize response',
+                'message': str(json_err)
+            }), 500
     except Exception as e:
-        conn.close()
         import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        error_trace = traceback.format_exc()
+        print(f"Error in api_dashboard_statistics: {e}")
+        print(error_trace)
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+        return jsonify({
+            'error': str(e),
+            'message': 'Failed to load dashboard statistics',
+            'traceback': error_trace
+        }), 500
+    finally:
+        # Ensure connection is closed
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 # ============================================================================
 # IMAGE MATCHING API ENDPOINTS
@@ -3084,9 +3806,7 @@ def api_build_product_database():
 @app.route('/api/image_identifications')
 def api_image_identifications():
     """Get image identification history"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn, cursor = _pg_conn()
     
     cursor.execute("""
         SELECT 
@@ -3105,6 +3825,72 @@ def api_image_identifications():
     
     conn.close()
     return jsonify({'columns': columns, 'data': data})
+
+# ============================================================================
+# PRODUCT BARCODE IMAGE GENERATION
+# ============================================================================
+
+def _product_barcode_value(product):
+    """Get or generate barcode value for a product (12 digits for EAN13)."""
+    b = (product.get('barcode') or '').strip()
+    if b and b.isdigit() and len(b) >= 8:
+        return b[:12].zfill(12) if len(b) < 12 else b[:12]
+    pid = product.get('product_id') or 0
+    prefix = '100'
+    base = prefix + str(pid % 100000).zfill(5) + '0000'
+    base = base[:11]
+    checksum = sum(int(d) for d in base) % 10
+    return base + str(checksum)
+
+def _generate_product_barcode_png(barcode_value):
+    """Generate barcode PNG bytes using existing system (EAN13/Code128)."""
+    if not _BARCODE_GEN_AVAILABLE:
+        return None
+    try:
+        if barcode_value.isdigit() and len(barcode_value) == 12:
+            code = barcode.get('ean13', '0' + barcode_value, writer=ImageWriter())
+        elif barcode_value.isdigit():
+            code = barcode.get('code128', barcode_value, writer=ImageWriter())
+        else:
+            code = barcode.get('code128', barcode_value, writer=ImageWriter())
+        options = {
+            'module_width': 0.5,
+            'module_height': 15.0,
+            'quiet_zone': 6.5,
+            'font_size': 10,
+            'text_distance': 5.0,
+            'background': 'white',
+            'foreground': 'black',
+            'write_text': True,
+            'text': barcode_value,
+        }
+        img = code.render(options)
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception as e:
+        traceback.print_exc()
+        return None
+
+@app.route('/api/product_barcode_image')
+def api_product_barcode_image():
+    """Generate product barcode PNG. Query: product_id=."""
+    product_id = request.args.get('product_id', type=int)
+    if not product_id:
+        return jsonify({'success': False, 'error': 'product_id required'}), 400
+    product = get_product(product_id)
+    if not product:
+        return jsonify({'success': False, 'error': 'Product not found'}), 404
+    if not _BARCODE_GEN_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Barcode generation not available. Install python-barcode[images].'}), 503
+    barcode_value = _product_barcode_value(product)
+    png_bytes = _generate_product_barcode_png(barcode_value)
+    if not png_bytes:
+        return jsonify({'success': False, 'error': 'Failed to generate barcode image'}), 500
+    return Response(png_bytes, mimetype='image/png', headers={
+        'Cache-Control': 'no-store',
+        'Content-Disposition': f'inline; filename="barcode_{product_id}.png"',
+    })
 
 # ============================================================================
 # BARCODE SCANNING API ENDPOINTS
@@ -3303,9 +4089,7 @@ def api_pending_returns():
 @app.route('/api/pending_return_items')
 def api_pending_return_items():
     """Get pending return items"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn, cursor = _pg_conn()
     
     return_id = request.args.get('return_id', type=int)
     
@@ -3315,7 +4099,7 @@ def api_pending_return_items():
             FROM pending_return_items pri
             JOIN inventory i ON pri.product_id = i.product_id
             JOIN pending_returns pr ON pri.return_id = pr.return_id
-            WHERE pri.return_id = ?
+            WHERE pri.return_id = %s
         """, (return_id,))
     else:
         cursor.execute("""
@@ -3332,6 +4116,235 @@ def api_pending_return_items():
     
     conn.close()
     return jsonify({'columns': columns, 'data': data})
+
+@app.route('/api/process_return', methods=['POST'])
+def api_process_return():
+    """Process a return immediately (no pending state)"""
+    try:
+        if not request.json:
+            return jsonify({'success': False, 'message': 'Invalid request data'}), 400
+        
+        data = request.json
+        from database import process_return_immediate
+        from receipt_generator import generate_return_receipt, generate_exchange_receipt
+        
+        result = process_return_immediate(
+            order_id=data.get('order_id'),
+            items_to_return=data.get('items', []),
+            employee_id=data.get('employee_id'),
+            customer_id=data.get('customer_id'),
+            reason=data.get('reason'),
+            notes=data.get('notes'),
+            return_type=data.get('return_type', 'refund'),
+            exchange_timing=data.get('exchange_timing'),
+            return_subtotal=data.get('return_subtotal', 0),
+            return_tax=data.get('return_tax', 0),
+            return_processing_fee=data.get('return_processing_fee', 0),
+            return_total=data.get('return_total', 0),
+            payment_method=data.get('payment_method')
+        )
+        
+        if not result.get('success'):
+            return jsonify(result), 400
+        
+        # Return receipt URL (will be generated on demand via endpoint)
+        result['return_receipt_url'] = f"/api/receipt/return/{result['return_id']}"
+        
+        # Generate exchange receipt if exchange and later
+        if result.get('return_type') == 'exchange' and data.get('exchange_timing') == 'later':
+            result['exchange_receipt_url'] = f"/api/receipt/exchange/{result['exchange_credit_id']}"
+        else:
+            result['exchange_receipt_url'] = None
+        
+        return jsonify(result)
+    except Exception as e:
+        print(f"Process return error: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
+
+@app.route('/api/receipt/return/<int:return_id>', methods=['GET'])
+def api_generate_return_receipt(return_id):
+    """Generate return receipt PDF"""
+    try:
+        from receipt_generator import generate_return_receipt
+        
+        pdf_bytes = generate_return_receipt(return_id)
+        
+        if pdf_bytes:
+            response = Response(pdf_bytes, mimetype='application/pdf')
+            response.headers['Content-Disposition'] = f'attachment; filename=return_receipt_{return_id}.pdf'
+            return response
+        else:
+            return jsonify({'success': False, 'message': 'Failed to generate return receipt'}), 500
+    except Exception as e:
+        print(f"Generate return receipt error: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/receipt/exchange/<int:exchange_credit_id>', methods=['GET'])
+def api_generate_exchange_receipt(exchange_credit_id):
+    """Generate exchange receipt PDF"""
+    try:
+        from receipt_generator import generate_exchange_receipt
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        
+        # Get exchange credit details
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT transaction_id, amount, notes
+            FROM payment_transactions
+            WHERE transaction_id = %s AND payment_method = 'store_credit'
+        """, (exchange_credit_id,))
+        
+        credit_data = cursor.fetchone()
+        conn.close()
+        
+        if not credit_data:
+            return jsonify({'success': False, 'message': 'Exchange credit not found'}), 404
+        
+        credit_data = dict(credit_data)
+        # Extract credit number from notes
+        credit_number = credit_data.get('notes', '').split('Credit: ')[-1] if 'Credit: ' in credit_data.get('notes', '') else f"EXC-{exchange_credit_id}"
+        
+        pdf_bytes = generate_exchange_receipt(
+            exchange_credit_id,
+            credit_number,
+            float(credit_data['amount'])
+        )
+        
+        if pdf_bytes:
+            response = Response(pdf_bytes, mimetype='application/pdf')
+            response.headers['Content-Disposition'] = f'attachment; filename=exchange_receipt_{exchange_credit_id}.pdf'
+            return response
+        else:
+            return jsonify({'success': False, 'message': 'Failed to generate exchange receipt'}), 500
+    except Exception as e:
+        print(f"Generate exchange receipt error: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/apply_exchange_credit', methods=['POST'])
+def api_apply_exchange_credit():
+    """Apply exchange credit to an order as a discount"""
+    try:
+        if not request.json:
+            return jsonify({'success': False, 'message': 'Invalid request data'}), 400
+        
+        data = request.json
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        try:
+            order_id = data.get('order_id')
+            exchange_credit_id = data.get('exchange_credit_id')
+            credit_amount = float(data.get('credit_amount', 0))
+            
+            # Get current order total
+            cursor.execute("SELECT total, subtotal, discount FROM orders WHERE order_id = %s", (order_id,))
+            order = cursor.fetchone()
+            if not order:
+                return jsonify({'success': False, 'message': 'Order not found'}), 404
+            
+            order = dict(order)
+            current_total = float(order['total'])
+            current_subtotal = float(order['subtotal'])
+            current_discount = float(order.get('discount', 0))
+            
+            # Apply credit as discount
+            new_discount = current_discount + credit_amount
+            new_total = current_total - credit_amount
+            
+            # Update order
+            cursor.execute("""
+                UPDATE orders
+                SET discount = %s,
+                    total = %s
+                WHERE order_id = %s
+            """, (new_discount, new_total, order_id))
+            
+            # Mark exchange credit as used
+            cursor.execute("""
+                UPDATE payment_transactions
+                SET status = 'refunded',
+                    notes = COALESCE(notes, '') || ' | Used on order ' || %s
+                WHERE transaction_id = %s AND payment_method = 'store_credit'
+            """, (order_id, exchange_credit_id))
+            
+            conn.commit()
+            conn.close()
+            
+            return jsonify({
+                'success': True,
+                'message': 'Exchange credit applied successfully',
+                'credit_applied': credit_amount,
+                'new_total': new_total
+            })
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            raise e
+    except Exception as e:
+        print(f"Apply exchange credit error: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
+
+@app.route('/api/exchange_credit/<credit_number>', methods=['GET'])
+def api_get_exchange_credit(credit_number):
+    """Get exchange credit by credit number (for scanning at checkout)"""
+    try:
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Look up exchange credit by credit number in notes
+        cursor.execute("""
+            SELECT transaction_id, amount, notes, order_id
+            FROM payment_transactions
+            WHERE payment_method = 'store_credit'
+            AND status = 'approved'
+            AND notes LIKE %s
+        """, (f'%Credit: {credit_number}%',))
+        
+        credit = cursor.fetchone()
+        conn.close()
+        
+        if not credit:
+            return jsonify({'success': False, 'message': 'Exchange credit not found'}), 404
+        
+        credit = dict(credit)
+        
+        # Extract return_id from notes if available
+        return_id = None
+        if credit.get('notes'):
+            import re
+            match = re.search(r'return (\w+)', credit['notes'])
+            if match:
+                try:
+                    return_id = int(match.group(1))
+                except:
+                    pass
+        
+        return jsonify({
+            'success': True,
+            'credit': {
+                'transaction_id': credit['transaction_id'],
+                'credit_number': credit_number,
+                'amount': float(credit['amount']),
+                'return_id': return_id,
+                'order_id': credit.get('order_id')
+            }
+        })
+    except Exception as e:
+        print(f"Get exchange credit error: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 # ============================================================================
 # RBAC API ENDPOINTS
@@ -3658,14 +4671,13 @@ def api_get_employee(employee_id):
 def api_delete_schedule(schedule_id):
     """Delete an employee schedule"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Get schedule info before deleting
         cursor.execute("""
             SELECT employee_id, schedule_date, start_time, end_time
             FROM employee_schedule
-            WHERE schedule_id = ?
+            WHERE schedule_id = %s
         """, (schedule_id,))
         
         schedule = cursor.fetchone()
@@ -3674,12 +4686,12 @@ def api_delete_schedule(schedule_id):
             return jsonify({'success': False, 'message': 'Schedule not found'}), 404
         
         # Delete schedule
-        cursor.execute("DELETE FROM employee_schedule WHERE schedule_id = ?", (schedule_id,))
+        cursor.execute("DELETE FROM employee_schedule WHERE schedule_id = %s", (schedule_id,))
         
         # Also delete from master calendar if exists
         cursor.execute("""
             DELETE FROM master_calendar
-            WHERE related_table = 'employee_schedule' AND related_id = ?
+            WHERE related_table = 'employee_schedule' AND related_id = %s
         """, (schedule_id,))
         
         conn.commit()
@@ -3697,15 +4709,13 @@ def api_delete_schedule(schedule_id):
 def api_confirm_schedule(schedule_id):
     """Confirm an assigned schedule"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Verify schedule exists
         cursor.execute("""
             SELECT employee_id, schedule_date, status
             FROM employee_schedule
-            WHERE schedule_id = ?
+            WHERE schedule_id = %s
         """, (schedule_id,))
         
         schedule = cursor.fetchone()
@@ -3717,7 +4727,7 @@ def api_confirm_schedule(schedule_id):
         cursor.execute("""
             UPDATE employee_schedule
             SET confirmed = 1, confirmed_at = CURRENT_TIMESTAMP
-            WHERE schedule_id = ?
+            WHERE schedule_id = %s
         """, (schedule_id,))
         
         conn.commit()
@@ -3735,9 +4745,7 @@ def api_confirm_schedule(schedule_id):
 def api_employee_availability():
     """Get or update employee availability"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         if request.method == 'GET':
             employee_id = request.args.get('employee_id')
@@ -3746,7 +4754,7 @@ def api_employee_availability():
             
             cursor.execute("""
                 SELECT * FROM employee_availability
-                WHERE employee_id = ?
+                WHERE employee_id = %s
             """, (employee_id,))
             
             row = cursor.fetchone()
@@ -3791,7 +4799,7 @@ def api_employee_availability():
             # Check if availability exists
             cursor.execute("""
                 SELECT availability_id FROM employee_availability
-                WHERE employee_id = ?
+                WHERE employee_id = %s
             """, (employee_id,))
             
             exists = cursor.fetchone()
@@ -3804,7 +4812,7 @@ def api_employee_availability():
             
             if exists:
                 # Update existing
-                update_fields = [f"{day} = ?" for day in availability_data.keys()]
+                update_fields = [f"{day} = %s" for day in availability_data.keys()]
                 update_fields.append("updated_at = CURRENT_TIMESTAMP")
                 values = list(availability_data.values())
                 values.append(employee_id)
@@ -3812,13 +4820,13 @@ def api_employee_availability():
                 query = f"""
                     UPDATE employee_availability
                     SET {', '.join(update_fields)}
-                    WHERE employee_id = ?
+                    WHERE employee_id = %s
                 """
                 cursor.execute(query, values)
             else:
                 # Insert new
                 fields = ['employee_id'] + list(availability_data.keys()) + ['updated_at']
-                placeholders = ['?'] * len(fields)
+                placeholders = ['%s'] * len(fields)
                 values = [employee_id] + list(availability_data.values()) + ['CURRENT_TIMESTAMP']
                 
                 query = f"""
@@ -3886,18 +4894,124 @@ def api_generate_schedule():
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/schedule/<int:period_id>', methods=['GET'])
-def api_get_schedule(period_id):
-    """Get schedule details"""
+@app.route('/api/schedule/drafts', methods=['GET'])
+def api_list_drafts():
+    """List draft schedules (status = 'draft')"""
     try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+
+        conn, cursor = _pg_conn()
+        cursor.execute("""
+            SELECT period_id, week_start_date, week_end_date, status, created_at,
+                   total_labor_hours, estimated_labor_cost
+            FROM schedule_periods
+            WHERE status = 'draft'
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        drafts = [dict(r) for r in rows]
+        return jsonify({'success': True, 'data': _sanitize_for_json(drafts)})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/schedule/published', methods=['GET'])
+def api_list_published():
+    """List published schedules (status = 'published')"""
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+
+        conn, cursor = _pg_conn()
+        cursor.execute("""
+            SELECT period_id, week_start_date, week_end_date, status, created_at,
+                   published_at, total_labor_hours, estimated_labor_cost
+            FROM schedule_periods
+            WHERE status = 'published'
+            ORDER BY published_at DESC NULLS LAST, week_start_date DESC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        published = [dict(r) for r in rows]
+        return jsonify({'success': True, 'data': _sanitize_for_json(published)})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/schedule/<int:period_id>/unpublish', methods=['POST'])
+def api_unpublish_schedule(period_id):
+    """Convert published schedule to draft for editing"""
+    conn = None
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+
+        conn, cursor = _pg_conn()
+        cursor.execute(
+            "SELECT period_id, status FROM schedule_periods WHERE period_id = %s",
+            (period_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({'success': False, 'message': 'Schedule not found'}), 404
+        if row.get('status') != 'published':
+            return jsonify({'success': False, 'message': 'Only published schedules can be unpublished'}), 400
+
+        cursor.execute("""
+            UPDATE schedule_periods
+            SET status = 'draft', published_by = NULL, published_at = NULL
+            WHERE period_id = %s
+        """, (period_id,))
+        cursor.execute("""
+            UPDATE scheduled_shifts SET is_draft = 1 WHERE period_id = %s
+        """, (period_id,))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+@app.route('/api/schedule/<int:period_id>', methods=['GET', 'DELETE'])
+def api_get_schedule(period_id):
+    """Get schedule details or delete a draft period"""
+    try:
+        if request.method == 'DELETE':
+            employee_id = get_employee_from_token()
+            if not employee_id:
+                return jsonify({'success': False, 'message': 'Authentication required'}), 401
+            conn, cursor = _pg_conn()
+            cursor.execute(
+                "SELECT period_id, status FROM schedule_periods WHERE period_id = %s",
+                (period_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return jsonify({'success': False, 'message': 'Schedule not found'}), 404
+            if row.get('status') != 'draft':
+                conn.close()
+                return jsonify({'success': False, 'message': 'Only draft schedules can be deleted'}), 400
+            cursor.execute("DELETE FROM schedule_periods WHERE period_id = %s", (period_id,))
+            conn.commit()
+            conn.close()
+            return jsonify({'success': True})
+
         from schedule_generator import AutomatedScheduleGenerator
-        
         scheduler = AutomatedScheduleGenerator()
         summary = scheduler.get_schedule_summary(period_id)
-        
         if not summary:
             return jsonify({'success': False, 'message': 'Schedule not found'}), 404
-        
         return jsonify(summary)
     except Exception as e:
         traceback.print_exc()
@@ -3908,7 +5022,6 @@ def api_publish_schedule(period_id):
     """Publish schedule to employees and add to master calendar"""
     try:
         from schedule_generator import AutomatedScheduleGenerator
-        from database import add_calendar_event
         
         employee_id = get_employee_from_token()
         if not employee_id:
@@ -3917,48 +5030,66 @@ def api_publish_schedule(period_id):
         scheduler = AutomatedScheduleGenerator()
         result = scheduler.publish_schedule(period_id, employee_id)
         
-        if result:
-            # Get all shifts from the published schedule
-            conn = sqlite3.connect(DB_NAME)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT ss.*, e.first_name || ' ' || e.last_name as employee_name
-                FROM Scheduled_Shifts ss
-                JOIN employees e ON ss.employee_id = e.employee_id
-                WHERE ss.period_id = ? AND ss.is_draft = 0
-            """, (period_id,))
-            
-            shifts = cursor.fetchall()
-            
-            # Add each shift to master calendar
-            for shift in shifts:
-                shift_dict = dict(shift)
-                event_title = f"{shift_dict['employee_name']} - {shift_dict.get('position', 'Shift')}"
-                event_description = f"Shift: {shift_dict['start_time']} - {shift_dict['end_time']}"
-                if shift_dict.get('notes'):
-                    event_description += f"\n{shift_dict['notes']}"
-                
-                add_calendar_event(
-                    event_date=shift_dict['shift_date'],
-                    event_type='schedule',
-                    title=event_title,
-                    description=event_description,
-                    start_time=shift_dict['start_time'],
-                    end_time=shift_dict['end_time'],
-                    related_id=shift_dict['scheduled_shift_id'],
-                    related_table='Scheduled_Shifts',
-                    created_by=employee_id
-                )
-            
-            cursor.close()
-            conn.close()
+        # Published shifts are shown via /api/employee_schedule (Scheduled_Shifts).
+        # Do NOT add them to master_calendar — the Calendar loads both APIs and would
+        # show each shift twice (event + schedule). Profile weekly schedule also uses
+        # employee_schedule, so nothing extra is needed.
         
         return jsonify({'success': result})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/schedule/<int:period_id>/save-draft', methods=['POST'])
+def api_save_draft(period_id):
+    """Persist draft schedule (optional period updates). Shift edits are already saved via PUT /shift."""
+    conn = None
+    try:
+        employee_id = get_employee_from_token()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+
+        conn, cursor = _pg_conn()
+        cursor.execute(
+            "SELECT period_id, status FROM schedule_periods WHERE period_id = %s",
+            (period_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({'success': False, 'message': 'Schedule not found'}), 404
+        if row.get('status') != 'draft':
+            return jsonify({'success': False, 'message': 'Only draft schedules can be saved'}), 400
+
+        data = (request.json or {})
+        updates = []
+        params = []
+        if 'week_start_date' in data and data['week_start_date']:
+            updates.append('week_start_date = %s')
+            params.append(data['week_start_date'])
+        if 'week_end_date' in data and data['week_end_date']:
+            updates.append('week_end_date = %s')
+            params.append(data['week_end_date'])
+        if 'generation_settings' in data and data['generation_settings'] is not None:
+            updates.append('generation_settings = %s')
+            params.append(json.dumps(data['generation_settings']) if isinstance(data['generation_settings'], dict) else str(data['generation_settings']))
+
+        if updates:
+            params.append(period_id)
+            cursor.execute(
+                "UPDATE schedule_periods SET " + ", ".join(updates) + " WHERE period_id = %s",
+                params
+            )
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 @app.route('/api/schedule/<int:period_id>/save-template', methods=['POST'])
 def api_save_template(period_id):
@@ -4024,9 +5155,7 @@ def api_copy_from_template():
 def api_get_templates():
     """Get all schedule templates"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         cursor.execute("""
             SELECT st.*, 
@@ -4054,9 +5183,7 @@ def api_manage_shift(period_id):
         if not employee_id:
             return jsonify({'success': False, 'message': 'Authentication required'}), 401
         
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         if request.method == 'POST':
             # Create new shift
@@ -4066,58 +5193,54 @@ def api_manage_shift(period_id):
                 INSERT INTO Scheduled_Shifts
                 (period_id, employee_id, shift_date, start_time, end_time,
                  break_duration, position, notes, is_draft)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
+                RETURNING scheduled_shift_id
             """, (period_id, data['employee_id'], data['shift_date'],
                   data['start_time'], data['end_time'], data.get('break_duration', 30),
                   data.get('position'), data.get('notes')))
-            
-            shift_id = cursor.lastrowid
-            
-            # Log change
-            cursor.execute("""
-                INSERT INTO Schedule_Changes
-                (period_id, scheduled_shift_id, change_type, changed_by, new_values)
-                VALUES (?, ?, 'created', ?, ?)
-            """, (period_id, shift_id, employee_id, json.dumps(data)))
+            shift_id = cursor.fetchone()['scheduled_shift_id']
+            try:
+                cursor.execute("""
+                    INSERT INTO Schedule_Changes
+                    (period_id, scheduled_shift_id, change_type, changed_by, new_values)
+                    VALUES (%s, %s, 'created', %s, %s)
+                """, (period_id, shift_id, employee_id, json.dumps(data, default=_json_serial)))
+            except Exception:
+                pass  # Schedule_Changes table may not exist
             
         elif request.method == 'PUT':
             # Update shift
             data = request.json
             shift_id = data['scheduled_shift_id']
             
-            # Get old values
             cursor.execute("""
-                SELECT * FROM Scheduled_Shifts WHERE scheduled_shift_id = ?
+                SELECT * FROM Scheduled_Shifts WHERE scheduled_shift_id = %s
             """, (shift_id,))
             old_row = cursor.fetchone()
             if not old_row:
                 conn.close()
                 return jsonify({'success': False, 'message': 'Shift not found'}), 404
             old_values = dict(old_row)
-            
-            # Update
             cursor.execute("""
                 UPDATE Scheduled_Shifts
-                SET employee_id = ?,
-                    shift_date = ?,
-                    start_time = ?,
-                    end_time = ?,
-                    break_duration = ?,
-                    position = ?,
-                    notes = ?
-                WHERE scheduled_shift_id = ?
+                SET employee_id = %s, shift_date = %s, start_time = %s, end_time = %s,
+                    break_duration = %s, position = %s, notes = %s
+                WHERE scheduled_shift_id = %s
             """, (data['employee_id'], data['shift_date'], data['start_time'],
                   data['end_time'], data.get('break_duration', 30),
                   data.get('position'), data.get('notes'), shift_id))
             
-            # Log change
-            cursor.execute("""
-                INSERT INTO Schedule_Changes
-                (period_id, scheduled_shift_id, change_type, changed_by, 
-                 old_values, new_values)
-                VALUES (?, ?, 'modified', ?, ?, ?)
-            """, (period_id, shift_id, employee_id, 
-                  json.dumps(old_values), json.dumps(data)))
+            try:
+                cursor.execute("""
+                    INSERT INTO Schedule_Changes
+                    (period_id, scheduled_shift_id, change_type, changed_by,
+                     old_values, new_values)
+                    VALUES (%s, %s, 'modified', %s, %s, %s)
+                """, (period_id, shift_id, employee_id,
+                      json.dumps(old_values, default=_json_serial),
+                      json.dumps(data, default=_json_serial)))
+            except Exception:
+                pass  # Schedule_Changes table may not exist
             
         elif request.method == 'DELETE':
             # Delete shift
@@ -4128,7 +5251,7 @@ def api_manage_shift(period_id):
             
             # Get old values
             cursor.execute("""
-                SELECT * FROM Scheduled_Shifts WHERE scheduled_shift_id = ?
+                SELECT * FROM Scheduled_Shifts WHERE scheduled_shift_id = %s
             """, (shift_id,))
             old_row = cursor.fetchone()
             if not old_row:
@@ -4138,15 +5261,17 @@ def api_manage_shift(period_id):
             
             # Delete
             cursor.execute("""
-                DELETE FROM Scheduled_Shifts WHERE scheduled_shift_id = ?
+                DELETE FROM Scheduled_Shifts WHERE scheduled_shift_id = %s
             """, (shift_id,))
             
-            # Log change
-            cursor.execute("""
-                INSERT INTO Schedule_Changes
-                (period_id, scheduled_shift_id, change_type, changed_by, old_values)
-                VALUES (?, ?, 'deleted', ?, ?)
-            """, (period_id, shift_id, employee_id, json.dumps(old_values)))
+            try:
+                cursor.execute("""
+                    INSERT INTO Schedule_Changes
+                    (period_id, scheduled_shift_id, change_type, changed_by, old_values)
+                    VALUES (%s, %s, 'deleted', %s, %s)
+                """, (period_id, shift_id, employee_id, json.dumps(old_values, default=_json_serial)))
+            except Exception:
+                pass  # Schedule_Changes table may not exist
         
         conn.commit()
         cursor.close()
@@ -4169,13 +5294,12 @@ def api_submit_availability():
         if not data or 'availability' not in data:
             return jsonify({'success': False, 'message': 'availability array is required'}), 400
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Delete old recurring availability
         cursor.execute("""
             DELETE FROM Employee_Availability
-            WHERE employee_id = ? AND is_recurring = 1
+            WHERE employee_id = %s AND is_recurring = 1
         """, (employee_id,))
         
         # Insert new availability
@@ -4184,7 +5308,7 @@ def api_submit_availability():
                 INSERT INTO Employee_Availability
                 (employee_id, day_of_week, start_time, end_time, 
                  availability_type, is_recurring)
-                VALUES (?, ?, ?, ?, ?, 1)
+                VALUES (%s, %s, %s, %s, %s, 1)
             """, (employee_id, avail['day'], avail['start_time'],
                   avail['end_time'], avail.get('type', 'available')))
         
@@ -4212,10 +5336,9 @@ def api_master_calendar():
             end_date=end_date,
             event_type=event_type
         )
-        
         return jsonify({
             'success': True,
-            'data': events
+            'data': _sanitize_for_json(events)
         })
     except Exception as e:
         traceback.print_exc()
@@ -4504,9 +5627,7 @@ def get_events():
         start_date = request.args.get('start', '')
         end_date = request.args.get('end', '')
         
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         # Get all events for employee
         query = """
@@ -4515,15 +5636,15 @@ def get_events():
             LEFT JOIN Employee_Shifts es ON ce.event_id = es.event_id
             LEFT JOIN Shipment_Schedule ss ON ce.event_id = ss.event_id
             LEFT JOIN Event_Attendees ea ON ce.event_id = ea.event_id
-            WHERE (es.employee_id = ? 
-                   OR ss.assigned_receiver = ? 
-                   OR ea.employee_id = ?
+            WHERE (es.employee_id = %s 
+                   OR ss.assigned_receiver = %s 
+                   OR ea.employee_id = %s
                    OR ce.event_type IN ('holiday', 'deadline'))
         """
         params = [employee_id, employee_id, employee_id]
         
         if start_date and end_date:
-            query += " AND ce.start_datetime BETWEEN ? AND ?"
+            query += " AND ce.start_datetime BETWEEN %s AND %s"
             params.extend([start_date, end_date])
         
         query += " ORDER BY ce.start_datetime"
@@ -4587,9 +5708,9 @@ def start_transaction():
         data = request.json
         
         from customer_display_system import CustomerDisplaySystem
-        cds = CustomerDisplaySystem(DB_NAME)
+        cds = CustomerDisplaySystem()
         
-        result = cds.start_transaction(employee_id, data['items'])
+        result = cds.start_transaction(employee_id, data['items'], data.get('customer_id'))
         
         # Emit Socket.IO event for customer display
         if SOCKETIO_AVAILABLE and socketio:
@@ -4605,7 +5726,7 @@ def get_transaction(transaction_id):
     """Get transaction details"""
     try:
         from customer_display_system import CustomerDisplaySystem
-        cds = CustomerDisplaySystem(DB_NAME)
+        cds = CustomerDisplaySystem()
         
         details = cds.get_transaction_details(transaction_id)
         if not details:
@@ -4621,7 +5742,7 @@ def get_payment_methods():
     """Get available payment methods"""
     try:
         from customer_display_system import CustomerDisplaySystem
-        cds = CustomerDisplaySystem(DB_NAME)
+        cds = CustomerDisplaySystem()
         
         methods = cds.get_payment_methods()
         return jsonify({'success': True, 'data': methods})
@@ -4647,7 +5768,7 @@ def process_payment():
         data = request.json
         
         from customer_display_system import CustomerDisplaySystem
-        cds = CustomerDisplaySystem(DB_NAME)
+        cds = CustomerDisplaySystem()
         
         result = cds.process_payment(
             data['transaction_id'],
@@ -4677,7 +5798,7 @@ def save_receipt_preference():
         data = request.json
         
         from customer_display_system import CustomerDisplaySystem
-        cds = CustomerDisplaySystem(DB_NAME)
+        cds = CustomerDisplaySystem()
         
         preference_id = cds.save_receipt_preference(
             data['transaction_id'],
@@ -4702,46 +5823,17 @@ def save_transaction_signature():
         if not transaction_id or not signature:
             return jsonify({'success': False, 'message': 'Transaction ID and signature are required'}), 400
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
+        conn, cursor = _pg_conn()
         try:
-            # Update transaction with signature
             cursor.execute("""
-                UPDATE transactions
-                SET signature = ?
-                WHERE transaction_id = ?
+                UPDATE transactions SET signature = %s WHERE transaction_id = %s
             """, (signature, transaction_id))
-            
             if cursor.rowcount == 0:
-                conn.close()
                 return jsonify({'success': False, 'message': 'Transaction not found'}), 404
-            
             conn.commit()
-            conn.close()
-            
             return jsonify({'success': True, 'message': 'Signature saved successfully'})
-        except sqlite3.OperationalError as e:
-            # Column might not exist, try to add it
-            if 'signature' in str(e).lower():
-                conn.close()
-                # Run migration
-                from migrate_add_signature_to_transactions import migrate_add_signature
-                migrate_add_signature(DB_NAME)
-                # Try again
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE transactions
-                    SET signature = ?
-                    WHERE transaction_id = ?
-                """, (signature, transaction_id))
-                conn.commit()
-                conn.close()
-                return jsonify({'success': True, 'message': 'Signature saved successfully'})
-            else:
-                conn.close()
-                raise
+        finally:
+            conn.close()
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -4751,7 +5843,7 @@ def get_display_settings():
     """Get or update customer display settings"""
     try:
         from customer_display_system import CustomerDisplaySystem
-        cds = CustomerDisplaySystem(DB_NAME)
+        cds = CustomerDisplaySystem()
         
         if request.method == 'GET':
             settings = cds.get_display_settings()
@@ -4792,9 +5884,9 @@ def get_display_settings():
 def api_verification_settings():
     """Get or update shipment verification workflow settings"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        from database import ensure_shipment_verification_tables
+        ensure_shipment_verification_tables()
+        conn, cursor = _pg_conn()
         
         if request.method == 'POST':
             data = request.json if request.is_json else {}
@@ -4804,14 +5896,14 @@ def api_verification_settings():
             # Update settings
             cursor.execute("""
                 UPDATE shipment_verification_settings 
-                SET setting_value = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE setting_key = ?
+                SET setting_value = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE setting_key = %s
             """, (workflow_mode, 'workflow_mode'))
             
             cursor.execute("""
                 UPDATE shipment_verification_settings 
-                SET setting_value = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE setting_key = ?
+                SET setting_value = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE setting_key = %s
             """, (auto_add, 'auto_add_to_inventory'))
             
             conn.commit()
@@ -4839,12 +5931,13 @@ def api_update_workflow_step(shipment_id):
         if not step:
             return jsonify({'success': False, 'message': 'Step is required'}), 400
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        from database import ensure_shipment_verification_tables
+        ensure_shipment_verification_tables()
+        conn, cursor = _pg_conn()
         cursor.execute("""
             UPDATE pending_shipments 
-            SET workflow_step = ?
-            WHERE pending_shipment_id = ?
+            SET workflow_step = %s
+            WHERE pending_shipment_id = %s
         """, (step, shipment_id))
         conn.commit()
         conn.close()
@@ -4878,14 +5971,13 @@ def api_add_to_inventory(shipment_id):
         
         if result.get('success'):
             # Mark as added to inventory
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
+            conn, cursor = _pg_conn()
             cursor.execute("""
                 UPDATE pending_shipments 
                 SET added_to_inventory = 1,
                     workflow_step = 'completed',
                     status = 'completed'
-                WHERE pending_shipment_id = ?
+                WHERE pending_shipment_id = %s
             """, (shipment_id,))
             conn.commit()
             conn.close()
@@ -5355,15 +6447,12 @@ def api_update_customer_rewards_settings():
         data = request.json
         
         # Check if settings exist in database (allow initial setup without strict auth)
-        import sqlite3
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         try:
-            cursor.execute("SELECT COUNT(*) FROM customer_rewards_settings")
-            count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) AS c FROM customer_rewards_settings")
+            count = cursor.fetchone()['c']
             is_initial_setup = count == 0
-        except sqlite3.OperationalError:
-            # Table doesn't exist yet, allow initial setup
+        except Exception:
             is_initial_setup = True
         finally:
             conn.close()
@@ -5479,10 +6568,9 @@ def api_sms_settings(store_id):
         if not is_admin and not has_permission:
             return jsonify({'success': False, 'message': 'Permission denied'}), 403
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
-        cursor.execute("SELECT setting_id FROM sms_settings WHERE store_id = ?", (store_id,))
+        cursor.execute("SELECT setting_id FROM sms_settings WHERE store_id = %s", (store_id,))
         exists = cursor.fetchone()
         
         provider = data.get('sms_provider', 'email')
@@ -5491,18 +6579,18 @@ def api_sms_settings(store_id):
             if provider == 'email':
                 cursor.execute("""
                     UPDATE sms_settings SET
-                        sms_provider = ?,
-                        smtp_server = ?,
-                        smtp_port = ?,
-                        smtp_user = ?,
-                        smtp_password = ?,
-                        smtp_use_tls = ?,
-                        business_name = ?,
-                        store_phone_number = ?,
-                        auto_send_rewards_earned = ?,
-                        auto_send_rewards_redeemed = ?,
+                        sms_provider = %s,
+                        smtp_server = %s,
+                        smtp_port = %s,
+                        smtp_user = %s,
+                        smtp_password = %s,
+                        smtp_use_tls = %s,
+                        business_name = %s,
+                        store_phone_number = %s,
+                        auto_send_rewards_earned = %s,
+                        auto_send_rewards_redeemed = %s,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE store_id = ?
+                    WHERE store_id = %s
                 """, (
                     provider,
                     data.get('smtp_server', 'smtp.gmail.com'),
@@ -5519,15 +6607,15 @@ def api_sms_settings(store_id):
             elif provider == 'aws_sns':
                 cursor.execute("""
                     UPDATE sms_settings SET
-                        sms_provider = ?,
-                        aws_access_key_id = ?,
-                        aws_secret_access_key = ?,
-                        aws_region = ?,
-                        business_name = ?,
-                        auto_send_rewards_earned = ?,
-                        auto_send_rewards_redeemed = ?,
+                        sms_provider = %s,
+                        aws_access_key_id = %s,
+                        aws_secret_access_key = %s,
+                        aws_region = %s,
+                        business_name = %s,
+                        auto_send_rewards_earned = %s,
+                        auto_send_rewards_redeemed = %s,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE store_id = ?
+                    WHERE store_id = %s
                 """, (
                     provider,
                     data.get('aws_access_key_id'),
@@ -5546,7 +6634,7 @@ def api_sms_settings(store_id):
                         store_id, sms_provider, smtp_server, smtp_port,
                         smtp_user, smtp_password, smtp_use_tls, business_name,
                         auto_send_rewards_earned, auto_send_rewards_redeemed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     store_id, provider,
                     data.get('smtp_server', 'smtp.gmail.com'),
@@ -5564,7 +6652,7 @@ def api_sms_settings(store_id):
                         store_id, sms_provider, aws_access_key_id,
                         aws_secret_access_key, aws_region, business_name,
                         auto_send_rewards_earned, auto_send_rewards_redeemed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     store_id, provider,
                     data.get('aws_access_key_id'),
@@ -5681,9 +6769,7 @@ def api_sms_rewards_earned():
 def api_sms_messages():
     """Get SMS messages"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         
         store_id = request.args.get('store_id')
         customer_id = request.args.get('customer_id')
@@ -5706,22 +6792,22 @@ def api_sms_messages():
         params = []
         
         if store_id:
-            query += " AND sm.store_id = ?"
+            query += " AND sm.store_id = %s"
             params.append(store_id)
         
         if customer_id:
-            query += " AND sm.customer_id = ?"
+            query += " AND sm.customer_id = %s"
             params.append(customer_id)
         
         if phone_number:
-            query += " AND sm.phone_number = ?"
+            query += " AND sm.phone_number = %s"
             params.append(phone_number)
         
         if status:
-            query += " AND sm.status = ?"
+            query += " AND sm.status = %s"
             params.append(status)
         
-        query += " ORDER BY sm.created_at DESC LIMIT ?"
+        query += " ORDER BY sm.created_at DESC LIMIT %s"
         params.append(limit)
         
         cursor.execute(query, params)
@@ -5738,13 +6824,11 @@ def api_sms_templates():
     """Get or create SMS templates"""
     try:
         if request.method == 'GET':
-            conn = sqlite3.connect(DB_NAME)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn, cursor = _pg_conn()
             
             store_id = request.args.get('store_id')
             if store_id:
-                cursor.execute("SELECT * FROM sms_templates WHERE store_id = ? AND is_active = 1 ORDER BY template_name", (store_id,))
+                cursor.execute("SELECT * FROM sms_templates WHERE store_id = %s AND is_active = 1 ORDER BY template_name", (store_id,))
             else:
                 cursor.execute("SELECT * FROM sms_templates WHERE is_active = 1 ORDER BY template_name")
             
@@ -5769,11 +6853,10 @@ def api_sms_templates():
         
         employee_id = session_result.get('employee_id')
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         cursor.execute("""
             INSERT INTO sms_templates (store_id, template_name, template_text, category, variables, created_by)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (
             data.get('store_id', 1),
             data.get('template_name'),
@@ -5793,9 +6876,7 @@ def api_sms_templates():
 def api_sms_stores():
     """Get all stores"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn, cursor = _pg_conn()
         cursor.execute("SELECT * FROM stores WHERE is_active = 1 ORDER BY store_name")
         rows = cursor.fetchall()
         conn.close()
@@ -6193,6 +7274,114 @@ def api_daily_cash_count():
                 
     except Exception as e:
         print(f"Error with daily cash count: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/accounting/dashboard', methods=['GET'])
+def api_accounting_dashboard():
+    """Get accounting dashboard data"""
+    try:
+        # Verify session and permissions
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        employee_id = session_result.get('employee_id')
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Employee ID not found in session'}), 401
+        
+        # Check permissions (Manager or Admin required)
+        permission_manager = get_permission_manager()
+        employee_role = get_employee_role(employee_id)
+        if employee_role not in ['manager', 'admin']:
+            return jsonify({'success': False, 'message': 'Manager or Admin access required'}), 403
+        
+        # Get date range
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        if not start_date or not end_date:
+            return jsonify({'success': False, 'message': 'start_date and end_date are required'}), 400
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Calculate total revenue from orders
+        cursor.execute("""
+            SELECT COALESCE(SUM(total_amount), 0) as total_revenue
+            FROM orders
+            WHERE order_date >= %s AND order_date <= %s
+        """, (start_date, end_date))
+        revenue_result = cursor.fetchone()
+        total_revenue = float(revenue_result[0]) if revenue_result and revenue_result[0] else 0.0
+        
+        # Calculate total expenses (from shipments/costs)
+        cursor.execute("""
+            SELECT COALESCE(SUM(si.quantity_received * si.unit_cost), 0) as total_expenses
+            FROM shipments s
+            JOIN shipment_items si ON s.shipment_id = si.shipment_id
+            WHERE s.received_date >= %s AND s.received_date <= %s
+        """, (start_date, end_date))
+        expenses_result = cursor.fetchone()
+        total_expenses = float(expenses_result[0]) if expenses_result and expenses_result[0] else 0.0
+        
+        # Calculate total payroll (from employee schedules/hours if available)
+        # For now, return 0 if payroll table doesn't exist
+        total_payroll = 0.0
+        try:
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0) as total_payroll
+                FROM payroll
+                WHERE pay_period_start >= %s AND pay_period_end <= %s
+            """, (start_date, end_date))
+            payroll_result = cursor.fetchone()
+            total_payroll = float(payroll_result[0]) if payroll_result and payroll_result[0] else 0.0
+        except:
+            pass  # Payroll table may not exist
+        
+        # Calculate net income
+        net_income = total_revenue - total_expenses - total_payroll
+        
+        # Calculate cash balance (from orders and cash transactions)
+        cursor.execute("""
+            SELECT COALESCE(SUM(total_amount), 0) as cash_balance
+            FROM orders
+            WHERE payment_method = 'cash' AND order_date <= %s
+        """, (end_date,))
+        cash_result = cursor.fetchone()
+        cash_balance = float(cash_result[0]) if cash_result and cash_result[0] else 0.0
+        
+        # Calculate total tax collected
+        cursor.execute("""
+            SELECT COALESCE(SUM(tax_amount), 0) as total_tax_collected
+            FROM orders
+            WHERE order_date >= %s AND order_date <= %s
+        """, (start_date, end_date))
+        tax_result = cursor.fetchone()
+        total_tax_collected = float(tax_result[0]) if tax_result and tax_result[0] else 0.0
+        
+        # Outstanding taxes (same as collected for now, can be enhanced later)
+        outstanding_taxes = total_tax_collected
+        
+        conn.close()
+        
+        return jsonify({
+            'total_revenue': total_revenue,
+            'total_expenses': total_expenses,
+            'total_payroll': total_payroll,
+            'net_income': net_income,
+            'cash_balance': cash_balance,
+            'total_tax_collected': total_tax_collected,
+            'outstanding_taxes': outstanding_taxes
+        }), 200
+        
+    except Exception as e:
+        print(f"Error in accounting dashboard: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500

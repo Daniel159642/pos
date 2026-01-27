@@ -102,7 +102,7 @@ def check_postgres_config():
         print(f"   Tables in database: {table_count}")
         
         if table_count == 0:
-            print(f"   ⚠️  Database is empty. Run schema_supabase.sql to create tables.")
+            print(f"   ⚠️  Database is empty. Run schema_postgres.sql to create tables.")
         
         cursor.close()
         conn.close()
@@ -147,7 +147,7 @@ def print_instructions():
     print("   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pos_db")
     print()
     print("5. Run schema:")
-    print("   psql -U postgres -d pos_db -f schema_supabase.sql")
+    print("   psql -U postgres -d pos_db -f schema_postgres.sql")
     print()
     print("See LOCAL_POSTGRES_SETUP.md for detailed instructions.")
     print()

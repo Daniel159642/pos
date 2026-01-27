@@ -6,8 +6,7 @@ Usage: python3 setup_admin_pin.py <clerk_user_id> [pin]
 """
 
 import sys
-import sqlite3
-from database import get_connection, generate_pin, DB_NAME
+from database import get_connection, generate_pin
 
 def setup_admin_pin(clerk_user_id=None, pin_code=None):
     """Setup admin PIN and optionally link Clerk user ID"""

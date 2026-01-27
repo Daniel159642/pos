@@ -35,32 +35,26 @@ def _build_connection_string():
 def get_connection():
     """
     Get PostgreSQL connection
-    Returns a connection with RealDictCursor support (dict-like rows)
+    Returns a NEW connection for each call to avoid sharing issues
+    Each function should manage its own connection lifecycle
     """
-    global _pg_connection
+    connection_string = _build_connection_string()
     
-    with _connection_lock:
-        if _pg_connection is None or _pg_connection.closed:
-            connection_string = _build_connection_string()
-            
-            if not connection_string:
-                raise ValueError(
-                    "Database connection not configured. "
-                    "Set DATABASE_URL or DB_HOST, DB_NAME, DB_USER, DB_PASSWORD environment variables."
-                )
-            
-            try:
-                _pg_connection = psycopg2.connect(connection_string)
-                _pg_connection.set_session(autocommit=False)
-            except Exception as e:
-                # If connection fails, reset and raise
-                _pg_connection = None
-                raise ConnectionError(
-                    f"Failed to connect to PostgreSQL: {str(e)}. "
-                    f"Check your database connection settings (DATABASE_URL or DB_* variables)."
-                ) from e
-        
-        return _pg_connection
+    if not connection_string:
+        raise ValueError(
+            "Database connection not configured. "
+            "Set DATABASE_URL or DB_HOST, DB_NAME, DB_USER, DB_PASSWORD environment variables."
+        )
+    
+    try:
+        conn = psycopg2.connect(connection_string)
+        conn.set_session(autocommit=False)
+        return conn
+    except Exception as e:
+        raise ConnectionError(
+            f"Failed to connect to PostgreSQL: {str(e)}. "
+            f"Check your database connection settings (DATABASE_URL or DB_* variables)."
+        ) from e
 
 def get_cursor():
     """Get cursor with dict-like row access (like SQLite Row factory)"""
@@ -88,5 +82,46 @@ def set_current_establishment(establishment_id: Optional[int]):
     pass
 
 def get_current_establishment() -> Optional[int]:
-    """No-op: establishment context not used in local PostgreSQL"""
-    return None
+    """Get or create default establishment for local PostgreSQL"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Try to get the first establishment
+        cursor.execute("SELECT establishment_id FROM establishments ORDER BY establishment_id LIMIT 1")
+        row = cursor.fetchone()
+        
+        if row:
+            establishment_id = row[0] if isinstance(row, tuple) else row.get('establishment_id')
+            conn.close()
+            return establishment_id
+        
+        # If no establishment exists, create a default one
+        cursor.execute("""
+            INSERT INTO establishments (establishment_name, establishment_type, address, phone, email)
+            VALUES ('Default Store', 'retail', NULL, NULL, NULL)
+            RETURNING establishment_id
+        """)
+        result = cursor.fetchone()
+        establishment_id = result[0] if isinstance(result, tuple) else result.get('establishment_id')
+        conn.commit()
+        conn.close()
+        return establishment_id
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        conn.close()
+        # If there's an error, try to get any establishment or return None
+        try:
+            conn2 = get_connection()
+            cursor2 = conn2.cursor()
+            cursor2.execute("SELECT establishment_id FROM establishments ORDER BY establishment_id LIMIT 1")
+            row2 = cursor2.fetchone()
+            conn2.close()
+            if row2:
+                return row2[0] if isinstance(row2, tuple) else row2.get('establishment_id')
+        except:
+            pass
+        return None

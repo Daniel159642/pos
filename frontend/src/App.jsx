@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { PermissionProvider, usePermissions } from './contexts/PermissionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { Settings, User, LogOut } from 'lucide-react'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import POS from './components/POS'
@@ -15,7 +16,7 @@ import EmployeeManagement from './components/EmployeeManagement'
 import Profile from './pages/Profile'
 import ShipmentVerification from './pages/ShipmentVerification'
 import StatisticsPage from './pages/Statistics'
-import Settings from './pages/Settings'
+import SettingsPage from './pages/Settings'
 import Accounting from './pages/Accounting'
 import CashRegister from './pages/CashRegister'
 import './index.css'
@@ -158,7 +159,7 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       <Route path="/settings" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} onLogout={onLogout}>
           <Layout employee={employee} onLogout={onLogout}>
-            <Settings />
+            <SettingsPage />
           </Layout>
         </ProtectedRoute>
       } />
@@ -207,8 +208,8 @@ function Layout({ children, employee, onLogout }) {
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-secondary, #f5f5f5)' }}>
       <div style={{
         backgroundColor: 'var(--bg-primary, #fff)',
-        borderBottom: '1px solid var(--border-color, #ddd)',
-        padding: '10px 20px',
+        borderBottom: '3px solid var(--border-color, #ddd)',
+        padding: '12px 20px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center'
@@ -225,71 +226,51 @@ function Layout({ children, employee, onLogout }) {
               fontWeight: 500,
               fontStyle: 'italic',
               fontFamily: 'Georgia, "Times New Roman", serif',
-              color: 'var(--theme-color, purple)'
+              color: '#6ba3f0'
             }}
           >
             Swift
           </button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {(hasPermission('manage_settings') || employee?.position?.toLowerCase() === 'admin') && (
-            <>
-              <button
-                onClick={() => navigate('/accounting')}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 500,
-                  color: 'var(--text-tertiary, #666)'
-                }}
-              >
-                Accounting
-              </button>
-              <button
-                onClick={() => navigate('/settings')}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 500,
-                  color: 'var(--text-tertiary, #666)'
-                }}
-              >
-                Settings
-              </button>
-            </>
+            <button
+              type="button"
+              className="button-26 button-26--header"
+              role="button"
+              onClick={() => navigate('/settings')}
+              title="Settings"
+            >
+              <div className="button-26__content">
+                <Settings size={14} style={{ marginRight: '6px', color: '#888' }} />
+                <span className="button-26__text text">Settings</span>
+              </div>
+            </button>
           )}
           <button
+            type="button"
+            className="button-26 button-26--header"
+            role="button"
             onClick={() => navigate('/profile')}
-            style={{
-              padding: '6px 12px',
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 500,
-              color: 'var(--text-tertiary, #666)'
-            }}
+            title="Profile"
           >
-            Profile
+            <div className="button-26__content">
+              <User size={14} style={{ marginRight: '6px', color: '#888' }} />
+              <span className="button-26__text text">Profile</span>
+            </div>
           </button>
           <button
+            type="button"
+            className="button-26 button-26--header"
+            role="button"
             onClick={onLogout}
-            style={{
-              padding: '6px 12px',
-              backgroundColor: 'var(--bg-secondary, #f0f0f0)',
-              border: '1px solid var(--border-color, #ddd)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              color: 'var(--text-primary, #000)'
-            }}
+            title="Logout"
+            style={{ marginRight: '-6px' }}
           >
-            Logout
+            <div className="button-26__content" style={{ paddingRight: '6px' }}>
+              <LogOut size={14} style={{ marginRight: '6px', color: '#888' }} />
+              <span className="button-26__text text">Logout</span>
+            </div>
           </button>
         </div>
       </div>

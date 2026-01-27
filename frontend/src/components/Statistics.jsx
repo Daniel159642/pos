@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
+import { DollarSign, TrendingUp, Award, ShoppingCart, RotateCcw, Package, Coins } from 'lucide-react'
 
 function Statistics() {
   const { themeMode, themeColor } = useTheme()
@@ -78,7 +79,7 @@ function Statistics() {
         backgroundColor: cardBg,
         border: `1px solid ${borderColor}`,
         borderRadius: '12px',
-        padding: '20px',
+        padding: '24px',
         boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
         transition: 'all 0.3s ease',
         position: 'relative',
@@ -96,33 +97,33 @@ function Statistics() {
           </div>
         )}
         <div style={{
-          fontSize: '13px',
-          fontWeight: 500,
-          color: subtitleColor,
-          marginBottom: '8px',
-          textTransform: 'uppercase',
-          letterSpacing: '0.5px'
-        }}>
-          {title}
-        </div>
-        <div style={{
           fontSize: '28px',
           fontWeight: 700,
           color: color || textColor,
-          marginBottom: subtitle ? '4px' : '0',
+          marginBottom: '8px',
           lineHeight: 1.2
         }}>
           {value}
         </div>
-        {subtitle && (
-          <div style={{
-            fontSize: '12px',
-            color: subtitleColor,
-            marginTop: '4px'
-          }}>
-            {subtitle}
-          </div>
-        )}
+        <div style={{
+          fontSize: '13px',
+          fontWeight: 500,
+          color: subtitleColor,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px'
+        }}>
+          {title}
+          {subtitle && (
+            <span style={{
+              fontSize: '12px',
+              color: subtitleColor,
+              marginLeft: '8px',
+              textTransform: 'none'
+            }}>
+              {subtitle}
+            </span>
+          )}
+        </div>
       </div>
     )
   }
@@ -143,36 +144,41 @@ function Statistics() {
     const revenueLabelColor = isDarkMode ? '#fff' : '#333'
     const barColor = `rgba(${themeColorRgb}, ${isDarkMode ? '0.7' : '0.6'})`
 
+    // Define two different blue shades for alternating bars
+    const barColor1 = `rgba(${themeColorRgb}, ${isDarkMode ? '0.7' : '0.6'})`
+    const barColor2 = `rgba(${themeColorRgb}, ${isDarkMode ? '0.5' : '0.4'})`
+
     return (
-      <div style={{ padding: '16px', height: '100%' }}>
-        <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginBottom: '16px' }}>
-          Weekly Revenue (Last 7 Days)
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '180px', gap: '4px' }}>
+      <div style={{ padding: '16px', height: '100%', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '180px', gap: '4px', overflow: 'hidden' }}>
           {stats.weekly_revenue.map((day, index) => {
             const barHeight = maxRevenue > 0 ? (day.revenue / maxRevenue) * chartHeight : 0
+            const isEven = index % 2 === 0
+            const currentBarColor = isEven ? barColor1 : barColor2
             
             return (
               <div key={day.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
                 <div style={{
                   width: '100%',
                   height: `${barHeight}px`,
-                  backgroundColor: barColor,
-                  borderRadius: '4px 4px 0 0',
+                  backgroundColor: currentBarColor,
+                  borderRadius: '12px 12px 0 0',
                   minHeight: barHeight > 0 ? '4px' : '0',
                   transition: 'height 0.3s ease',
-                  position: 'relative'
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden'
                 }}>
-                  {barHeight > 20 && (
+                  {barHeight > 30 && (
                     <div style={{
                       position: 'absolute',
-                      top: '-18px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
                       fontSize: '9px',
-                      color: revenueLabelColor,
+                      color: '#fff',
                       fontWeight: 600,
-                      whiteSpace: 'nowrap'
+                      whiteSpace: 'nowrap',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.3)'
                     }}>
                       ${Math.round(day.revenue)}
                     </div>
@@ -184,6 +190,9 @@ function Statistics() {
               </div>
             )
           })}
+        </div>
+        <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginTop: '12px', textAlign: 'center' }}>
+          Weekly Revenue (Last 7 Days)
         </div>
       </div>
     )
@@ -389,123 +398,48 @@ function Statistics() {
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      gap: '20px',
-      height: '100%',
-      overflowY: 'auto',
-      padding: '4px'
+      gap: '24px',
+      width: '100%',
+      overflowY: 'hidden',
+      overflowX: 'hidden',
+      padding: '0'
     }}>
-      {/* Revenue Cards Row */}
+      {/* Today's Stats Row */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '16px'
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: '20px'
       }}>
         <StatCard
           title="Today's Revenue"
           value={formatCurrency(stats.revenue?.today || 0)}
-          icon="💰"
+          icon={<DollarSign size={32} />}
           color={`rgba(${themeColorRgb}, 1)`}
         />
         <StatCard
-          title="This Week"
-          value={formatCurrency(stats.revenue?.week || 0)}
-          icon="📊"
-          color={`rgba(${themeColorRgb}, 1)`}
-        />
-        <StatCard
-          title="This Month"
-          value={formatCurrency(stats.revenue?.month || 0)}
-          icon="📈"
-          color={`rgba(${themeColorRgb}, 1)`}
-        />
-        <StatCard
-          title="All Time Revenue"
-          value={formatCurrency(stats.revenue?.all_time || 0)}
-          icon="💎"
+          title="Today's Returns"
+          value={stats.returns?.today || 0}
+          subtitle={stats.returns?.today_amount ? `Amount: ${formatCurrency(stats.returns.today_amount)}` : undefined}
+          icon={<RotateCcw size={32} />}
           color={`rgba(${themeColorRgb}, 1)`}
         />
       </div>
 
-      {/* Order Stats Row */}
+      {/* Weekly Revenue Chart */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '16px'
-      }}>
-        <StatCard
-          title="Total Orders"
-          value={stats.total_orders || 0}
-          subtitle={`Avg: ${formatCurrency(stats.avg_order_value || 0)}`}
-          icon="🛒"
-        />
-        <StatCard
-          title="Total Returns"
-          value={stats.total_returns || 0}
-          subtitle={`${stats.returns_rate || 0}% return rate`}
-          icon="↩️"
-        />
-        <StatCard
-          title="Products"
-          value={stats.inventory?.total_products || 0}
-          subtitle={`${stats.inventory?.low_stock || 0} low stock`}
-          icon="📦"
-        />
-        <StatCard
-          title="Inventory Value"
-          value={formatCurrency(stats.inventory?.total_value || 0)}
-          icon="💵"
-        />
-      </div>
-
-      {/* Charts Row */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
-        gap: '16px'
+        gridTemplateColumns: '1fr',
+        gap: '24px'
       }}>
         <div style={{
           backgroundColor: cardBg,
           border: `1px solid ${borderColor}`,
           borderRadius: '12px',
           boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
-          minHeight: '280px'
+          minHeight: '280px',
+          overflow: 'hidden'
         }}>
           {renderWeeklyChart()}
-        </div>
-        <div style={{
-          backgroundColor: cardBg,
-          border: `1px solid ${borderColor}`,
-          borderRadius: '12px',
-          boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
-          minHeight: '280px'
-        }}>
-          {renderMonthlyChart()}
-        </div>
-      </div>
-
-      {/* Bottom Row */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-        gap: '16px'
-      }}>
-        <div style={{
-          backgroundColor: cardBg,
-          border: `1px solid ${borderColor}`,
-          borderRadius: '12px',
-          boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
-          minHeight: '280px'
-        }}>
-          {renderOrderStatusBreakdown()}
-        </div>
-        <div style={{
-          backgroundColor: cardBg,
-          border: `1px solid ${borderColor}`,
-          borderRadius: '12px',
-          boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
-          minHeight: '280px'
-        }}>
-          {renderTopProducts()}
         </div>
       </div>
     </div>

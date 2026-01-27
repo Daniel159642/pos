@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { Image } from 'lucide-react'
 
-function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, selectedRowIds, onSelectedRowIdsChange }) {
+function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, selectedRowIds, onSelectedRowIdsChange, actionsAsEllipsis = false, ellipsisMenuItems }) {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
   })
@@ -20,9 +21,26 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
     
     return () => observer.disconnect()
   }, [])
+
+  const [openDropdownRowKey, setOpenDropdownRowKey] = useState(null)
+  const actionsDropdownRef = useRef(null)
+
+  useEffect(() => {
+    if (openDropdownRowKey == null) return
+    const handleClickOutside = (e) => {
+      if (actionsDropdownRef.current && !actionsDropdownRef.current.contains(e.target)) {
+        setOpenDropdownRowKey(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [openDropdownRowKey])
   
   const formatValue = (value, column, row) => {
     if (value === null || value === undefined) return ''
+    
+    // Handle actions column - return empty, actions are rendered separately
+    if (column === 'actions') return ''
     
     // Handle photo/image columns
     if (column === 'photo' || column.includes('image') || column.includes('photo')) {
@@ -93,7 +111,7 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
           if (value instanceof Date) {
             date = value
           } else if (typeof value === 'string') {
-            // SQLite datetime format: "YYYY-MM-DD HH:MM:SS"
+            // PostgreSQL datetime format: "YYYY-MM-DD HH:MM:SS"
             // Parse as local time (not UTC) to avoid timezone conversion issues
             const dateStr = value.trim()
             // Match YYYY-MM-DD HH:MM:SS format (with optional T, microseconds, timezone)
@@ -237,20 +255,22 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
                 key={col}
                 style={{
                   padding: '12px',
-                  textAlign: (col === 'photo' || col.includes('image') || col.includes('photo')) ? 'center' : 'left',
+                  textAlign: (col === 'photo' || col.includes('image') || col.includes('photo') || col === 'actions') ? 'center' : 'left',
                   fontWeight: 600,
                   borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
                   color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
                   fontSize: '13px',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
-                  width: (col === 'photo' || col.includes('image') || col.includes('photo')) ? '60px' : 'auto'
+                  width: (col === 'photo' || col.includes('image') || col.includes('photo')) ? '60px' : (col === 'actions' ? '100px' : 'auto')
                 }}
               >
-                {col === 'photo' ? '📷' : col.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                {col === 'photo' ? (
+                  <Image size={16} />
+                ) : col === 'actions' ? 'Actions' : col.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
               </th>
             ))}
-            {onEdit && (
+            {onEdit && !columns.includes('actions') && (
               <th
                 style={{
                   padding: '12px',
@@ -271,7 +291,18 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
         </thead>
       <tbody>
         {data.map((row, idx) => (
-          <tr key={resolvedGetRowId(row, idx)} style={{ backgroundColor: idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa') }}>
+          <tr 
+            key={resolvedGetRowId(row, idx)} 
+            style={{ 
+              backgroundColor: idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa'),
+              cursor: onEdit ? 'pointer' : 'default'
+            }}
+            onDoubleClick={() => {
+              if (onEdit) {
+                onEdit(row)
+              }
+            }}
+          >
             {enableRowSelection && (
               <td style={{
                 padding: '8px 12px',
@@ -289,33 +320,249 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
             )}
             {columns.map(col => (
               <td key={col} style={getCellStyle(col, row[col])}>
-                {formatValue(row[col], col, row)}
+                {col === 'actions' ? (
+                  <div style={{ position: 'relative', display: 'inline-block' }}>
+                    {actionsAsEllipsis && ellipsisMenuItems ? (
+                      <div
+                        ref={openDropdownRowKey === resolvedGetRowId(row, idx) ? actionsDropdownRef : undefined}
+                        style={{ position: 'relative', display: 'inline-block' }}
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenDropdownRowKey(k => k === resolvedGetRowId(row, idx) ? null : resolvedGetRowId(row, idx))
+                          }}
+                          aria-label="Actions"
+                          aria-expanded={openDropdownRowKey === resolvedGetRowId(row, idx)}
+                          style={{
+                            padding: '4px 8px',
+                            backgroundColor: openDropdownRowKey === resolvedGetRowId(row, idx) ? (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#eee') : 'transparent',
+                            color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '18px',
+                            lineHeight: 1,
+                            transition: 'color 0.2s, background-color 0.2s'
+                          }}
+                          onMouseEnter={(e) => {
+                            if (openDropdownRowKey !== resolvedGetRowId(row, idx)) {
+                              e.target.style.color = isDarkMode ? '#fff' : '#333'
+                              e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#eee'
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (openDropdownRowKey !== resolvedGetRowId(row, idx)) {
+                              e.target.style.color = isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
+                              e.target.style.backgroundColor = 'transparent'
+                            }
+                          }}
+                        >
+                          ⋮
+                        </button>
+                        {openDropdownRowKey === resolvedGetRowId(row, idx) && (
+                          <div
+                            role="menu"
+                            style={{
+                              position: 'absolute',
+                              top: '100%',
+                              right: 0,
+                              marginTop: '4px',
+                              minWidth: '120px',
+                              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                              border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #dee2e6',
+                              borderRadius: '6px',
+                              boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.15)',
+                              zIndex: 1000,
+                              overflow: 'hidden'
+                            }}
+                          >
+                            {(ellipsisMenuItems ?? [{ label: 'Edit', onClick: (r) => onEdit(r) }]).map((item, i) => (
+                              <button
+                                key={i}
+                                role="menuitem"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  item.onClick(row)
+                                  setOpenDropdownRowKey(null)
+                                }}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  padding: '10px 14px',
+                                  textAlign: 'left',
+                                  border: 'none',
+                                  background: 'none',
+                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                  fontSize: '14px',
+                                  cursor: 'pointer',
+                                  transition: 'background-color 0.15s'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f0f0f0'
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.backgroundColor = 'transparent'
+                                }}
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : onEdit ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onEdit(row)
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: `rgba(${themeColorRgb || '107, 163, 240'}, 0.1)`,
+                          color: `rgba(${themeColorRgb || '107, 163, 240'}, 1)`,
+                          border: `1px solid rgba(${themeColorRgb || '107, 163, 240'}, 0.3)`,
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: 500,
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb || '107, 163, 240'}, 0.2)`
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb || '107, 163, 240'}, 0.1)`
+                        }}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  formatValue(row[col], col, row)
+                )}
               </td>
             ))}
-            {onEdit && (
+            {onEdit && !columns.includes('actions') && (
               <td style={{ 
                 padding: '8px 12px', 
                 borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee',
-                textAlign: 'center'
+                textAlign: 'center',
+                position: 'relative'
               }}>
-                <button
-                  onClick={() => onEdit(row)}
-                  style={{
-                    padding: '6px 12px',
-                    backgroundColor: '#4a90e2',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    transition: 'background-color 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#357abd'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = '#4a90e2'}
-                >
-                  Edit
-                </button>
+                {actionsAsEllipsis ? (
+                  <div
+                    ref={openDropdownRowKey === resolvedGetRowId(row, idx) ? actionsDropdownRef : undefined}
+                    style={{ position: 'relative', display: 'inline-block' }}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setOpenDropdownRowKey(k => k === resolvedGetRowId(row, idx) ? null : resolvedGetRowId(row, idx))
+                      }}
+                      aria-label="Actions"
+                      aria-expanded={openDropdownRowKey === resolvedGetRowId(row, idx)}
+                      style={{
+                        padding: '4px 8px',
+                        backgroundColor: openDropdownRowKey === resolvedGetRowId(row, idx) ? (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#eee') : 'transparent',
+                        color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '18px',
+                        lineHeight: 1,
+                        transition: 'color 0.2s, background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (openDropdownRowKey !== resolvedGetRowId(row, idx)) {
+                          e.target.style.color = isDarkMode ? '#fff' : '#333'
+                          e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#eee'
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (openDropdownRowKey !== resolvedGetRowId(row, idx)) {
+                          e.target.style.color = isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
+                          e.target.style.backgroundColor = 'transparent'
+                        }
+                      }}
+                    >
+                      ⋮
+                    </button>
+                    {openDropdownRowKey === resolvedGetRowId(row, idx) && (
+                      <div
+                        role="menu"
+                        style={{
+                          position: 'absolute',
+                          top: '100%',
+                          right: 0,
+                          marginTop: '4px',
+                          minWidth: '120px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #dee2e6',
+                          borderRadius: '6px',
+                          boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.15)',
+                          zIndex: 1000,
+                          overflow: 'hidden'
+                        }}
+                      >
+                        {(ellipsisMenuItems ?? [{ label: 'Edit', onClick: (r) => onEdit(r) }]).map((item, i) => (
+                          <button
+                            key={i}
+                            role="menuitem"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              item.onClick(row)
+                              setOpenDropdownRowKey(null)
+                            }}
+                            style={{
+                              display: 'block',
+                              width: '100%',
+                              padding: '10px 14px',
+                              textAlign: 'left',
+                              border: 'none',
+                              background: 'none',
+                              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                              fontSize: '14px',
+                              cursor: 'pointer',
+                              transition: 'background-color 0.15s'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f0f0f0'
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.backgroundColor = 'transparent'
+                            }}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onEdit(row)}
+                    aria-label="Actions"
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#4a90e2',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = '#357abd'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = '#4a90e2'}
+                  >
+                    Edit
+                  </button>
+                )}
               </td>
             )}
           </tr>

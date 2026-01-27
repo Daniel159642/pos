@@ -4,17 +4,17 @@ SMS Service: Email-to-SMS (FREE) with AWS SNS migration path
 Supports multiple stores, each with their own provider configuration
 """
 
-import sqlite3
 import smtplib
 from email.mime.text import MIMEText
 from typing import Optional, Dict, Any
 import re
+from database import get_connection
 
 class EmailToAWSSMSService:
     """SMS service: Start with email (free), migrate to AWS SNS"""
     
-    def __init__(self, db_name='inventory.db'):
-        self.db_name = db_name
+    def __init__(self):
+        pass
         
         # Carrier email-to-SMS gateways (US carriers)
         self.carrier_gateways = {
@@ -32,12 +32,11 @@ class EmailToAWSSMSService:
     
     def get_store_sms_settings(self, store_id: int) -> Optional[Dict[str, Any]]:
         """Get SMS settings for a store"""
-        conn = sqlite3.connect(self.db_name)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT * FROM sms_settings 
-            WHERE store_id = ? AND is_active = 1
+            WHERE store_id = %s AND is_active = 1
         """, (store_id,))
         row = cursor.fetchone()
         conn.close()
@@ -169,15 +168,16 @@ class EmailToAWSSMSService:
             return {'success': False, 'error': 'Phone number has opted out'}
         
         # Save to database first
-        conn = sqlite3.connect(self.db_name)
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO sms_messages (
                 store_id, customer_id, phone_number, message_text,
                 direction, status, message_type, provider, created_by
-            ) VALUES (?, ?, ?, ?, 'outbound', 'pending', ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, 'outbound', 'pending', %s, %s, %s)
+            RETURNING message_id
         """, (store_id, customer_id, phone_number, message, message_type, settings['sms_provider'], employee_id))
-        message_id = cursor.lastrowid
+        message_id = cursor.fetchone()[0]
         conn.commit()
         
         # Send via configured provider
@@ -199,16 +199,16 @@ class EmailToAWSSMSService:
             cursor.execute("""
                 UPDATE sms_messages SET
                     status = 'sent',
-                    provider_sid = ?,
+                    provider_sid = %s,
                     sent_at = CURRENT_TIMESTAMP
-                WHERE message_id = ?
+                WHERE message_id = %s
             """, (result.get('provider_sid') or result.get('gateway_used'), message_id))
         else:
             cursor.execute("""
                 UPDATE sms_messages SET
                     status = 'failed',
-                    error_message = ?
-                WHERE message_id = ?
+                    error_message = %s
+                WHERE message_id = %s
             """, (result.get('error'), message_id))
         
         conn.commit()
@@ -219,18 +219,18 @@ class EmailToAWSSMSService:
     
     def is_opted_out(self, phone_number: str, store_id: Optional[int] = None) -> bool:
         """Check if phone number has opted out"""
-        conn = sqlite3.connect(self.db_name)
+        conn = get_connection()
         cursor = conn.cursor()
         
         if store_id:
             cursor.execute("""
                 SELECT opt_out_id FROM sms_opt_outs
-                WHERE phone_number = ? AND (store_id = ? OR store_id IS NULL)
+                WHERE phone_number = %s AND (store_id = %s OR store_id IS NULL)
             """, (phone_number, store_id))
         else:
             cursor.execute("""
                 SELECT opt_out_id FROM sms_opt_outs
-                WHERE phone_number = ?
+                WHERE phone_number = %s
             """, (phone_number,))
         
         result = cursor.fetchone()
@@ -240,10 +240,9 @@ class EmailToAWSSMSService:
     def send_rewards_earned_message(self, store_id: int, customer_id: int,
                                    points_earned: int, total_points: int) -> Dict[str, Any]:
         """Send automated rewards earned message"""
-        conn = sqlite3.connect(self.db_name)
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT customer_name, phone FROM customers WHERE customer_id = ?", (customer_id,))
+        cursor.execute("SELECT customer_name, phone FROM customers WHERE customer_id = %s", (customer_id,))
         customer = cursor.fetchone()
         conn.close()
         
@@ -268,19 +267,19 @@ class EmailToAWSSMSService:
     
     def get_rewards_template(self, store_id: int, template_type: str) -> str:
         """Get template for rewards messages"""
-        conn = sqlite3.connect(self.db_name)
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT template_text FROM sms_templates
-            WHERE store_id = ? AND category = 'rewards'
-            AND template_name LIKE ? AND is_active = 1
+            WHERE store_id = %s AND category = 'rewards'
+            AND template_name LIKE %s AND is_active = 1
             LIMIT 1
         """, (store_id, f'%{template_type}%'))
         row = cursor.fetchone()
         conn.close()
         
         if row:
-            return row[0]
+            return row['template_text'] if isinstance(row, dict) else row[0]
         
         # Default templates
         defaults = {
@@ -293,16 +292,16 @@ class EmailToAWSSMSService:
     
     def migrate_to_aws(self, store_id: int, aws_access_key: str, aws_secret: str, region: str = 'us-east-1') -> Dict[str, Any]:
         """Helper to migrate store from email to AWS SNS"""
-        conn = sqlite3.connect(self.db_name)
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE sms_settings SET
                 sms_provider = 'aws_sns',
-                aws_access_key_id = ?,
-                aws_secret_access_key = ?,
-                aws_region = ?,
+                aws_access_key_id = %s,
+                aws_secret_access_key = %s,
+                aws_region = %s,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE store_id = ?
+            WHERE store_id = %s
         """, (aws_access_key, aws_secret, region, store_id))
         conn.commit()
         conn.close()

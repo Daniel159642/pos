@@ -4,12 +4,16 @@ Free Metadata Extraction System using local AI models and free APIs
 Completely FREE - no paid services required
 """
 
-import sqlite3
 import json
+import logging
 import re
-from typing import Dict, List, Optional
-from collections import Counter
 import time
+from collections import Counter
+from typing import Dict, List, Optional
+
+import psycopg2
+
+logger = logging.getLogger(__name__)
 
 # Optional: requests for barcode lookup (will fail gracefully if not installed)
 try:
@@ -17,7 +21,7 @@ try:
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
-    print("Warning: requests not installed. Barcode lookup will be disabled. Install with: pip install requests")
+    logger.warning("requests not installed. Barcode lookup disabled. pip install requests")
 
 # Optional: sklearn for ML features (will fail gracefully if not installed)
 try:
@@ -28,7 +32,7 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
-    print("Warning: scikit-learn not installed. Clustering and advanced search will be disabled. Install with: pip install scikit-learn")
+    logger.warning("scikit-learn not installed. Clustering disabled. pip install scikit-learn")
 
 # Optional: fuzzywuzzy for fuzzy matching (will fail gracefully if not installed)
 try:
@@ -36,7 +40,7 @@ try:
     FUZZYWUZZY_AVAILABLE = True
 except ImportError:
     FUZZYWUZZY_AVAILABLE = False
-    print("Warning: fuzzywuzzy not installed. Fuzzy matching will be disabled. Install with: pip install fuzzywuzzy")
+    logger.warning("fuzzywuzzy not installed. Fuzzy matching disabled. pip install fuzzywuzzy")
 
 # Optional: spaCy for NLP (will fail gracefully if not installed)
 try:
@@ -54,7 +58,7 @@ except ImportError:
     OLLAMA_AVAILABLE = False
     # Don't print warning by default - it's optional
 
-from database import get_connection, DB_NAME
+from database import get_connection
 
 
 class FreeMetadataSystem:
@@ -66,8 +70,7 @@ class FreeMetadataSystem:
             try:
                 self.nlp = spacy.load("en_core_web_sm")
             except OSError:
-                print("Warning: spaCy model 'en_core_web_sm' not found.")
-                print("Install with: python -m spacy download en_core_web_sm")
+                logger.warning("spaCy model 'en_core_web_sm' not found. python -m spacy download en_core_web_sm")
                 self.nlp = None
         
         # Load product knowledge base
@@ -85,7 +88,7 @@ class FreeMetadataSystem:
         return {
             # Fruits with human-like attributes
             'apple': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -96,7 +99,7 @@ class FreeMetadataSystem:
                 'description': 'Crisp, sweet fruit perfect for snacking or cooking'
             },
             'apples': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -107,7 +110,7 @@ class FreeMetadataSystem:
                 'description': 'Crisp, sweet fruit perfect for snacking or cooking'
             },
             'banana': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'soft',
                 'taste': 'sweet',
@@ -118,7 +121,7 @@ class FreeMetadataSystem:
                 'description': 'Sweet, creamy fruit great for quick energy'
             },
             'bananas': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'soft',
                 'taste': 'sweet',
@@ -129,7 +132,7 @@ class FreeMetadataSystem:
                 'description': 'Sweet, creamy fruit great for quick energy'
             },
             'cucumber': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crisp',
                 'taste': 'mild',
@@ -140,7 +143,7 @@ class FreeMetadataSystem:
                 'description': 'Cool, crisp vegetable perfect for salads and refreshing snacks'
             },
             'cucumbers': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crisp',
                 'taste': 'mild',
@@ -151,7 +154,7 @@ class FreeMetadataSystem:
                 'description': 'Cool, crisp vegetable perfect for salads and refreshing snacks'
             },
             'tomato': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -162,7 +165,7 @@ class FreeMetadataSystem:
                 'description': 'Juicy, versatile vegetable used in countless dishes'
             },
             'tomatoes': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -173,7 +176,7 @@ class FreeMetadataSystem:
                 'description': 'Juicy, versatile vegetable used in countless dishes'
             },
             'cherry tomato': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -184,7 +187,7 @@ class FreeMetadataSystem:
                 'description': 'Small, sweet tomatoes perfect for snacking and salads'
             },
             'cherry tomatoes': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -195,7 +198,7 @@ class FreeMetadataSystem:
                 'description': 'Small, sweet tomatoes perfect for snacking and salads'
             },
             'carrot': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -206,7 +209,7 @@ class FreeMetadataSystem:
                 'description': 'Crunchy, sweet root vegetable great for snacking and cooking'
             },
             'carrots': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -217,7 +220,7 @@ class FreeMetadataSystem:
                 'description': 'Crunchy, sweet root vegetable great for snacking and cooking'
             },
             'lettuce': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crisp',
                 'taste': 'mild',
@@ -266,7 +269,7 @@ class FreeMetadataSystem:
         return {
             # Fruits with human-like attributes
             'apple': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -277,7 +280,7 @@ class FreeMetadataSystem:
                 'description': 'Crisp, sweet fruit perfect for snacking or cooking'
             },
             'apples': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -288,7 +291,7 @@ class FreeMetadataSystem:
                 'description': 'Crisp, sweet fruit perfect for snacking or cooking'
             },
             'banana': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'soft',
                 'taste': 'sweet',
@@ -299,7 +302,7 @@ class FreeMetadataSystem:
                 'description': 'Sweet, creamy fruit great for quick energy'
             },
             'bananas': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Fruits',
                 'type': 'fruit',
                 'texture': 'soft',
                 'taste': 'sweet',
@@ -310,7 +313,7 @@ class FreeMetadataSystem:
                 'description': 'Sweet, creamy fruit great for quick energy'
             },
             'cucumber': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crisp',
                 'taste': 'mild',
@@ -321,7 +324,7 @@ class FreeMetadataSystem:
                 'description': 'Cool, crisp vegetable perfect for salads and refreshing snacks'
             },
             'cucumbers': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crisp',
                 'taste': 'mild',
@@ -332,7 +335,7 @@ class FreeMetadataSystem:
                 'description': 'Cool, crisp vegetable perfect for salads and refreshing snacks'
             },
             'tomato': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -343,7 +346,7 @@ class FreeMetadataSystem:
                 'description': 'Juicy, versatile vegetable used in countless dishes'
             },
             'tomatoes': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -354,7 +357,7 @@ class FreeMetadataSystem:
                 'description': 'Juicy, versatile vegetable used in countless dishes'
             },
             'cherry tomato': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -365,7 +368,7 @@ class FreeMetadataSystem:
                 'description': 'Small, sweet tomatoes perfect for snacking and salads'
             },
             'cherry tomatoes': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'juicy',
                 'taste': 'sweet',
@@ -376,7 +379,7 @@ class FreeMetadataSystem:
                 'description': 'Small, sweet tomatoes perfect for snacking and salads'
             },
             'carrot': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -387,7 +390,7 @@ class FreeMetadataSystem:
                 'description': 'Crunchy, sweet root vegetable great for snacking and cooking'
             },
             'carrots': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crunchy',
                 'taste': 'sweet',
@@ -398,7 +401,7 @@ class FreeMetadataSystem:
                 'description': 'Crunchy, sweet root vegetable great for snacking and cooking'
             },
             'lettuce': {
-                'category': 'Food & Beverage > Produce',
+                'category': 'Food & Beverage > Produce > Vegetables',
                 'type': 'vegetable',
                 'texture': 'crisp',
                 'taste': 'mild',
@@ -457,11 +460,11 @@ class FreeMetadataSystem:
             
             # Vegetables
             # Note: 'carrot', 'carrots', 'tomato', 'tomatoes' already defined above as dicts
-            'lettuce': 'Food & Beverage > Produce',
-            'potato': 'Food & Beverage > Produce',
-            'potatoes': 'Food & Beverage > Produce',
-            'onion': 'Food & Beverage > Produce',
-            'onions': 'Food & Beverage > Produce',
+            'lettuce': 'Food & Beverage > Produce > Vegetables',
+            'potato': 'Food & Beverage > Produce > Vegetables',
+            'potatoes': 'Food & Beverage > Produce > Vegetables',
+            'onion': 'Food & Beverage > Produce > Vegetables',
+            'onions': 'Food & Beverage > Produce > Vegetables',
             'garlic': 'Food & Beverage > Produce',
             'pepper': 'Food & Beverage > Produce',
             'peppers': 'Food & Beverage > Produce',
@@ -685,7 +688,12 @@ class FreeMetadataSystem:
         
         execution_time = int((time.time() - start_time) * 1000)
         metadata['execution_time_ms'] = execution_time
-        
+
+        if not metadata.get('category_suggestions'):
+            logger.debug(
+                "No category_suggestions for product_name=%r barcode=%r",
+                product_name, barcode
+            )
         return metadata
     
     def _free_barcode_lookup(self, barcode):
@@ -709,11 +717,15 @@ class FreeMetadataSystem:
                     data = response.json()
                     if data.get('status') == 1:
                         product = data.get('product', {})
-                        
+                        tags = product.get('categories_tags') or []
+                        path = None
+                        if tags:
+                            parts = [t.replace("en:", "").replace(":", " ").strip().title() for t in tags if t]
+                            path = " > ".join(parts) if parts else (tags[0].replace("en:", "").replace(":", " ").strip().title() or tags[0])
                         metadata = {
                             'brand': product.get('brands'),
                             'keywords': product.get('product_name', '').split() if product.get('product_name') else [],
-                            'category_suggestions': [product.get('categories_tags', [''])[0]] if product.get('categories_tags') else [],
+                            'category_suggestions': [{'category_name': path, 'confidence': 0.9}] if path else [],
                             'attributes': {
                                 'quantity': product.get('quantity'),
                                 'packaging': product.get('packaging')
@@ -721,8 +733,7 @@ class FreeMetadataSystem:
                         }
         
         except Exception as e:
-            # Silently fail - barcode lookup is optional
-            pass
+            logger.debug("Barcode lookup failed for %s: %s", barcode, e)
         
         return metadata
     
@@ -970,7 +981,10 @@ class FreeMetadataSystem:
                 'Snacks': ['snack', 'chip', 'cracker', 'cookie', 'candy', 'nuts'],
                 'Beverages': ['drink', 'soda', 'juice', 'water', 'beverage', 'tea', 'coffee'],
                 'Dairy': ['milk', 'cheese', 'yogurt', 'butter', 'cream'],
-                'Produce': ['fruit', 'vegetable', 'apple', 'banana', 'lettuce', 'tomato', 'carrot', 'carrots', 'produce', 'organic', 'fresh'],
+                'Produce': {
+                    'Vegetables': ['vegetable', 'onion', 'onions', 'lettuce', 'tomato', 'tomatoes', 'carrot', 'carrots', 'cucumber', 'cucumbers', 'pepper', 'peppers', 'bell pepper', 'broccoli', 'cauliflower', 'spinach', 'kale', 'celery', 'corn', 'peas', 'green beans', 'asparagus', 'zucchini', 'squash', 'mushroom', 'mushrooms', 'potato', 'potatoes', 'garlic'],
+                    'Fruits': ['fruit', 'apple', 'apples', 'banana', 'bananas', 'orange', 'oranges', 'grape', 'grapes', 'strawberry', 'strawberries', 'blueberry', 'blueberries', 'raspberry', 'raspberries', 'blackberry', 'blackberries', 'peach', 'peaches', 'pear', 'pears', 'plum', 'plums', 'cherry', 'cherries', 'mango', 'mangoes', 'pineapple', 'watermelon', 'melon', 'cantaloupe', 'kiwi', 'avocado', 'avocados', 'lemon', 'lemons', 'lime', 'limes']
+                },
                 'Pantry': ['pasta', 'rice', 'cereal', 'flour', 'sugar', 'spice']
             },
             'Home & Kitchen': {
@@ -1044,20 +1058,43 @@ class FreeMetadataSystem:
             # This allows matching subcategories that might not have parent keyword matches
             best_subcat = None
             best_subcat_score = 0
+            best_subsubcat = None
+            best_subsubcat_score = 0
             
-            for subcat, subcat_keywords in subcats.items():
-                subcat_score = sum(1 for kw in subcat_keywords if keyword_matches(all_text, kw))
-                # If subcategory matches, use it (even without parent match)
-                if subcat_score > 0:
-                    total_score = parent_score + (subcat_score * 3)  # Weight subcategory much higher
-                    
-                    if total_score > best_score:
-                        best_score = total_score
-                        best_subcat = subcat
-                        best_subcat_score = subcat_score
+            for subcat, subcat_data in subcats.items():
+                # Handle nested subcategories (e.g., Produce > Vegetables)
+                if isinstance(subcat_data, dict):
+                    # This is a nested structure (subcat has its own subcategories)
+                    subcat_score = 0  # Parent subcat doesn't have direct keywords
+                    for subsubcat, subsubcat_keywords in subcat_data.items():
+                        subsubcat_score = sum(1 for kw in subsubcat_keywords if keyword_matches(all_text, kw))
+                        if subsubcat_score > 0:
+                            total_score = parent_score + (subsubcat_score * 5)  # Weight sub-subcategory highest
+                            if total_score > best_score:
+                                best_score = total_score
+                                best_subcat = subcat
+                                best_subsubcat = subsubcat
+                                best_subsubcat_score = subsubcat_score
+                else:
+                    # This is a simple list of keywords (old format)
+                    subcat_keywords = subcat_data
+                    subcat_score = sum(1 for kw in subcat_keywords if keyword_matches(all_text, kw))
+                    # If subcategory matches, use it (even without parent match)
+                    if subcat_score > 0:
+                        total_score = parent_score + (subcat_score * 3)  # Weight subcategory much higher
+                        
+                        if total_score > best_score:
+                            best_score = total_score
+                            best_subcat = subcat
+                            best_subcat_score = subcat_score
+                            best_subsubcat = None  # No nested subcategory
             
-            # If subcategory found, use hierarchy path
-            if best_subcat:
+            # Build hierarchy path
+            if best_subsubcat:
+                # 3-level hierarchy: parent > subcat > subsubcat
+                best_match = f"{parent_cat} > {best_subcat} > {best_subsubcat}"
+            elif best_subcat:
+                # 2-level hierarchy: parent > subcat
                 best_match = f"{parent_cat} > {best_subcat}"
             elif parent_score > 0:
                 # Use parent category only if no subcategory matched
@@ -1213,7 +1250,7 @@ Category name only (no explanation):"""
     
     def save_product_metadata(self, product_id, metadata, extraction_method='auto'):
         """
-        Save extracted metadata to database (SQLite)
+        Save extracted metadata to database (PostgreSQL)
         """
         conn = get_connection()
         cursor = conn.cursor()
@@ -1250,25 +1287,25 @@ Category name only (no explanation):"""
                 
                 confidence = category_match.get('confidence', 0)
             
-            # Insert or update metadata (SQLite uses INSERT OR REPLACE)
+            # Insert or update metadata (PostgreSQL uses INSERT ... ON CONFLICT)
             # First check if record exists
-            cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = ?", (product_id,))
+            cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = %s", (product_id,))
             exists = cursor.fetchone()
             
             if exists:
                 cursor.execute("""
                     UPDATE product_metadata SET
-                        brand = ?,
-                        color = ?,
-                        size = ?,
-                        tags = ?,
-                        keywords = ?,
-                        attributes = ?,
-                        search_vector = ?,
-                        category_id = ?,
-                        category_confidence = ?,
+                        brand = %s,
+                        color = %s,
+                        size = %s,
+                        tags = %s,
+                        keywords = %s,
+                        attributes = %s,
+                        search_vector = %s,
+                        category_id = %s,
+                        category_confidence = %s,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE product_id = ?
+                    WHERE product_id = %s
                 """, (
                     metadata.get('brand'),
                     attributes.get('color'),
@@ -1286,7 +1323,7 @@ Category name only (no explanation):"""
                     INSERT INTO product_metadata 
                     (product_id, brand, color, size, tags, keywords, 
                      attributes, search_vector, category_id, category_confidence, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """, (
                 product_id,
                 metadata.get('brand'),
@@ -1305,7 +1342,7 @@ Category name only (no explanation):"""
             cursor.execute("""
                 INSERT INTO metadata_extraction_log
                 (product_id, extraction_method, data_extracted, execution_time_ms, success)
-                VALUES (?, ?, ?, ?, 1)
+                VALUES (%s, %s, %s, %s, 1)
             """, (product_id, extraction_method, json.dumps(metadata), execution_time))
             
             conn.commit()
@@ -1317,7 +1354,7 @@ Category name only (no explanation):"""
                 cursor.execute("""
                     INSERT INTO metadata_extraction_log
                     (product_id, extraction_method, success, error_message)
-                    VALUES (?, ?, 0, ?)
+                    VALUES (%s, %s, 0, %s)
                 """, (product_id, extraction_method, str(e)))
                 conn.commit()
             except:
@@ -1334,7 +1371,6 @@ Category name only (no explanation):"""
             raise Exception("scikit-learn is required for K-Means clustering. Install with: pip install scikit-learn")
         
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         # Get all products with keywords
@@ -1364,14 +1400,22 @@ Category name only (no explanation):"""
         product_names_map = {}  # Map product_id to product_name for LLM naming
         
         for product in products:
-            keywords = json.loads(product['keywords']) if product['keywords'] else []
-            tags = json.loads(product['tags']) if product['tags'] else []
-            brand = product['brand'] or ''
+            # Handle dict-like row access (PostgreSQL RealDictCursor)
+            product_dict = dict(product) if isinstance(product, dict) else {
+                'product_id': product[0],
+                'product_name': product[1],
+                'keywords': product[2],
+                'tags': product[3],
+                'brand': product[4]
+            }
+            keywords = json.loads(product_dict['keywords']) if product_dict['keywords'] else []
+            tags = json.loads(product_dict['tags']) if product_dict['tags'] else []
+            brand = product_dict['brand'] or ''
             
             text = ' '.join([brand] + keywords + tags)
             product_texts.append(text)
-            product_ids.append(product['product_id'])
-            product_names_map[product['product_id']] = product['product_name']
+            product_ids.append(product_dict['product_id'])
+            product_names_map[product_dict['product_id']] = product_dict['product_name']
         
         # TF-IDF vectorization (FREE)
         vectorizer = TfidfVectorizer(
@@ -1422,27 +1466,29 @@ Category name only (no explanation):"""
             # Check if similar category exists
             cursor.execute("""
                 SELECT category_id FROM categories
-                WHERE category_name = ?
+                WHERE category_name = %s
             """, (category_name,))
             
             result = cursor.fetchone()
             
             if result:
-                category_id = result['category_id']
+                category_id = result['category_id'] if isinstance(result, dict) else result[0]
             else:
                 cursor.execute("""
                     INSERT INTO categories (category_name, is_auto_generated)
-                    VALUES (?, 1)
+                    VALUES (%s, 1)
+                    RETURNING category_id
                 """, (category_name,))
-                category_id = cursor.lastrowid
+                row = cursor.fetchone()
+                category_id = row['category_id'] if isinstance(row, dict) else row[0]
             
             # Assign products to category (use the cluster_product_ids we already computed)
             for prod_id in cluster_product_ids:
                 cursor.execute("""
                     UPDATE product_metadata
-                    SET category_id = ?,
+                    SET category_id = %s,
                         category_confidence = 0.80
-                    WHERE product_id = ?
+                    WHERE product_id = %s
                 """, (category_id, prod_id))
         
         conn.commit()
@@ -1457,51 +1503,28 @@ Category name only (no explanation):"""
         Falls back to simple text matching if scikit-learn not available
         """
         conn = get_connection()
-        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        # Get all products (barcode column may not exist in older databases)
-        try:
-            cursor.execute("""
-                SELECT 
-                    i.product_id,
-                    i.product_name,
-                    i.sku,
-                    i.barcode,
-                    i.product_price,
-                    i.current_quantity,
-                    pm.brand,
-                    pm.category_id,
-                    c.category_name,
-                    pm.tags,
-                    pm.keywords,
-                    pm.attributes,
-                    pm.search_vector
-                FROM inventory i
-                LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
-                LEFT JOIN categories c ON pm.category_id = c.category_id
-            """)
-        except sqlite3.OperationalError:
-            # Fallback if barcode column doesn't exist
-            cursor.execute("""
-                SELECT 
-                    i.product_id,
-                    i.product_name,
-                    i.sku,
-                    NULL as barcode,
-                    i.product_price,
-                    i.current_quantity,
-                    pm.brand,
-                    pm.category_id,
-                    c.category_name,
-                    pm.tags,
-                    pm.keywords,
-                    pm.attributes,
-                    pm.search_vector
-                FROM inventory i
-                LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
-                LEFT JOIN categories c ON pm.category_id = c.category_id
-            """)
+        # Get all products
+        cursor.execute("""
+            SELECT 
+                i.product_id,
+                i.product_name,
+                i.sku,
+                i.barcode,
+                i.product_price,
+                i.current_quantity,
+                pm.brand,
+                pm.category_id,
+                c.category_name,
+                pm.tags,
+                pm.keywords,
+                pm.attributes,
+                pm.search_vector
+            FROM inventory i
+            LEFT JOIN product_metadata pm ON i.product_id = pm.product_id
+            LEFT JOIN categories c ON pm.category_id = c.category_id
+        """)
         
         all_products = cursor.fetchall()
         
@@ -1510,8 +1533,16 @@ Category name only (no explanation):"""
             query_lower = query.lower()
             results = []
             for product in all_products:
-                product_name = product['product_name'].lower()
-                search_vector = (product['search_vector'] or '').lower()
+                # Handle dict-like row access (PostgreSQL RealDictCursor)
+                product_dict = dict(product) if isinstance(product, dict) else {
+                    'product_name': product[1],
+                    'search_vector': product[12],
+                    'category_id': product[7],
+                    'brand': product[6],
+                    'product_price': product[4]
+                }
+                product_name = product_dict['product_name'].lower()
+                search_vector = (product_dict['search_vector'] or '').lower()
                 
                 # Simple relevance: count word matches
                 query_words = set(query_lower.split())
@@ -1521,16 +1552,16 @@ Category name only (no explanation):"""
                 if relevance > 0:
                     # Apply filters
                     if filters:
-                        if 'category_id' in filters and product['category_id'] != filters['category_id']:
+                        if 'category_id' in filters and product_dict['category_id'] != filters['category_id']:
                             continue
-                        if 'brand' in filters and product['brand'] != filters['brand']:
+                        if 'brand' in filters and product_dict['brand'] != filters['brand']:
                             continue
-                        if 'min_price' in filters and product['product_price'] < filters['min_price']:
+                        if 'min_price' in filters and product_dict['product_price'] < filters['min_price']:
                             continue
-                        if 'max_price' in filters and product['product_price'] > filters['max_price']:
+                        if 'max_price' in filters and product_dict['product_price'] > filters['max_price']:
                             continue
                     
-                    result_dict = dict(product)
+                    result_dict = product_dict.copy() if isinstance(product_dict, dict) else dict(product)
                     result_dict['relevance_score'] = relevance
                     results.append(result_dict)
             
@@ -1560,19 +1591,34 @@ Category name only (no explanation):"""
                     break
                 
                 product = all_products[idx]
+                product_dict = dict(product) if isinstance(product, dict) else {
+                    'product_id': product[0],
+                    'product_name': product[1],
+                    'sku': product[2],
+                    'barcode': product[3],
+                    'product_price': product[4],
+                    'current_quantity': product[5],
+                    'brand': product[6],
+                    'category_id': product[7],
+                    'category_name': product[8],
+                    'tags': product[9],
+                    'keywords': product[10],
+                    'attributes': product[11],
+                    'search_vector': product[12]
+                }
                 
                 # Apply filters
                 if filters:
-                    if 'category_id' in filters and product['category_id'] != filters['category_id']:
+                    if 'category_id' in filters and product_dict['category_id'] != filters['category_id']:
                         continue
-                    if 'brand' in filters and product['brand'] != filters['brand']:
+                    if 'brand' in filters and product_dict['brand'] != filters['brand']:
                         continue
-                    if 'min_price' in filters and product['product_price'] < filters['min_price']:
+                    if 'min_price' in filters and product_dict['product_price'] < filters['min_price']:
                         continue
-                    if 'max_price' in filters and product['product_price'] > filters['max_price']:
+                    if 'max_price' in filters and product_dict['product_price'] > filters['max_price']:
                         continue
                 
-                result_dict = dict(product)
+                result_dict = product_dict.copy()
                 result_dict['relevance_score'] = float(similarities[idx])
                 results.append(result_dict)
                 
@@ -1583,7 +1629,7 @@ Category name only (no explanation):"""
         try:
             cursor.execute("""
                 INSERT INTO search_history (search_query, results_count)
-                VALUES (?, ?)
+                VALUES (%s, %s)
             """, (query, len(results)))
             conn.commit()
         except:

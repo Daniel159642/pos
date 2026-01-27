@@ -34,10 +34,21 @@ function Accounting() {
   const loadDashboardData = async () => {
     try {
       setLoading(true)
+      const token = localStorage.getItem('sessionToken')
+      if (!token) {
+        setError('Your session has expired. Please log in again.')
+        setLoading(false)
+        return
+      }
       const response = await fetch(
         `/api/accounting/dashboard?start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`,
         { headers: getAuthHeaders() }
       )
+      if (response.status === 401) {
+        setError('Your session has expired. Please log in again.')
+        setLoading(false)
+        return
+      }
       
       if (response.status === 403) {
         setError('You do not have permission to access accounting features. Manager or Admin access required.')

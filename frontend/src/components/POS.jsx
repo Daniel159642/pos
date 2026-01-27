@@ -3,10 +3,12 @@ import { usePermissions, ProtectedComponent } from '../contexts/PermissionContex
 import { useTheme } from '../contexts/ThemeContext'
 import BarcodeScanner from './BarcodeScanner'
 import CustomerDisplayPopup from './CustomerDisplayPopup'
+import { ScanBarcode, UserPlus, CheckCircle } from 'lucide-react'
+import { formLabelStyle, inputBaseStyle, getInputFocusHandlers } from './FormStyles'
 
 function POS({ employeeId, employeeName }) {
   const { hasPermission } = usePermissions()
-  const { themeColor } = useTheme()
+  const { themeColor, themeMode } = useTheme()
   
   // Convert hex to RGB for rgba usage
   const hexToRgb = (hex) => {
@@ -15,6 +17,27 @@ function POS({ employeeId, employeeName }) {
   }
   
   const themeColorRgb = hexToRgb(themeColor)
+  
+  // Determine if dark mode is active
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark-theme')
+  })
+  
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
+    }
+    
+    checkDarkMode()
+    
+    const observer = new MutationObserver(checkDarkMode)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    return () => observer.disconnect()
+  }, [themeMode])
   const [cart, setCart] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -27,6 +50,7 @@ function POS({ employeeId, employeeName }) {
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [processing, setProcessing] = useState(false)
   const [message, setMessage] = useState(null)
+  const [toast, setToast] = useState(null) // { message, type: 'success' }
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [amountPaid, setAmountPaid] = useState('')
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
@@ -63,6 +87,41 @@ function POS({ employeeId, employeeName }) {
   const canApplyDiscount = hasPermission('apply_discount')
   const canVoidTransaction = hasPermission('void_transaction')
 
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  // Check for exchange credit on mount
+  useEffect(() => {
+    const exchangeCredit = localStorage.getItem('exchangeCredit')
+    if (exchangeCredit) {
+      try {
+        const credit = JSON.parse(exchangeCredit)
+        // Add exchange credit as a special item in cart
+        setCart([{
+          product_id: 'EXCHANGE_CREDIT',
+          product_name: 'Exchange Credit',
+          sku: credit.credit_id ? `EXC-${credit.credit_id}` : 'EXCHANGE',
+          unit_price: -credit.amount, // Negative price = credit/discount
+          quantity: 1,
+          available_quantity: 999,
+          is_exchange_credit: true,
+          exchange_credit_id: credit.credit_id,
+          exchange_return_id: credit.return_id
+        }])
+        setToast({ message: `Exchange credit of $${credit.amount.toFixed(2)} added to cart`, type: 'success' })
+        // Clear from localStorage after adding
+        localStorage.removeItem('exchangeCredit')
+      } catch (e) {
+        console.error('Error parsing exchange credit:', e)
+        localStorage.removeItem('exchangeCredit')
+      }
+    }
+  }, [])
+
   // Fetch all products and categories on mount and when window gains focus
   useEffect(() => {
     fetchAllProducts()
@@ -75,6 +134,22 @@ function POS({ employeeId, employeeName }) {
     
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
+  }, [])
+
+  // Hide scrollbar for POS category buttons
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = `
+      .pos-category-buttons-scroll::-webkit-scrollbar {
+        display: none;
+      }
+    `
+    document.head.appendChild(style)
+    return () => {
+      if (document.head.contains(style)) {
+        document.head.removeChild(style)
+      }
+    }
   }, [])
 
   const loadRewardsSettings = async () => {
@@ -331,7 +406,7 @@ function POS({ employeeId, employeeName }) {
           product_id: product.product_id,
           product_name: product.product_name,
           sku: product.sku,
-          unit_price: product.product_price,
+          unit_price: parseFloat(product.product_price) || 0,
           quantity: 1,
           available_quantity: product.current_quantity || 0
         }]
@@ -415,6 +490,44 @@ function POS({ employeeId, employeeName }) {
           // Auto-dismiss message after 2 seconds
           setTimeout(() => setMessage(null), 2000)
           return
+        }
+        
+        // Check if barcode is an exchange credit (starts with EXC-)
+        if (barcode.toString().startsWith('EXC-')) {
+          try {
+            const creditResponse = await fetch(`/api/exchange_credit/${barcode}`)
+            const creditData = await creditResponse.json()
+            
+            if (creditData.success && creditData.credit) {
+              const credit = creditData.credit
+              // Check if credit is already in cart
+              const existingCredit = cart.find(item => item.is_exchange_credit && item.exchange_credit_id === credit.transaction_id)
+              if (existingCredit) {
+                setMessage({ type: 'error', text: 'Exchange credit already in cart' })
+                setTimeout(() => setMessage(null), 3000)
+                return
+              }
+              
+              // Add exchange credit to cart
+              setCart(prevCart => [...prevCart, {
+                product_id: 'EXCHANGE_CREDIT',
+                product_name: 'Exchange Credit',
+                sku: credit.credit_number || `EXC-${credit.transaction_id}`,
+                unit_price: -credit.amount, // Negative price = credit/discount
+                quantity: 1,
+                available_quantity: 999,
+                is_exchange_credit: true,
+                exchange_credit_id: credit.transaction_id,
+                exchange_return_id: credit.return_id
+              }])
+              
+              setMessage({ type: 'success', text: `Exchange credit of $${credit.amount.toFixed(2)} added to cart` })
+              setTimeout(() => setMessage(null), 3000)
+              return
+            }
+          } catch (creditErr) {
+            console.error('Error looking up exchange credit:', creditErr)
+          }
         }
       }
       
@@ -510,15 +623,29 @@ function POS({ employeeId, employeeName }) {
   }
 
   const calculateSubtotal = () => {
-    return cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0)
+    return cart.reduce((sum, item) => {
+      // Exchange credit has negative price, so it reduces the total
+      return sum + (parseFloat(item.unit_price) * item.quantity)
+    }, 0)
   }
 
   const calculateTax = () => {
-    return calculateSubtotal() * taxRate
+    // Calculate tax only on non-credit items
+    const taxableSubtotal = cart
+      .filter(item => !item.is_exchange_credit)
+      .reduce((sum, item) => sum + (parseFloat(item.unit_price) * item.quantity), 0)
+    return taxableSubtotal * taxRate
   }
 
   const calculateTotal = () => {
+    // Exchange credit (negative price) is already included in subtotal
     return calculateSubtotal() + calculateTax()
+  }
+  
+  // Get exchange credit amount if present
+  const getExchangeCredit = () => {
+    const creditItem = cart.find(item => item.is_exchange_credit)
+    return creditItem ? Math.abs(parseFloat(creditItem.unit_price) * creditItem.quantity) : 0
   }
 
   const calculateTotalWithTip = () => {
@@ -533,13 +660,10 @@ function POS({ employeeId, employeeName }) {
 
   const handleDismissChange = () => {
     setShowChangeScreen(false)
-    // Show customer display for receipt selection after cash payment
-    if (paymentCompleted && paymentMethod === 'cash') {
+    // Only show customer display if payment was completed and user clicked the button
+    if (paymentCompleted) {
       setShowCustomerDisplay(true)
       setShowSummary(false) // Don't show summary, go straight to receipt screen
-    } else if (paymentCompleted) {
-      // For non-cash, customer display should already be showing
-      setShowCustomerDisplay(true)
     } else {
       // If payment wasn't completed, reset everything
       setCart([])
@@ -550,6 +674,21 @@ function POS({ employeeId, employeeName }) {
       setSelectedTip(0)
       setShowCustomerDisplay(false)
     }
+  }
+  
+  const handleShowReceiptOptions = () => {
+    // User explicitly wants to see receipt options
+    // This should work regardless of paymentCompleted state
+    // since the button is shown after payment is processed
+    // Ensure all payment-related states are cleared and paymentCompleted is true
+    setShowChangeScreen(false)
+    setShowPaymentForm(false)
+    setShowSummary(false)
+    // Ensure paymentCompleted is true so CustomerDisplayPopup shows receipt screen
+    if (!paymentCompleted) {
+      setPaymentCompleted(true)
+    }
+    setShowCustomerDisplay(true)
   }
 
   const handleTipSelect = (tip) => {
@@ -609,7 +748,7 @@ function POS({ employeeId, employeeName }) {
     }
   }
 
-  const generateReceiptFromTransaction = async (transactionId, transactionNumber) => {
+  const generateReceiptFromTransaction = async (transactionId, orderNumber) => {
     try {
       const response = await fetch(`/api/receipt/transaction/${transactionId}`)
       
@@ -626,8 +765,8 @@ function POS({ employeeId, employeeName }) {
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            const filename = transactionNumber 
-              ? `receipt_transaction_${transactionNumber}.pdf`
+            const filename = orderNumber 
+              ? `receipt_${orderNumber}.pdf`
               : `receipt_transaction_${transactionId}.pdf`
             a.download = filename
             a.style.display = 'none' // Hide the link
@@ -735,8 +874,10 @@ function POS({ employeeId, employeeName }) {
   const handleCreateCustomer = () => {
     setShowCreateCustomer(true)
     setShowCustomerInfoModal(true)
-    // Clear any existing customer selection
+    // Clear any existing customer selection and order type
+    // This ensures the modal always shows as customer creation form
     setSelectedCustomer(null)
+    setOrderType(null) // Clear order type so modal shows as customer creation
     setCustomerInfo({ name: '', email: '', phone: '', address: '' })
   }
 
@@ -784,12 +925,25 @@ function POS({ employeeId, employeeName }) {
     setMessage(null)
 
     try {
-      const items = cart.map(item => ({
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        discount: 0
-      }))
+      // Get exchange credit info if present
+      const exchangeCreditItem = cart.find(item => item.is_exchange_credit)
+      const exchangeCreditAmount = exchangeCreditItem ? Math.abs(parseFloat(exchangeCreditItem.unit_price) * exchangeCreditItem.quantity) : 0
+      const exchangeCreditId = exchangeCreditItem?.exchange_credit_id
+      const exchangeReturnId = exchangeCreditItem?.exchange_return_id
+      
+      // Prepare items with all required fields for order creation (exclude exchange credit)
+      const items = cart
+        .filter(item => !item.is_exchange_credit && item.product_id !== 'EXCHANGE_CREDIT')
+        .map(item => ({
+          product_id: item.product_id,
+          quantity: parseInt(item.quantity) || 1,
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount) || 0,
+          tax_rate: parseFloat(item.tax_rate) || taxRate || 0.08  // Use item-specific tax_rate or order tax_rate
+        }))
+      
+      // Log items being sent for debugging
+      console.log('Items being sent to create_order:', items)
 
       // Prepare customer info and order type for order creation
       let customerId = null
@@ -802,23 +956,31 @@ function POS({ employeeId, employeeName }) {
 
       // Start transaction for customer display
       let transactionId = null
-      let transactionNumber = null
-      try {
-        const sessionToken = localStorage.getItem('sessionToken')
-        const transactionResponse = await fetch('/api/transaction/start', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${sessionToken}`
-          },
-          body: JSON.stringify({ items: items })
-        })
-        
-        const transactionResult = await transactionResponse.json()
-        if (transactionResult.success) {
-          transactionId = transactionResult.data.transaction_id
-          transactionNumber = transactionResult.data.transaction_number
-          setCurrentTransactionId(transactionId)
+      let orderNumber = null
+      let orderId = null
+        try {
+          const sessionToken = localStorage.getItem('sessionToken')
+          const transactionResponse = await fetch('/api/transaction/start', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${sessionToken}`
+            },
+            body: JSON.stringify({ items: items })
+          })
+          
+          const transactionResult = await transactionResponse.json()
+          if (transactionResult.success) {
+            transactionId = transactionResult.data.transaction_id
+            orderId = transactionResult.data.order_id
+            orderNumber = transactionResult.data.order_number
+            setCurrentTransactionId(transactionId)
+            if (orderId) {
+              setCurrentOrderId(orderId)
+            }
+            if (orderNumber) {
+              setCurrentOrderNumber(orderNumber)
+            }
           // Notify customer display
           sessionStorage.setItem('activeTransaction', JSON.stringify(transactionResult.data))
           // Store transaction ID for customer display
@@ -867,10 +1029,10 @@ function POS({ employeeId, employeeName }) {
           result = await response.json()
           
           if (result.success && result.data.success) {
-            const successMessage = transactionNumber 
-              ? `Transaction ${transactionNumber} processed successfully!`
-              : 'Transaction processed successfully!'
-            setMessage({ type: 'success', text: successMessage })
+            const successMessage = orderNumber 
+              ? `Order ${orderNumber} processed successfully!`
+              : 'Order processed successfully!'
+            setToast({ message: successMessage, type: 'success' })
             
             // Try to get order_id from payment_transactions if not already available
             let foundOrderId = currentOrderId
@@ -898,27 +1060,54 @@ function POS({ employeeId, employeeName }) {
               }
             }
             
+            // Apply exchange credit if present (as discount on order)
+            if (exchangeCreditAmount > 0 && foundOrderId) {
+              try {
+                // Apply exchange credit as discount
+                const creditResponse = await fetch('/api/apply_exchange_credit', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    order_id: foundOrderId,
+                    exchange_credit_id: exchangeCreditId,
+                    credit_amount: exchangeCreditAmount
+                  })
+                })
+                const creditResult = await creditResponse.json()
+                if (creditResult.success) {
+                  console.log('Exchange credit applied:', creditResult)
+                }
+              } catch (err) {
+                console.error('Error applying exchange credit:', err)
+              }
+            }
+            
             // Don't automatically generate receipt - let user choose in customer display popup
             // Trigger customer display to show receipt screen
             setPaymentCompleted(true)
             
-            // For cash payments, show change screen briefly then automatically show customer display
+            // For cash payments, show change screen and wait for user to click
             if (paymentMethod === 'cash') {
               const change = result.data.data?.change || calculateChange()
               setChangeAmount(change)
               setShowChangeScreen(true)
               setShowPaymentForm(false)
-              // Automatically show customer display for receipt selection after 3 seconds
-              setTimeout(() => {
-                setShowChangeScreen(false)
-                setShowCustomerDisplay(true)
-                setShowSummary(false) // Don't show summary, go straight to receipt screen
-              }, 3000)
+              // Don't automatically show customer display - wait for user to click
             } else {
-              // For non-cash payments, show customer display for receipt selection
-              setShowCustomerDisplay(true)
+              // For non-cash payments, don't automatically show anything - wait for user action
               setShowPaymentForm(false)
             }
+            
+            // If exchange credit was used, print exchange receipt after order receipt
+            if (exchangeCreditId && foundOrderId) {
+              // Store exchange credit info for receipt printing
+              sessionStorage.setItem('exchangeCreditUsed', JSON.stringify({
+                credit_id: exchangeCreditId,
+                return_id: exchangeReturnId,
+                amount_used: exchangeCreditAmount
+              }))
+            }
+            
             // Clear active transaction
             sessionStorage.removeItem('activeTransaction')
           } else {
@@ -934,6 +1123,8 @@ function POS({ employeeId, employeeName }) {
               items: items,
               payment_method: paymentMethod,
               tax_rate: taxRate,
+              tip: selectedTip || 0,
+              discount: exchangeCreditAmount, // Apply exchange credit as discount
               order_type: orderTypeToSave,
               customer_info: customerInfoToSave
             })
@@ -941,32 +1132,51 @@ function POS({ employeeId, employeeName }) {
           result = await response.json()
           
           if (result.success) {
-            setMessage({ type: 'success', text: `Order ${result.order_number} processed successfully!` })
+            // Apply exchange credit if present
+            if (exchangeCreditAmount > 0 && result.order_id && exchangeCreditId) {
+              try {
+                await fetch('/api/apply_exchange_credit', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    order_id: result.order_id,
+                    exchange_credit_id: exchangeCreditId,
+                    credit_amount: exchangeCreditAmount
+                  })
+                })
+              } catch (err) {
+                console.error('Error applying exchange credit:', err)
+              }
+            }
+            
+            setToast({ message: `Order ${result.order_number} processed successfully!`, type: 'success' })
             setPaymentCompleted(true)
             
             // Store order information for receipt generation
             if (result.order_id) {
               setCurrentOrderId(result.order_id)
               setCurrentOrderNumber(result.order_number)
-              // Don't automatically generate receipt - let user choose in customer display popup
+              
+              // If exchange credit was used, store for receipt printing
+              if (exchangeCreditId) {
+                sessionStorage.setItem('exchangeCreditUsed', JSON.stringify({
+                  credit_id: exchangeCreditId,
+                  return_id: exchangeReturnId,
+                  amount_used: exchangeCreditAmount
+                }))
+              }
             }
             
-            // Payment completed - show customer display for receipt selection
-            // For cash payments, show change screen briefly then automatically show customer display
+            // Payment completed - wait for user to click something
+            // For cash payments, show change screen and wait for user to click
             if (paymentMethod === 'cash') {
               const change = calculateChange()
               setChangeAmount(change)
               setShowChangeScreen(true)
               setShowPaymentForm(false)
-              // Automatically show customer display for receipt selection after 3 seconds
-              setTimeout(() => {
-                setShowChangeScreen(false)
-                setShowCustomerDisplay(true)
-                setShowSummary(false) // Don't show summary, go straight to receipt screen
-              }, 3000)
+              // Don't automatically show customer display - wait for user to click
             } else {
-              // For non-cash payments, show customer display for receipt selection
-              setShowCustomerDisplay(true)
+              // For non-cash payments, don't automatically show anything - wait for user action
               setShowPaymentForm(false)
             }
           } else {
@@ -974,44 +1184,8 @@ function POS({ employeeId, employeeName }) {
           }
         }
       } else {
-        // Fall back to old system
-        response = await fetch('/api/create_order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            employee_id: employeeId,
-            items: items,
-            payment_method: paymentMethod,
-            tax_rate: taxRate,
-            order_type: orderTypeToSave,
-            customer_info: customerInfoToSave
-          })
-        })
-        result = await response.json()
-        
-          if (result.success) {
-            setMessage({ type: 'success', text: `Order ${result.order_number} processed successfully!` })
-            
-            // Store order information for receipt generation
-            if (result.order_id) {
-              setCurrentOrderId(result.order_id)
-              setCurrentOrderNumber(result.order_number)
-            }
-            
-            if (paymentMethod === 'cash') {
-            const change = calculateChange()
-            setChangeAmount(change)
-            setShowChangeScreen(true)
-            setShowPaymentForm(false)
-          } else {
-            setCart([])
-            setSearchTerm('')
-            setShowPaymentForm(false)
-            setAmountPaid('')
-          }
-        } else {
-          setMessage({ type: 'error', text: result.message || 'Failed to process order' })
-        }
+        // Fall back to old system (shouldn't normally reach here)
+        setMessage({ type: 'error', text: 'Transaction system unavailable. Please try again.' })
       }
     } catch (err) {
       setMessage({ type: 'error', text: 'Error processing order. Please try again.' })
@@ -1211,28 +1385,55 @@ function POS({ employeeId, employeeName }) {
                   )}
 
                   {/* Process Payment Button */}
-                  <button
-                    onClick={processOrder}
-                    disabled={processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal()))}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      backgroundColor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      color: '#fff',
-                      border: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
-                      borderRadius: '8px',
-                      fontSize: '16px',
-                      fontWeight: 600,
-                      cursor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'not-allowed' : 'pointer',
-                      boxShadow: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-                      transition: 'all 0.3s ease',
-                      opacity: 1
-                    }}
-                  >
-                    {processing ? 'Processing...' : 'Complete Payment'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+                    <button
+                      onClick={() => {
+                        setShowPaymentForm(false)
+                        setShowCustomerDisplay(false)
+                        setAmountPaid('')
+                        setShowSummary(false)
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                        backdropFilter: 'blur(10px)',
+                        WebkitBackdropFilter: 'blur(10px)',
+                        color: '#333',
+                        border: '1px solid rgba(0, 0, 0, 0.1)',
+                        borderRadius: '8px',
+                        fontSize: '16px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.5)',
+                        transition: 'all 0.3s ease'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={processOrder}
+                      disabled={processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal()))}
+                      style={{
+                        flex: 2,
+                        padding: '12px',
+                        backgroundColor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
+                        backdropFilter: 'blur(10px)',
+                        WebkitBackdropFilter: 'blur(10px)',
+                        color: '#fff',
+                        border: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                        borderRadius: '8px',
+                        fontSize: '16px',
+                        fontWeight: 600,
+                        cursor: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? 'not-allowed' : 'pointer',
+                        boxShadow: processing || cart.length === 0 || (paymentMethod === 'cash' && (!amountPaid || parseFloat(amountPaid) < calculateTotal())) ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                        transition: 'all 0.3s ease',
+                        opacity: 1
+                      }}
+                    >
+                      {processing ? 'Processing...' : 'Process'}
+                    </button>
+                  </div>
 
                   {/* Message */}
                   {message && (
@@ -1242,9 +1443,45 @@ function POS({ employeeId, employeeName }) {
                       borderRadius: '4px',
                       backgroundColor: message.type === 'success' ? '#e8f5e9' : '#ffebee',
                       color: message.type === 'success' ? '#2e7d32' : '#d32f2f',
-                      fontSize: '12px'
+                      fontSize: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px'
                     }}>
-                      {message.text}
+                      <div>{message.text}</div>
+                      {paymentCompleted && paymentMethod !== 'cash' && message.type === 'success' && (
+                        <button
+                          onClick={() => {
+                            setShowCustomerDisplay(true)
+                            setShowSummary(false)
+                          }}
+                          style={{
+                            padding: '12px 24px',
+                            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                            backdropFilter: 'blur(10px)',
+                            WebkitBackdropFilter: 'blur(10px)',
+                            color: '#fff',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            alignSelf: 'flex-start',
+                            boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                            transition: 'all 0.3s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+                            e.currentTarget.style.transform = 'scale(1.02)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                            e.currentTarget.style.transform = 'scale(1)'
+                          }}
+                        >
+                          Show Receipt Options
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1374,22 +1611,24 @@ function POS({ employeeId, employeeName }) {
                       <div style={{ fontSize: '12px', color: '#999' }}>{item.sku}</div>
                     </td>
                     <td style={{ textAlign: 'right', padding: '12px', fontFamily: '"Product Sans", sans-serif' }}>
-                      ${item.unit_price.toFixed(2)}
+                      ${(parseFloat(item.unit_price) || 0).toFixed(2)}
                     </td>
                     <td style={{ textAlign: 'center', padding: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                         <button
                           onClick={() => updateQuantity(item.product_id, item.quantity - 1)}
+                          disabled={showPaymentForm}
                           style={{
                             width: '28px',
                             height: '28px',
                             border: 'none',
                             backgroundColor: 'transparent',
                             borderRadius: '4px',
-                            cursor: 'pointer',
+                            cursor: showPaymentForm ? 'not-allowed' : 'pointer',
                             fontSize: '18px',
                             lineHeight: '1',
-                            color: themeColor
+                            color: themeColor,
+                            opacity: showPaymentForm ? 0.3 : 1
                           }}
                         >-</button>
                         <span style={{ minWidth: '30px', textAlign: 'center', fontWeight: 500 }}>
@@ -1397,37 +1636,39 @@ function POS({ employeeId, employeeName }) {
                         </span>
                         <button
                           onClick={() => updateQuantity(item.product_id, item.quantity + 1)}
-                          disabled={item.quantity >= item.available_quantity}
+                          disabled={showPaymentForm || item.quantity >= item.available_quantity}
                           style={{
                             width: '28px',
                             height: '28px',
                             border: 'none',
                             backgroundColor: 'transparent',
                             borderRadius: '4px',
-                            cursor: item.quantity >= item.available_quantity ? 'not-allowed' : 'pointer',
+                            cursor: (showPaymentForm || item.quantity >= item.available_quantity) ? 'not-allowed' : 'pointer',
                             fontSize: '18px',
                             lineHeight: '1',
                             color: themeColor,
-                            opacity: item.quantity >= item.available_quantity ? 0.5 : 1
+                            opacity: (showPaymentForm || item.quantity >= item.available_quantity) ? 0.3 : 1
                           }}
                         >+</button>
                       </div>
                     </td>
                     <td style={{ textAlign: 'right', padding: '12px', fontFamily: '"Product Sans", sans-serif', fontWeight: 500 }}>
-                      ${(item.unit_price * item.quantity).toFixed(2)}
+                      ${(parseFloat(item.unit_price) * item.quantity || 0).toFixed(2)}
                     </td>
                     <td style={{ padding: '12px' }}>
                       <button
                         onClick={() => removeFromCart(item.product_id)}
+                        disabled={showPaymentForm}
                         style={{
                           border: 'none',
                           backgroundColor: 'transparent',
                           color: themeColor,
-                          cursor: 'pointer',
+                          cursor: showPaymentForm ? 'not-allowed' : 'pointer',
                           fontSize: '18px',
                           padding: '0',
                           width: '24px',
-                          height: '24px'
+                          height: '24px',
+                          opacity: showPaymentForm ? 0.3 : 1
                         }}
                       >×</button>
                     </td>
@@ -1445,58 +1686,61 @@ function POS({ employeeId, employeeName }) {
         }}>
           {/* Pickup/Delivery Options */}
           <div style={{ marginBottom: '16px' }}>
-            <div style={{ marginBottom: '8px', fontSize: '14px', color: '#666', fontWeight: 500 }}>
-              Order Type (Optional):
-            </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={() => {
-                  if (orderType === 'pickup') {
-                    setOrderType(null)
-                    setCustomerInfo({ name: '', email: '', phone: '', address: '' })
-                    setSelectedCustomer(null)
-                  } else {
-                    setOrderType('pickup')
-                    setShowCustomerInfoModal(true)
+                  if (!showPaymentForm) {
+                    if (orderType === 'pickup') {
+                      setOrderType(null)
+                      setCustomerInfo({ name: '', email: '', phone: '', address: '' })
+                      setSelectedCustomer(null)
+                    } else {
+                      setOrderType('pickup')
+                    }
                   }
                 }}
+                disabled={showPaymentForm}
                 style={{
                   flex: 1,
-                  padding: '10px',
+                  padding: '6px 10px',
                   border: orderType === 'pickup' ? '2px solid ' + themeColor : '1px solid #ddd',
                   borderRadius: '4px',
                   fontSize: '14px',
                   fontWeight: orderType === 'pickup' ? 600 : 400,
                   backgroundColor: orderType === 'pickup' ? `rgba(${themeColorRgb}, 0.1)` : '#fff',
                   color: orderType === 'pickup' ? themeColor : '#666',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
+                  cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  opacity: showPaymentForm ? 0.3 : 1
                 }}
               >
                 Pickup
               </button>
               <button
                 onClick={() => {
-                  if (orderType === 'delivery') {
-                    setOrderType(null)
-                    setCustomerInfo({ name: '', email: '', phone: '', address: '' })
-                    setSelectedCustomer(null)
-                  } else {
-                    setOrderType('delivery')
-                    setShowCustomerInfoModal(true)
+                  if (!showPaymentForm) {
+                    if (orderType === 'delivery') {
+                      setOrderType(null)
+                      setCustomerInfo({ name: '', email: '', phone: '', address: '' })
+                      setSelectedCustomer(null)
+                    } else {
+                      setOrderType('delivery')
+                    }
                   }
                 }}
+                disabled={showPaymentForm}
                 style={{
                   flex: 1,
-                  padding: '10px',
+                  padding: '6px 10px',
                   border: orderType === 'delivery' ? '2px solid ' + themeColor : '1px solid #ddd',
                   borderRadius: '4px',
                   fontSize: '14px',
                   fontWeight: orderType === 'delivery' ? 600 : 400,
                   backgroundColor: orderType === 'delivery' ? `rgba(${themeColorRgb}, 0.1)` : '#fff',
                   color: orderType === 'delivery' ? themeColor : '#666',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
+                  cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  opacity: showPaymentForm ? 0.3 : 1
                 }}
               >
                 Delivery
@@ -1512,11 +1756,66 @@ function POS({ employeeId, employeeName }) {
             )}
           </div>
 
+          {/* Inline Customer Info Form for Pickup/Delivery */}
+          {orderType && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  value={customerInfo.name}
+                  onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
+                  placeholder="Customer name"
+                  disabled={showPaymentForm}
+                  style={{
+                    ...inputBaseStyle(isDarkMode, themeColorRgb),
+                    opacity: showPaymentForm ? 0.3 : 1,
+                    cursor: showPaymentForm ? 'not-allowed' : 'text'
+                  }}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                  autoFocus={!showPaymentForm}
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <input
+                  type="tel"
+                  value={customerInfo.phone}
+                  onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                  placeholder="Phone number"
+                  disabled={showPaymentForm}
+                  style={{
+                    ...inputBaseStyle(isDarkMode, themeColorRgb),
+                    opacity: showPaymentForm ? 0.3 : 1,
+                    cursor: showPaymentForm ? 'not-allowed' : 'text'
+                  }}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                />
+              </div>
+
+              {orderType === 'delivery' && (
+                <div style={{ marginBottom: '16px' }}>
+                  <textarea
+                    value={customerInfo.address}
+                    onChange={(e) => setCustomerInfo({ ...customerInfo, address: e.target.value })}
+                    placeholder="Delivery address"
+                    rows={3}
+                    disabled={showPaymentForm}
+                    style={{
+                      ...inputBaseStyle(isDarkMode, themeColorRgb),
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      opacity: showPaymentForm ? 0.3 : 1,
+                      cursor: showPaymentForm ? 'not-allowed' : 'text'
+                    }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
           {/* Customer Lookup (Optional) */}
           <div style={{ marginBottom: '16px' }}>
-            <div style={{ marginBottom: '8px', fontSize: '14px', color: '#666', fontWeight: 500 }}>
-              Customer (Optional):
-            </div>
             {!selectedCustomer ? (
               <div style={{ position: 'relative' }}>
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -1524,34 +1823,44 @@ function POS({ employeeId, employeeName }) {
                     type="text"
                     value={customerSearchTerm}
                     onChange={(e) => {
-                      setCustomerSearchTerm(e.target.value)
-                      searchCustomers(e.target.value)
+                      if (!showPaymentForm) {
+                        setCustomerSearchTerm(e.target.value)
+                        searchCustomers(e.target.value)
+                      }
                     }}
                     placeholder="Search by name, email, or phone..."
+                    disabled={showPaymentForm}
                     style={{
+                      ...inputBaseStyle(isDarkMode, themeColorRgb),
                       flex: 1,
-                      padding: '10px',
-                      border: '1px solid #ddd',
-                      borderRadius: '4px',
-                      fontSize: '14px',
-                      boxSizing: 'border-box'
+                      paddingTop: '6px',
+                      paddingBottom: '6px',
+                      opacity: showPaymentForm ? 0.3 : 1,
+                      cursor: showPaymentForm ? 'not-allowed' : 'text'
                     }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
                   <button
                     onClick={handleCreateCustomer}
+                    disabled={showPaymentForm}
                     style={{
-                      padding: '10px 16px',
-                      backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                      width: '40px',
+                      height: '40px',
+                      padding: '0',
+                      backgroundColor: showPaymentForm ? `rgba(${themeColorRgb}, 0.3)` : `rgba(${themeColorRgb}, 0.7)`,
                       color: '#fff',
                       border: 'none',
                       borderRadius: '4px',
                       fontSize: '14px',
                       fontWeight: 600,
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap'
+                      cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: showPaymentForm ? 0.3 : 1
                     }}
                   >
-                    Create
+                    <UserPlus size={18} />
                   </button>
                 </div>
                 {customerSearchResults.length > 0 && (
@@ -1572,15 +1881,25 @@ function POS({ employeeId, employeeName }) {
                     {customerSearchResults.map(customer => (
                       <div
                         key={customer.customer_id}
-                        onClick={() => handleCustomerSelect(customer)}
+                        onClick={() => !showPaymentForm && handleCustomerSelect(customer)}
                         style={{
                           padding: '12px',
-                          cursor: 'pointer',
+                          cursor: showPaymentForm ? 'not-allowed' : 'pointer',
                           borderBottom: '1px solid #eee',
-                          transition: 'background-color 0.2s'
+                          transition: 'background-color 0.2s',
+                          opacity: showPaymentForm ? 0.3 : 1,
+                          pointerEvents: showPaymentForm ? 'none' : 'auto'
                         }}
-                        onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-                        onMouseLeave={(e) => e.target.style.backgroundColor = '#fff'}
+                        onMouseEnter={(e) => {
+                          if (!showPaymentForm) {
+                            e.target.style.backgroundColor = '#f5f5f5'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!showPaymentForm) {
+                            e.target.style.backgroundColor = '#fff'
+                          }
+                        }}
                       >
                         <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>
                           {customer.customer_name || 'No name'}
@@ -1622,6 +1941,7 @@ function POS({ employeeId, employeeName }) {
                 </div>
                 <button
                   onClick={handleClearCustomer}
+                  disabled={showPaymentForm}
                   style={{
                     padding: '6px 12px',
                     backgroundColor: 'transparent',
@@ -1629,7 +1949,8 @@ function POS({ employeeId, employeeName }) {
                     border: '1px solid #ddd',
                     borderRadius: '4px',
                     fontSize: '12px',
-                    cursor: 'pointer'
+                    cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                    opacity: showPaymentForm ? 0.3 : 1
                   }}
                 >
                   Clear
@@ -1695,31 +2016,33 @@ function POS({ employeeId, employeeName }) {
             }>
               <button
                 onClick={() => {
-                  // Only check requirements if rewards are enabled AND customer is selected/entered
-                  // Customer lookup is optional, so we don't force it
-                  if (rewardsSettings.enabled && (selectedCustomer || customerInfo.name) && !checkCustomerInfoRequirements()) {
-                    setShowCustomerInfoModal(true)
-                    return
+                  if (!showPaymentForm) {
+                    // Only check requirements if rewards are enabled AND customer is selected/entered
+                    // Customer lookup is optional, so we don't force it
+                    if (rewardsSettings.enabled && (selectedCustomer || customerInfo.name) && !checkCustomerInfoRequirements()) {
+                      setShowCustomerInfoModal(true)
+                      return
+                    }
+                    setShowSummary(true)
+                    setShowCustomerDisplay(true)
                   }
-                  setShowSummary(true)
-                  setShowCustomerDisplay(true)
                 }}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || showPaymentForm}
                 style={{
                   flex: 1,
                   padding: '16px',
-                  backgroundColor: cart.length === 0 ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
+                  backgroundColor: (cart.length === 0 || showPaymentForm) ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
                   backdropFilter: 'blur(10px)',
                   WebkitBackdropFilter: 'blur(10px)',
                   color: '#fff',
-                  border: cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  border: (cart.length === 0 || showPaymentForm) ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
                   borderRadius: '8px',
                   fontSize: '18px',
                   fontWeight: 600,
-                  cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                  boxShadow: cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                  cursor: (cart.length === 0 || showPaymentForm) ? 'not-allowed' : 'pointer',
+                  boxShadow: (cart.length === 0 || showPaymentForm) ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                   transition: 'all 0.3s ease',
-                  opacity: 1
+                  opacity: showPaymentForm ? 0.3 : 1
                 }}
               >
                 Pay
@@ -1728,28 +2051,30 @@ function POS({ employeeId, employeeName }) {
             <ProtectedComponent permission="apply_discount" fallback={null}>
               <button
                 onClick={() => {
-                  // TODO: Implement discount functionality
-                  const discountAmount = prompt('Enter discount amount (e.g., 10 for $10 or 10% for 10%):')
-                  if (discountAmount) {
-                    // Handle discount logic here
-                    console.log('Discount:', discountAmount)
+                  if (!showPaymentForm) {
+                    // TODO: Implement discount functionality
+                    const discountAmount = prompt('Enter discount amount (e.g., 10 for $10 or 10% for 10%):')
+                    if (discountAmount) {
+                      // Handle discount logic here
+                      console.log('Discount:', discountAmount)
+                    }
                   }
                 }}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || showPaymentForm}
                 style={{
                   padding: '16px 24px',
-                  backgroundColor: cart.length === 0 ? `rgba(${themeColorRgb}, 0.35)` : `rgba(${themeColorRgb}, 0.55)`,
+                  backgroundColor: (cart.length === 0 || showPaymentForm) ? `rgba(${themeColorRgb}, 0.35)` : `rgba(${themeColorRgb}, 0.55)`,
                   backdropFilter: 'blur(10px)',
                   WebkitBackdropFilter: 'blur(10px)',
                   color: '#fff',
-                  border: cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  border: (cart.length === 0 || showPaymentForm) ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
                   borderRadius: '8px',
                   fontSize: '18px',
                   fontWeight: 600,
-                  cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                  boxShadow: cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                  cursor: (cart.length === 0 || showPaymentForm) ? 'not-allowed' : 'pointer',
+                  boxShadow: (cart.length === 0 || showPaymentForm) ? `0 2px 8px rgba(${themeColorRgb}, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                   transition: 'all 0.3s ease',
-                  opacity: 1
+                  opacity: showPaymentForm ? 0.3 : 1
                 }}
               >
                 Discount
@@ -1771,26 +2096,6 @@ function POS({ employeeId, employeeName }) {
         }}>
         {showChangeScreen ? (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0, fontFamily: '"Product Sans", sans-serif' }}>Change Due</h2>
-              <button
-                onClick={handleDismissChange}
-                style={{
-                  border: 'none',
-                  backgroundColor: 'transparent',
-                  color: '#666',
-                  cursor: 'pointer',
-                  fontSize: '24px',
-                  padding: '0',
-                  width: '30px',
-                  height: '30px',
-                  lineHeight: '1'
-                }}
-              >
-                ×
-              </button>
-            </div>
-            
             <div style={{
               display: 'flex',
               flexDirection: 'column',
@@ -1817,20 +2122,29 @@ function POS({ employeeId, employeeName }) {
                 Change to return to customer
               </div>
               <button
-                onClick={handleDismissChange}
+                onClick={handleShowReceiptOptions}
                 style={{
                   padding: '16px 32px',
-                  backgroundColor: '#000',
+                  backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
                   color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
                   fontSize: '18px',
                   fontWeight: 600,
                   cursor: 'pointer',
-                  transition: 'all 0.2s'
+                  boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                  transition: 'all 0.3s ease'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#333'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000'}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+                  e.currentTarget.style.transform = 'scale(1.02)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
               >
                 Show Receipt Options
               </button>
@@ -1838,29 +2152,31 @@ function POS({ employeeId, employeeName }) {
           </>
         ) : showPaymentForm ? (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0, fontFamily: '"Product Sans", sans-serif' }}>Payment</h2>
-              <button
-                onClick={() => {
-                  setShowPaymentForm(false)
-                  setShowCustomerDisplay(false)
-                  setAmountPaid('')
-                }}
-                style={{
-                  border: 'none',
-                  backgroundColor: 'transparent',
-                  color: '#666',
-                  cursor: 'pointer',
-                  fontSize: '24px',
-                  padding: '0',
-                  width: '30px',
-                  height: '30px',
-                  lineHeight: '1'
-                }}
-              >
-                ×
-              </button>
-            </div>
+            {paymentMethod !== 'cash' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h2 style={{ marginTop: 0, marginBottom: 0, fontFamily: '"Product Sans", sans-serif' }}>Payment</h2>
+                <button
+                  onClick={() => {
+                    setShowPaymentForm(false)
+                    setShowCustomerDisplay(false)
+                    setAmountPaid('')
+                  }}
+                  style={{
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    color: '#666',
+                    cursor: 'pointer',
+                    fontSize: '24px',
+                    padding: '0',
+                    width: '30px',
+                    height: '30px',
+                    lineHeight: '1'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
 
             {/* Payment Method */}
             <div style={{ marginBottom: '20px' }}>
@@ -2057,36 +2373,98 @@ function POS({ employeeId, employeeName }) {
                 borderRadius: '4px',
                 backgroundColor: message.type === 'success' ? '#e8f5e9' : '#ffebee',
                 color: message.type === 'success' ? '#2e7d32' : '#d32f2f',
-                fontSize: '14px'
+                fontSize: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
               }}>
-                {message.text}
+                <div>{message.text}</div>
+                {paymentCompleted && paymentMethod !== 'cash' && message.type === 'success' && (
+                  <button
+                    onClick={() => {
+                      setShowCustomerDisplay(true)
+                      setShowSummary(false)
+                    }}
+                    style={{
+                      padding: '12px 24px',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      color: '#fff',
+                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      alignSelf: 'flex-start',
+                      boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                      transition: 'all 0.3s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
+                      e.currentTarget.style.transform = 'scale(1.02)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                      e.currentTarget.style.transform = 'scale(1)'
+                    }}
+                  >
+                    Show Receipt Options
+                  </button>
+                )}
               </div>
             )}
 
             {/* Process Order Button */}
-            <button
-              onClick={processOrder}
-              disabled={processing || cart.length === 0}
-              style={{
-                width: '100%',
-                padding: '16px',
-                marginTop: 'auto',
-                backgroundColor: processing || cart.length === 0 ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                color: '#fff',
-                border: processing || cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '8px',
-                fontSize: '18px',
-                fontWeight: 600,
-                cursor: processing || cart.length === 0 ? 'not-allowed' : 'pointer',
-                boxShadow: processing || cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-                transition: 'all 0.3s ease',
-                opacity: 1
-              }}
-            >
-              {processing ? 'Processing...' : 'Complete Payment'}
-            </button>
+            <div style={{ display: 'flex', gap: '12px', width: '100%', marginTop: 'auto' }}>
+              <button
+                onClick={() => {
+                  setShowPaymentForm(false)
+                  setShowCustomerDisplay(false)
+                  setAmountPaid('')
+                  setShowSummary(false)
+                }}
+                style={{
+                  flex: 1,
+                  padding: '16px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  color: '#333',
+                  border: '1px solid rgba(0, 0, 0, 0.1)',
+                  borderRadius: '8px',
+                  fontSize: '18px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.5)',
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={processOrder}
+                disabled={processing || cart.length === 0}
+                style={{
+                  flex: 2,
+                  padding: '16px',
+                  backgroundColor: processing || cart.length === 0 ? `rgba(${themeColorRgb}, 0.4)` : `rgba(${themeColorRgb}, 0.7)`,
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  color: '#fff',
+                  border: processing || cart.length === 0 ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
+                  fontSize: '18px',
+                  fontWeight: 600,
+                  cursor: processing || cart.length === 0 ? 'not-allowed' : 'pointer',
+                  boxShadow: processing || cart.length === 0 ? `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                  transition: 'all 0.3s ease',
+                  opacity: 1
+                }}
+              >
+                {processing ? 'Processing...' : 'Process'}
+              </button>
+            </div>
           </>
         ) : (
           <>
@@ -2097,6 +2475,7 @@ function POS({ employeeId, employeeName }) {
                 placeholder="Search by name, SKU, or scan barcode..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                disabled={showPaymentForm}
                 style={{
                   flex: 1,
                   padding: '8px 0',
@@ -2106,65 +2485,123 @@ function POS({ employeeId, employeeName }) {
                   fontSize: '16px',
                   boxSizing: 'border-box',
                   backgroundColor: 'transparent',
-                  outline: 'none'
+                  outline: 'none',
+                  opacity: showPaymentForm ? 0.3 : 1,
+                  cursor: showPaymentForm ? 'not-allowed' : 'text'
                 }}
-                autoFocus
+                autoFocus={!showPaymentForm}
               />
               <button
                 onClick={() => setShowBarcodeScanner(true)}
+                disabled={showPaymentForm}
                 style={{
-                  padding: '8px',
-                  backgroundColor: 'transparent',
-                  color: '#000',
-                  border: 'none',
-                  borderRadius: '0',
-                  fontSize: '24px',
-                  cursor: 'pointer',
+                  padding: '4px',
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: showPaymentForm ? `rgba(${themeColorRgb}, 0.3)` : `rgba(${themeColorRgb}, 0.7)`,
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  color: '#fff',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
+                  cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  boxShadow: showPaymentForm ? `0 2px 8px rgba(${themeColorRgb}, 0.2)` : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                  transition: 'all 0.3s ease',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  minWidth: '40px',
-                  height: '40px'
+                  opacity: showPaymentForm ? 0.3 : 1
+                }}
+                onMouseEnter={(e) => {
+                  if (!showPaymentForm) {
+                    e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                    e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!showPaymentForm) {
+                    e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                    e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+                  }
                 }}
                 title="Scan Barcode"
               >
-                📷
+                <ScanBarcode size={24} />
               </button>
             </div>
 
-            {/* Category Navigation - Show when not searching */}
-            {searchTerm.length < 2 && (
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '8px'
-                }}>
+            {/* Category Navigation */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ position: 'relative' }}>
+                <div 
+                  className="pos-category-buttons-scroll"
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'nowrap',
+                    gap: '8px',
+                    overflowX: 'auto',
+                    paddingBottom: '4px',
+                    scrollbarWidth: 'none',
+                    msOverflowStyle: 'none'
+                  }}
+                >
                   {categories.map(category => (
                     <button
                       key={category}
                       onClick={() => handleCategorySelect(category)}
+                      disabled={showPaymentForm}
                       style={{
-                        padding: '10px 16px',
-                        backgroundColor: selectedCategory === category ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
-                        backdropFilter: 'blur(10px)',
-                        WebkitBackdropFilter: 'blur(10px)',
-                        border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+                        padding: '4px 16px',
+                        height: '28px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: selectedCategory === category 
+                          ? `rgba(${themeColorRgb}, 0.7)` 
+                          : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                        border: selectedCategory === category 
+                          ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                          : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
                         borderRadius: '8px',
                         fontSize: '14px',
                         fontWeight: selectedCategory === category ? 600 : 500,
-                        color: '#fff',
-                        cursor: 'pointer',
+                        color: selectedCategory === category ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                        cursor: showPaymentForm ? 'not-allowed' : 'pointer',
                         transition: 'all 0.3s ease',
-                        boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+                        boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none',
+                        opacity: showPaymentForm ? 0.3 : 1
                       }}
                     >
                       {category}
                     </button>
                   ))}
                 </div>
+                {/* Left gradient fade */}
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: '4px',
+                  width: '20px',
+                  background: `linear-gradient(to right, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+                  pointerEvents: 'none',
+                  zIndex: 1
+                }} />
+                {/* Right gradient fade */}
+                <div style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: 0,
+                  bottom: '4px',
+                  width: '20px',
+                  background: `linear-gradient(to left, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+                  pointerEvents: 'none',
+                  zIndex: 1
+                }} />
               </div>
-            )}
+            </div>
 
             {/* Product List / Search Results */}
             <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 400px)' }}>
@@ -2199,20 +2636,30 @@ function POS({ employeeId, employeeName }) {
                       return (
                       <div
                         key={product.product_id}
-                        onClick={() => addToCart(product)}
+                        onClick={() => !showPaymentForm && addToCart(product)}
                         style={{
                           padding: '8px 12px',
                           border: '1px solid #eee',
                           borderRadius: '4px',
-                          cursor: 'pointer',
+                          cursor: showPaymentForm ? 'not-allowed' : 'pointer',
                           transition: 'all 0.2s',
                           backgroundColor: (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee',
                           display: 'flex',
                           gap: '12px',
-                          alignItems: 'center'
+                          alignItems: 'center',
+                          opacity: showPaymentForm ? 0.3 : 1,
+                          pointerEvents: showPaymentForm ? 'none' : 'auto'
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
-                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee'}
+                        onMouseEnter={(e) => {
+                          if (!showPaymentForm) {
+                            e.currentTarget.style.backgroundColor = '#f5f5f5'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!showPaymentForm) {
+                            e.currentTarget.style.backgroundColor = (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee'
+                          }
+                        }}
                       >
                         {/* Product Image */}
                         {imageUrl ? (
@@ -2274,7 +2721,7 @@ function POS({ employeeId, employeeName }) {
                             fontFamily: '"Product Sans", sans-serif',
                             color: '#000'
                           }}>
-                            ${(product.product_price || 0).toFixed(2)}
+                            ${(parseFloat(product.product_price) || 0).toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -2308,20 +2755,30 @@ function POS({ employeeId, employeeName }) {
                       return (
                       <div
                         key={product.product_id}
-                        onClick={() => addToCart(product)}
+                        onClick={() => !showPaymentForm && addToCart(product)}
                         style={{
                           padding: '8px 12px',
                           border: '1px solid #eee',
                           borderRadius: '4px',
-                          cursor: 'pointer',
+                          cursor: showPaymentForm ? 'not-allowed' : 'pointer',
                           transition: 'all 0.2s',
                           backgroundColor: (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee',
                           display: 'flex',
                           gap: '12px',
-                          alignItems: 'center'
+                          alignItems: 'center',
+                          opacity: showPaymentForm ? 0.3 : 1,
+                          pointerEvents: showPaymentForm ? 'none' : 'auto'
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
-                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee'}
+                        onMouseEnter={(e) => {
+                          if (!showPaymentForm) {
+                            e.currentTarget.style.backgroundColor = '#f5f5f5'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!showPaymentForm) {
+                            e.currentTarget.style.backgroundColor = (product.current_quantity || 0) > 0 ? '#fff' : '#ffebee'
+                          }
+                        }}
                       >
                         {/* Product Image */}
                         {imageUrl ? (
@@ -2383,7 +2840,7 @@ function POS({ employeeId, employeeName }) {
                             fontFamily: '"Product Sans", sans-serif',
                             color: '#000'
                           }}>
-                            ${(product.product_price || 0).toFixed(2)}
+                            ${(parseFloat(product.product_price) || 0).toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -2424,127 +2881,88 @@ function POS({ employeeId, employeeName }) {
             width: '90%',
             boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ marginBottom: '20px' }}>
               <h3 style={{ margin: 0, fontSize: '18px', fontFamily: '"Product Sans", sans-serif' }}>
-                {orderType ? (orderType === 'pickup' ? 'Pickup' : 'Delivery') : 'Customer'} Information
+                {showCreateCustomer ? 'Add Customer' : (orderType ? (orderType === 'pickup' ? 'Pickup' : 'Delivery') : 'Customer')} Information
               </h3>
-              <button
-                onClick={() => {
-                  setShowCustomerInfoModal(false)
-                  if (!customerInfo.name) {
-                    setOrderType(null)
-                  }
-                }}
-                style={{
-                  border: 'none',
-                  backgroundColor: 'transparent',
-                  color: '#666',
-                  cursor: 'pointer',
-                  fontSize: '24px',
-                  padding: '0',
-                  width: '30px',
-                  height: '30px',
-                  lineHeight: '1'
-                }}
-              >
-                ×
-              </button>
             </div>
 
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
-                Name *
+              <label style={formLabelStyle(isDarkMode)}>
+                Name <span style={{ color: '#f44336' }}>*</span>
               </label>
               <input
                 type="text"
                 value={customerInfo.name}
                 onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
                 placeholder="Customer name"
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  boxSizing: 'border-box'
-                }}
+                style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 autoFocus
               />
             </div>
 
-            {(rewardsSettings.enabled && (rewardsSettings.require_email || rewardsSettings.require_both)) || orderType ? (
+            {(rewardsSettings.enabled && (rewardsSettings.require_email || rewardsSettings.require_both)) || orderType || showCreateCustomer ? (
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
-                  Email {((rewardsSettings.enabled && rewardsSettings.require_email) || rewardsSettings.require_both) ? '*' : ''}
+                <label style={formLabelStyle(isDarkMode)}>
+                  Email {((rewardsSettings.enabled && rewardsSettings.require_email) || rewardsSettings.require_both) ? <span style={{ color: '#f44336' }}>*</span> : ''}
                 </label>
                 <input
                   type="email"
                   value={customerInfo.email}
                   onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })}
                   placeholder="Email address"
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    boxSizing: 'border-box'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
               </div>
             ) : null}
 
-            {(rewardsSettings.enabled && (rewardsSettings.require_phone || rewardsSettings.require_both)) || orderType ? (
+            {(rewardsSettings.enabled && (rewardsSettings.require_phone || rewardsSettings.require_both)) || orderType || showCreateCustomer ? (
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
-                  Phone Number {orderType || (rewardsSettings.enabled && (rewardsSettings.require_phone || rewardsSettings.require_both)) ? '*' : ''}
+                <label style={formLabelStyle(isDarkMode)}>
+                  Phone Number {(orderType || showCreateCustomer || (rewardsSettings.enabled && (rewardsSettings.require_phone || rewardsSettings.require_both))) ? <span style={{ color: '#f44336' }}>*</span> : ''}
                 </label>
                 <input
                   type="tel"
                   value={customerInfo.phone}
                   onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
                   placeholder="Phone number"
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    boxSizing: 'border-box'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
               </div>
             ) : null}
 
-            {orderType === 'delivery' && (
+            {(orderType === 'delivery' || showCreateCustomer) && (
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#666' }}>
-                  Address *
+                <label style={formLabelStyle(isDarkMode)}>
+                  Address {orderType === 'delivery' ? <span style={{ color: '#f44336' }}>*</span> : ''}
                 </label>
                 <textarea
                   value={customerInfo.address}
                   onChange={(e) => setCustomerInfo({ ...customerInfo, address: e.target.value })}
-                  placeholder="Delivery address"
+                  placeholder={orderType === 'delivery' ? 'Delivery address' : 'Address (optional)'}
                   rows={3}
                   style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    boxSizing: 'border-box',
+                    ...inputBaseStyle(isDarkMode, themeColorRgb),
                     fontFamily: 'inherit',
                     resize: 'vertical'
                   }}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '24px' }}>
               <button
                 onClick={() => {
                   setShowCustomerInfoModal(false)
-                  if (!orderType) {
+                  if (showCreateCustomer) {
+                    // If opened from plus button, reset customer creation flag
+                    setShowCreateCustomer(false)
+                    setCustomerInfo({ name: '', email: '', phone: '', address: '' })
+                  } else if (!orderType) {
                     // Only reset if not from rewards (rewards modal can be opened without order type)
                     setCustomerInfo({ name: '', email: '', phone: '', address: '' })
                   } else {
@@ -2553,24 +2971,76 @@ function POS({ employeeId, employeeName }) {
                   }
                 }}
                 style={{
-                  flex: 1,
-                  padding: '12px',
-                  backgroundColor: '#f5f5f5',
-                  color: '#666',
-                  border: 'none',
-                  borderRadius: '4px',
+                  padding: '4px 16px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  whiteSpace: 'nowrap',
+                  backgroundColor: 'var(--bg-tertiary)',
+                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                  borderRadius: '8px',
                   fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: 'pointer'
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  boxShadow: 'none'
                 }}
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   // Check requirements based on order type and rewards settings
                   let requiredFields = false
                   let errorMessage = ''
+                  
+                  if (showCreateCustomer) {
+                    // When creating a customer from the plus button, require name and phone
+                    requiredFields = customerInfo.name && customerInfo.phone
+                    errorMessage = 'Please fill in name and phone'
+                    
+                    if (requiredFields) {
+                      // Save customer to database
+                      try {
+                        const response = await fetch('/api/customers', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            customer_name: customerInfo.name,
+                            email: customerInfo.email || null,
+                            phone: customerInfo.phone,
+                            address: customerInfo.address || null
+                          })
+                        })
+                        
+                        const data = await response.json()
+                        if (data.success) {
+                          // Select the newly created customer
+                          setSelectedCustomer({
+                            customer_id: data.customer_id,
+                            customer_name: customerInfo.name,
+                            email: customerInfo.email,
+                            phone: customerInfo.phone,
+                            address: customerInfo.address
+                          })
+                          setMessage({ type: 'success', text: 'Customer added successfully' })
+                          setShowCustomerInfoModal(false)
+                          setShowCreateCustomer(false)
+                          setCustomerInfo({ name: '', email: '', phone: '', address: '' })
+                        } else {
+                          alert(data.message || 'Failed to create customer')
+                        }
+                      } catch (err) {
+                        console.error('Error creating customer:', err)
+                        alert('Error creating customer. Please try again.')
+                      }
+                    } else {
+                      alert(errorMessage)
+                    }
+                    return
+                  }
                   
                   if (orderType === 'pickup') {
                     requiredFields = customerInfo.name && customerInfo.phone
@@ -2611,18 +3081,24 @@ function POS({ employeeId, employeeName }) {
                   }
                 }}
                 style={{
-                  flex: 1,
-                  padding: '12px',
+                  padding: '4px 16px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  whiteSpace: 'nowrap',
                   backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
+                  border: `1px solid rgba(${themeColorRgb}, 0.5)`,
+                  borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: 600,
-                  cursor: 'pointer'
+                  color: '#fff',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3)`
                 }}
               >
-                Save
+                {showCreateCustomer ? 'Add Customer' : 'Save'}
               </button>
             </div>
           </div>
@@ -2658,6 +3134,36 @@ function POS({ employeeId, employeeName }) {
           onClick={() => setMessage(null)}
         >
           {message.text}
+        </div>
+      )}
+
+      {/* Toast notification for order success */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '12px 20px',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+            border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+            borderRadius: '12px',
+            boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.4)' : '0 4px 20px rgba(0,0,0,0.15)',
+            zIndex: 10001,
+            fontSize: '14px',
+            fontWeight: 500,
+            maxWidth: '90vw'
+          }}
+        >
+          <CheckCircle size={20} style={{ flexShrink: 0, color: `rgb(${themeColorRgb})` }} />
+          <span>{toast.message}</span>
         </div>
       )}
     </div>

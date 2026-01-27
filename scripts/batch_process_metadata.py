@@ -7,9 +7,8 @@ Run this periodically to extract metadata for products
 
 import sys
 import json
-import sqlite3
 from metadata_extraction import FreeMetadataSystem
-from database import get_connection, DB_NAME
+from database import get_connection
 
 def batch_process_all_products(limit=None):
     """
@@ -20,7 +19,6 @@ def batch_process_all_products(limit=None):
     metadata_system = FreeMetadataSystem()
     
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
     # Get products without metadata or with outdated metadata

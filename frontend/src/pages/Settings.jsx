@@ -1,5 +1,148 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
+import { 
+  Settings as SettingsIcon, 
+  Workflow, 
+  Receipt, 
+  MapPin, 
+  Monitor, 
+  Gift, 
+  ShoppingCart, 
+  MessageSquare, 
+  DollarSign,
+  ChevronRight,
+  ChevronDown,
+  PanelLeft
+} from 'lucide-react'
+import { FormTitle, FormLabel, FormField, inputBaseStyle, getInputFocusHandlers } from '../components/FormStyles'
+
+function CustomDropdown({ value, onChange, options, placeholder, required, isDarkMode, themeColorRgb, style = {} }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false)
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isOpen])
+
+  const selectedOption = options.find(opt => opt.value === value)
+
+  return (
+    <div ref={dropdownRef} style={{ position: 'relative', ...style }}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          width: '100%',
+          padding: '8px 14px',
+          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+          borderRadius: '8px',
+          fontSize: '14px',
+          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+          transition: 'all 0.2s ease',
+          outline: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          ...(isOpen && {
+            borderColor: `rgba(${themeColorRgb}, 0.5)`,
+            boxShadow: `0 0 0 3px rgba(${themeColorRgb}, 0.1)`
+          })
+        }}
+        onMouseEnter={(e) => {
+          if (!isOpen) {
+            e.target.style.borderColor = `rgba(${themeColorRgb}, 0.3)`
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!isOpen) {
+            e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
+          }
+        }}
+      >
+        <span style={{ 
+          color: selectedOption ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333') : (isDarkMode ? 'var(--text-tertiary, #999)' : '#999')
+        }}>
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
+        <ChevronDown 
+          size={16} 
+          style={{ 
+            transition: 'transform 0.2s ease',
+            transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+            color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
+          }} 
+        />
+      </div>
+      {isOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            marginTop: '4px',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+            borderRadius: '8px',
+            boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.3)' : '0 4px 12px rgba(0, 0, 0, 0.1)',
+            zIndex: 1000,
+            maxHeight: '200px',
+            overflowY: 'auto',
+            overflowX: 'hidden'
+          }}
+        >
+          {options.map((option) => (
+            <div
+              key={option.value}
+              onClick={() => {
+                onChange({ target: { value: option.value } })
+                setIsOpen(false)
+              }}
+              style={{
+                padding: '10px 14px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                backgroundColor: value === option.value 
+                  ? `rgba(${themeColorRgb}, 0.2)` 
+                  : 'transparent',
+                transition: 'background-color 0.15s ease',
+                borderLeft: value === option.value 
+                  ? `3px solid rgba(${themeColorRgb}, 0.7)` 
+                  : '3px solid transparent'
+              }}
+              onMouseEnter={(e) => {
+                if (value !== option.value) {
+                  e.target.style.backgroundColor = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (value !== option.value) {
+                  e.target.style.backgroundColor = 'transparent'
+                }
+              }}
+            >
+              {option.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function Settings() {
   const { themeMode, themeColor } = useTheme()
@@ -96,6 +239,22 @@ function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
+  const [sidebarMinimized, setSidebarMinimized] = useState(false)
+  const [hoveringSettings, setHoveringSettings] = useState(false)
+  const [showTooltip, setShowTooltip] = useState(false)
+  const settingsHeaderRef = useRef(null)
+  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 })
+  const [isInitialMount, setIsInitialMount] = useState(true)
+  const sidebarRef = useRef(null)
+  const contentRef = useRef(null)
+  
+  useEffect(() => {
+    // Disable initial animation by setting flag after component is mounted
+    const timer = setTimeout(() => {
+      setIsInitialMount(false)
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [])
 
   // Convert hex to RGB
   const hexToRgb = (hex) => {
@@ -556,7 +715,8 @@ function Settings() {
     setSaving(true)
     setMessage(null)
     try {
-      const response = await fetch('/api/pos-settings', {
+      // Save POS settings
+      const posResponse = await fetch('/api/pos-settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -567,12 +727,30 @@ function Settings() {
         })
       })
 
-      const data = await response.json()
-      if (data.success) {
+      const posData = await posResponse.json()
+      
+      // Save display settings
+      const sessionToken = localStorage.getItem('sessionToken')
+      const displayResponse = await fetch('/api/customer-display/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({
+          tip_enabled: displaySettings.tip_enabled ? 1 : 0,
+          tip_after_payment: displaySettings.tip_after_payment ? 1 : 0,
+          tip_suggestions: displaySettings.tip_suggestions
+        })
+      })
+
+      const displayData = await displayResponse.json()
+
+      if (posData.success && displayData.success) {
         setMessage({ type: 'success', text: 'POS settings saved successfully!' })
         setTimeout(() => setMessage(null), 3000)
       } else {
-        setMessage({ type: 'error', text: data.message || 'Failed to save POS settings' })
+        setMessage({ type: 'error', text: posData.message || displayData.message || 'Failed to save POS settings' })
       }
     } catch (error) {
       console.error('Error saving POS settings:', error)
@@ -774,211 +952,267 @@ function Settings() {
     )
   }
 
-  return (
-    <div style={{ padding: '24px', maxWidth: '800px', margin: '0 auto' }}>
-      <h1 style={{ 
-        marginBottom: '24px', 
-        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-        fontSize: '28px',
-        fontWeight: 600
-      }}>
-        Settings
-      </h1>
+  const settingsSections = [
+    { id: 'workflow', label: 'Shipment Verification', icon: Workflow },
+    { id: 'receipt', label: 'Receipt Settings', icon: Receipt },
+    { id: 'location', label: 'Store Information', icon: MapPin },
+    { id: 'rewards', label: 'Customer Rewards', icon: Gift },
+    { id: 'pos', label: 'POS Settings', icon: ShoppingCart },
+    { id: 'sms', label: 'SMS & Notifications', icon: MessageSquare },
+    { id: 'cash', label: 'Cash Register', icon: DollarSign }
+  ]
 
-      {/* Tabs */}
-      <div style={{
-        display: 'flex',
-        gap: '8px',
-        marginBottom: '24px',
-        borderBottom: `2px solid ${isDarkMode ? 'var(--border-light, #333)' : '#e0e0e0'}`
-      }}>
-        <button
-          onClick={() => setActiveTab('workflow')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'workflow' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'workflow' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'workflow' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Shipment Verification
-        </button>
-        <button
-          onClick={() => setActiveTab('receipt')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'receipt' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'receipt' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'receipt' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Receipt Settings
-        </button>
-        <button
-          onClick={() => setActiveTab('location')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'location' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'location' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'location' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Store Location
-        </button>
-        <button
-          onClick={() => setActiveTab('display')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'display' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'display' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'display' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Display Settings
-        </button>
-        <button
-          onClick={() => setActiveTab('rewards')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'rewards' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'rewards' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'rewards' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Customer Rewards
-        </button>
-        <button
-          onClick={() => setActiveTab('pos')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'pos' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'pos' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'pos' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          POS Settings
-        </button>
-        <button
-          onClick={() => setActiveTab('sms')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'sms' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'sms' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'sms' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          SMS
-        </button>
-        <button
-          onClick={() => setActiveTab('cash')}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeTab === 'cash' ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
-            color: activeTab === 'cash' 
-              ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
-              : (isDarkMode ? 'var(--text-tertiary, #999)' : '#666'),
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: activeTab === 'cash' ? 600 : 400,
-            transition: 'all 0.2s ease'
-          }}
-        >
-          Cash Register
-        </button>
+  return (
+    <div style={{ 
+      display: 'flex',
+      minHeight: '100vh',
+      width: '100%'
+    }}>
+      {/* Sidebar Navigation - 1/4 of page */}
+      <div 
+        ref={sidebarRef}
+        style={{
+          width: isInitialMount ? '25%' : (sidebarMinimized ? '60px' : '25%'),
+          flexShrink: 0,
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+          padding: isInitialMount ? '32px 10px 48px 10px' : (sidebarMinimized ? '32px 10px 48px 10px' : '32px 10px 48px 10px'),
+          minHeight: '100vh',
+          position: 'sticky',
+          top: 0,
+          alignSelf: 'flex-start',
+          borderRight: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#e0e0e0'}`,
+          transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+          overflow: 'hidden'
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '4px',
+          transition: isInitialMount ? 'none' : 'gap 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+          paddingTop: '0',
+          paddingBottom: '0',
+          alignItems: 'stretch'
+        }}>
+          {/* Settings Header */}
+          <div
+            ref={settingsHeaderRef}
+            style={{ position: 'relative' }}
+            onMouseEnter={(e) => {
+              setHoveringSettings(true)
+              setShowTooltip(true)
+              if (settingsHeaderRef.current) {
+                const rect = settingsHeaderRef.current.getBoundingClientRect()
+                if (sidebarMinimized) {
+                  setTooltipPosition({
+                    top: rect.top + rect.height / 2,
+                    left: rect.right + 8
+                  })
+                } else {
+                  setTooltipPosition({
+                    top: rect.bottom + 4,
+                    left: rect.left
+                  })
+                }
+              }
+            }}
+            onMouseLeave={() => {
+              setHoveringSettings(false)
+              setShowTooltip(false)
+            }}
+          >
+            <button
+              onClick={() => setSidebarMinimized(!sidebarMinimized)}
+              style={{
+                width: isInitialMount ? '100%' : (sidebarMinimized ? '40px' : '100%'),
+                height: '40px',
+                padding: '0',
+                margin: '0',
+                border: 'none',
+                backgroundColor: isDarkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.08)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isInitialMount ? 'flex-start' : (sidebarMinimized ? 'center' : 'flex-start'),
+                transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), justifyContent 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+            >
+              <div style={{
+                position: 'absolute',
+                left: '0',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '40px',
+                height: '40px',
+                transition: 'none'
+              }}>
+                {sidebarMinimized ? (
+                  <PanelLeft size={20} style={{ width: '20px', height: '20px' }} />
+                ) : (
+                  hoveringSettings ? (
+                    <PanelLeft size={20} style={{ width: '20px', height: '20px' }} />
+                  ) : (
+                    <SettingsIcon size={20} style={{ width: '20px', height: '20px' }} />
+                  )
+                )}
+              </div>
+              {!sidebarMinimized && (
+                <span style={{
+                  marginLeft: '48px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  whiteSpace: 'nowrap',
+                  opacity: sidebarMinimized ? 0 : 1,
+                  transition: isInitialMount ? 'none' : 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  pointerEvents: 'none'
+                }}>
+                  Settings
+                </span>
+              )}
+            </button>
+          </div>
+          {showTooltip && (
+            <div
+              style={{
+                position: 'fixed',
+                top: `${tooltipPosition.top}px`,
+                left: `${tooltipPosition.left}px`,
+                transform: sidebarMinimized ? 'translateY(-50%)' : 'none',
+                padding: '4px 8px',
+                backgroundColor: isDarkMode ? 'rgba(0, 0, 0, 0.9)' : 'rgba(0, 0, 0, 0.85)',
+                color: 'white',
+                fontSize: '12px',
+                borderRadius: '4px',
+                whiteSpace: 'nowrap',
+                zIndex: 10000,
+                pointerEvents: 'none'
+              }}
+            >
+              {sidebarMinimized ? 'Open sidebar' : 'Close sidebar'}
+            </div>
+          )}
+          {settingsSections.map((section) => {
+            const Icon = section.icon
+            const isActive = activeTab === section.id
+            return (
+              <button
+                key={section.id}
+                onClick={() => setActiveTab(section.id)}
+                style={{
+                  width: isInitialMount ? '100%' : (sidebarMinimized ? '40px' : '100%'),
+                  height: '40px',
+                  padding: '0',
+                  margin: '0',
+                  border: 'none',
+                  backgroundColor: isActive 
+                    ? (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)')
+                    : 'transparent',
+                  borderRadius: isActive ? '6px' : '0',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: isInitialMount ? 'flex-start' : (sidebarMinimized ? 'center' : 'flex-start'),
+                  transition: isInitialMount ? 'backgroundColor 0.2s ease, borderRadius 0.2s ease' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), justifyContent 0.4s cubic-bezier(0.4, 0, 0.2, 1), backgroundColor 0.2s ease, borderRadius 0.2s ease',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  color: isActive 
+                    ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
+                    : (isDarkMode ? 'var(--text-secondary, #ccc)' : '#666')
+                }}
+              >
+                <div style={{
+                  position: 'absolute',
+                  left: '0',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  transition: 'none'
+                }}>
+                  <Icon size={20} style={{ width: '20px', height: '20px' }} />
+                </div>
+                {!sidebarMinimized && (
+                  <span style={{
+                    marginLeft: '48px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 600 : 'normal',
+                    whiteSpace: 'nowrap',
+                    opacity: sidebarMinimized ? 0 : 1,
+                    transition: isInitialMount ? 'none' : 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    pointerEvents: 'none'
+                  }}>
+                    {section.label}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
-      {message && (
-        <div style={{
-          padding: '12px 16px',
-          marginBottom: '20px',
-          borderRadius: '8px',
-          backgroundColor: message.type === 'success' 
-            ? (isDarkMode ? 'rgba(76, 175, 80, 0.2)' : '#e8f5e9')
-            : (isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee'),
-          color: message.type === 'success' ? '#4caf50' : '#f44336',
-          border: `1px solid ${message.type === 'success' ? '#4caf50' : '#f44336'}`
-        }}>
-          {message.text}
-        </div>
-      )}
 
-      {activeTab === 'workflow' && (
-      <div style={{
-        backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-        borderRadius: '8px',
-        padding: '24px',
-        boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-      }}>
+      {/* Main Content Area - 3/4 of page */}
+      <div 
+        ref={contentRef}
+        style={{
+          width: isInitialMount ? '75%' : (sidebarMinimized ? 'calc(100% - 60px)' : '75%'),
+          flex: 1,
+          padding: '48px 64px 64px 64px',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+          maxWidth: isInitialMount ? '1200px' : (sidebarMinimized ? 'none' : '1200px'),
+          transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+        }}
+      >
+        {message && (
+          <div style={{
+            padding: '16px 20px',
+            marginBottom: '32px',
+            borderRadius: '10px',
+            backgroundColor: message.type === 'success' 
+              ? (isDarkMode ? 'rgba(76, 175, 80, 0.2)' : '#e8f5e9')
+              : (isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee'),
+            color: message.type === 'success' ? '#4caf50' : '#f44336',
+            border: `1px solid ${message.type === 'success' ? '#4caf50' : '#f44336'}`,
+            boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
+          }}>
+            {message.text}
+          </div>
+        )}
+
+        {/* Content */}
+        <div>
+          {activeTab === 'workflow' && (
+            <div>
         {/* Workflow Mode Setting */}
-        <div style={{ marginBottom: '32px' }}>
+        <div style={{ marginBottom: '48px' }}>
           <h2 style={{
             marginBottom: '12px',
-            fontSize: '18px',
-            fontWeight: 600,
+            fontSize: '16px',
+            fontWeight: 700,
             color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
           }}>
             Workflow Mode
           </h2>
           <p style={{
-            marginBottom: '16px',
-            fontSize: '14px',
-            color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
+            marginBottom: '20px',
+            fontSize: '13px',
+            color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
+            lineHeight: '1.6'
           }}>
             Choose how shipment verification works:
           </p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {/* Simple Workflow */}
             <label style={{
               display: 'flex',
@@ -1076,11 +1310,11 @@ function Settings() {
 
         {/* Auto-add to Inventory (only for simple mode) */}
         {workflowSettings.workflow_mode === 'simple' && (
-          <div style={{ marginBottom: '32px' }}>
+          <div style={{ marginBottom: '48px' }}>
             <h2 style={{
               marginBottom: '12px',
-              fontSize: '18px',
-              fontWeight: 600,
+              fontSize: '16px',
+              fontWeight: 700,
               color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
             }}>
               Auto-Add to Inventory
@@ -1122,35 +1356,33 @@ function Settings() {
         {/* Save Button */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
           <button
+            type="button"
+            className="button-26 button-26--header"
+            role="button"
             onClick={
               activeTab === 'workflow' ? saveSettings :
               activeTab === 'receipt' ? saveReceiptSettings :
               activeTab === 'location' ? saveStoreLocationSettings :
               activeTab === 'rewards' ? saveRewardsSettings :
               activeTab === 'pos' ? savePosSettings :
-              saveDisplaySettings
+              activeTab === 'sms' ? saveSmsSettings :
+              activeTab === 'cash' ? saveCashSettings :
+              null
             }
             disabled={saving}
             style={{
-              padding: '12px 24px',
-              backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              color: '#fff',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '8px',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              fontSize: '16px',
-              fontWeight: 600,
-              boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-              transition: 'all 0.3s ease',
-              opacity: saving ? 0.6 : 1
+              opacity: saving ? 0.6 : 1,
+              cursor: saving ? 'not-allowed' : 'pointer'
             }}
           >
-            {saving 
-              ? (activeTab === 'workflow' ? 'Saving...' : activeTab === 'receipt' ? 'Saving Receipt Settings...' : activeTab === 'location' ? 'Saving Location Settings...' : activeTab === 'rewards' ? 'Saving Rewards Settings...' : activeTab === 'pos' ? 'Saving POS Settings...' : 'Saving Display Settings...')
-              : (activeTab === 'workflow' ? 'Save Settings' : activeTab === 'receipt' ? 'Save Receipt Settings' : activeTab === 'location' ? 'Save Location Settings' : activeTab === 'rewards' ? 'Save Rewards Settings' : activeTab === 'pos' ? 'Save POS Settings' : 'Save Display Settings')
-            }
+            <div className="button-26__content">
+              <span className="button-26__text text">
+                {saving 
+                  ? (activeTab === 'workflow' ? 'Saving...' : activeTab === 'receipt' ? 'Saving Receipt Settings...' : activeTab === 'location' ? 'Saving Store Information...' : activeTab === 'rewards' ? 'Saving Rewards Settings...' : activeTab === 'pos' ? 'Saving POS Settings...' : activeTab === 'sms' ? 'Saving...' : activeTab === 'cash' ? 'Saving...' : 'Saving...')
+                  : (activeTab === 'workflow' ? 'Save Settings' : activeTab === 'receipt' ? 'Save Receipt Settings' : activeTab === 'location' ? 'Save Store Information' : activeTab === 'rewards' ? 'Save Rewards Settings' : activeTab === 'pos' ? 'Save POS Settings' : activeTab === 'sms' ? 'Save SMS Settings' : activeTab === 'cash' ? 'Save Cash Settings' : 'Save')
+                }
+              </span>
+            </div>
           </button>
         </div>
       </div>
@@ -1158,32 +1390,13 @@ function Settings() {
 
       {/* Receipt Settings Tab */}
       {activeTab === 'receipt' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          <h2 style={{
-            marginBottom: '24px',
-            fontSize: '20px',
-            fontWeight: 600,
-            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-          }}>
-            Receipt Customization
-          </h2>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {/* Receipt Type */}
-            <div>
-              <h3 style={{
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
                 Receipt Type
-              </h3>
+              </FormTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <label style={{
                   display: 'flex',
@@ -1262,18 +1475,13 @@ function Settings() {
                   </div>
                 </label>
               </div>
-            </div>
+            </FormField>
 
             {/* Store Information */}
-            <div>
-              <h3 style={{
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
                 Store Information
-              </h3>
+              </FormTitle>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <input
@@ -1281,28 +1489,16 @@ function Settings() {
                   placeholder="Store Name"
                   value={receiptSettings.store_name}
                   onChange={(e) => setReceiptSettings({ ...receiptSettings, store_name: e.target.value })}
-                  style={{
-                    padding: '10px',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
                 <input
                   type="text"
                   placeholder="Street Address"
                   value={receiptSettings.store_address}
                   onChange={(e) => setReceiptSettings({ ...receiptSettings, store_address: e.target.value })}
-                  style={{
-                    padding: '10px',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
                   <input
@@ -1310,42 +1506,24 @@ function Settings() {
                     placeholder="City"
                     value={receiptSettings.store_city}
                     onChange={(e) => setReceiptSettings({ ...receiptSettings, store_city: e.target.value })}
-                    style={{
-                      padding: '10px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
                   <input
                     type="text"
                     placeholder="State"
                     value={receiptSettings.store_state}
                     onChange={(e) => setReceiptSettings({ ...receiptSettings, store_state: e.target.value })}
-                    style={{
-                      padding: '10px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
                   <input
                     type="text"
                     placeholder="ZIP"
                     value={receiptSettings.store_zip}
                     onChange={(e) => setReceiptSettings({ ...receiptSettings, store_zip: e.target.value })}
-                    style={{
-                      padding: '10px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
                 </div>
                 <input
@@ -1353,101 +1531,65 @@ function Settings() {
                   placeholder="Phone"
                   value={receiptSettings.store_phone}
                   onChange={(e) => setReceiptSettings({ ...receiptSettings, store_phone: e.target.value })}
-                  style={{
-                    padding: '10px',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
                 <input
                   type="email"
                   placeholder="Email"
                   value={receiptSettings.store_email}
                   onChange={(e) => setReceiptSettings({ ...receiptSettings, store_email: e.target.value })}
-                  style={{
-                    padding: '10px',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
                 <input
                   type="text"
                   placeholder="Website"
                   value={receiptSettings.store_website}
                   onChange={(e) => setReceiptSettings({ ...receiptSettings, store_website: e.target.value })}
-                  style={{
-                    padding: '10px',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
               </div>
-            </div>
+            </FormField>
 
             {/* Footer Message */}
-            <div>
-              <h3 style={{
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
                 Footer Message
-              </h3>
+              </FormTitle>
               <textarea
                 placeholder="Thank you for your business!"
                 value={receiptSettings.footer_message}
                 onChange={(e) => setReceiptSettings({ ...receiptSettings, footer_message: e.target.value })}
                 rows={3}
                 style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px',
+                  ...inputBaseStyle(isDarkMode, themeColorRgb),
                   resize: 'vertical',
-                  fontFamily: 'inherit'
+                  fontFamily: 'inherit',
+                  minHeight: '80px'
                 }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-            </div>
+            </FormField>
 
             {/* Return Policy */}
-            <div>
-              <h3 style={{
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
                 Return Policy
-              </h3>
+              </FormTitle>
               <textarea
                 placeholder="Enter your store's return policy (e.g., 'Returns accepted within 30 days with receipt')"
                 value={receiptSettings.return_policy}
                 onChange={(e) => setReceiptSettings({ ...receiptSettings, return_policy: e.target.value })}
                 rows={4}
                 style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px',
+                  ...inputBaseStyle(isDarkMode, themeColorRgb),
                   resize: 'vertical',
-                  fontFamily: 'inherit'
+                  fontFamily: 'inherit',
+                  minHeight: '100px'
                 }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
               <p style={{
                 marginTop: '8px',
@@ -1457,18 +1599,13 @@ function Settings() {
               }}>
                 This will appear at the bottom of receipts
               </p>
-            </div>
+            </FormField>
 
             {/* Display Options */}
-            <div>
-              <h3 style={{
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
                 Display Options
-              </h3>
+              </FormTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <label style={{
                   display: 'flex',
@@ -1525,71 +1662,58 @@ function Settings() {
                   </span>
                 </label>
               </div>
-            </div>
+            </FormField>
 
             {/* Save Button */}
             <div style={{ 
               display: 'flex', 
               justifyContent: 'flex-end', 
-              marginTop: '32px',
-              paddingTop: '24px',
-              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
+              marginTop: '24px'
             }}>
               <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
                 onClick={saveReceiptSettings}
                 disabled={saving}
                 style={{
-                  padding: '12px 32px',
-                  backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
-                  transition: 'all 0.3s ease',
                   opacity: saving ? 0.6 : 1,
-                  minWidth: '150px'
+                  cursor: saving ? 'not-allowed' : 'pointer'
                 }}
               >
-                {saving ? 'Saving...' : 'Save Receipt Settings'}
+                <div className="button-26__content">
+                  <span className="button-26__text text">
+                    {saving ? 'Saving...' : 'Save Receipt Settings'}
+                  </span>
+                </div>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Store Location Settings Tab */}
+      {/* Store Information Settings Tab */}
       {activeTab === 'location' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
+        <div>
           <h2 style={{
-            marginBottom: '24px',
-            fontSize: '20px',
-            fontWeight: 600,
+            marginBottom: '8px',
+            fontSize: '16px',
+            fontWeight: 700,
             color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
           }}>
             Store Location Settings
           </h2>
-
+          <p style={{
+            marginBottom: '20px',
+            fontSize: '13px',
+            color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
+            lineHeight: '1.5'
+          }}>
+            Set your store's GPS location and allowed radius. When employees clock in or out, 
+            the system will collect their location and verify they are within the specified radius 
+            of the store. This prevents employees from clocking in from home or other unauthorized locations.
+          </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div>
-              <p style={{
-                marginBottom: '16px',
-                fontSize: '14px',
-                color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666',
-                lineHeight: '1.6'
-              }}>
-                Set your store's GPS location and allowed radius. When employees clock in or out, 
-                the system will collect their location and verify they are within the specified radius 
-                of the store. This prevents employees from clocking in from home or other unauthorized locations.
-              </p>
-            </div>
 
             <div>
               <label style={{
@@ -1654,19 +1778,14 @@ function Settings() {
                   GPS Coordinates
                 </label>
                 <button
+                  type="button"
+                  className="button-26 button-26--header"
+                  role="button"
                   onClick={handleSetCurrentLocation}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: 500
-                  }}
                 >
-                  📍 Use Current Location
+                  <div className="button-26__content">
+                    <span className="button-26__text text">📍 Use Current Location</span>
+                  </div>
                 </button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -1674,7 +1793,7 @@ function Settings() {
                   <label style={{
                     display: 'block',
                     marginBottom: '6px',
-                    fontSize: '12px',
+                    fontSize: '14px',
                     color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
                   }}>
                     Latitude
@@ -1703,7 +1822,7 @@ function Settings() {
                   <label style={{
                     display: 'block',
                     marginBottom: '6px',
-                    fontSize: '12px',
+                    fontSize: '14px',
                     color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
                   }}>
                     Longitude
@@ -1732,7 +1851,7 @@ function Settings() {
               {storeLocationSettings.latitude && storeLocationSettings.longitude && (
                 <p style={{
                   marginTop: '8px',
-                  fontSize: '12px',
+                  fontSize: '14px',
                   color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
                   fontStyle: 'italic'
                 }}>
@@ -1772,7 +1891,7 @@ function Settings() {
               />
               <p style={{
                 marginTop: '6px',
-                fontSize: '12px',
+                        fontSize: '14px',
                 color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
               }}>
                 Employees must be within this distance (in meters) from the store to clock in/out.
@@ -1805,7 +1924,7 @@ function Settings() {
               <p style={{
                 marginTop: '6px',
                 marginLeft: '32px',
-                fontSize: '12px',
+                        fontSize: '14px',
                 color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
                 fontStyle: 'italic'
               }}>
@@ -1823,124 +1942,21 @@ function Settings() {
               borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
             }}>
               <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
                 onClick={saveStoreLocationSettings}
                 disabled={saving}
                 style={{
-                  padding: '12px 32px',
-                  backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
-                  transition: 'all 0.3s ease',
                   opacity: saving ? 0.6 : 1,
-                  minWidth: '150px'
+                  cursor: saving ? 'not-allowed' : 'pointer'
                 }}
               >
-                {saving ? 'Saving...' : 'Save Location Settings'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'display' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          <h2 style={{
-            marginBottom: '20px',
-            fontSize: '18px',
-            fontWeight: 600,
-            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-          }}>
-            Customer Display Settings
-          </h2>
-          
-          <div style={{ marginTop: '20px' }}>
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '12px', 
-              marginBottom: '20px',
-              cursor: 'pointer'
-            }}>
-              <input
-                type="checkbox"
-                checked={displaySettings.tip_enabled}
-                onChange={(e) => setDisplaySettings({ ...displaySettings, tip_enabled: e.target.checked })}
-                style={{
-                  width: '18px',
-                  height: '18px',
-                  cursor: 'pointer'
-                }}
-              />
-              <span style={{ 
-                fontSize: '14px',
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
-                Enable tip prompts before payment
-              </span>
-            </label>
-
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '12px', 
-              marginBottom: '20px',
-              cursor: 'pointer'
-            }}>
-              <input
-                type="checkbox"
-                checked={displaySettings.tip_after_payment}
-                onChange={(e) => setDisplaySettings({ ...displaySettings, tip_after_payment: e.target.checked })}
-                style={{
-                  width: '18px',
-                  height: '18px',
-                  cursor: 'pointer'
-                }}
-              />
-              <span style={{ 
-                fontSize: '14px',
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
-                Enable tip option after payment completion
-              </span>
-            </label>
-
-            {/* Save Button */}
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'flex-end', 
-              marginTop: '32px',
-              paddingTop: '24px',
-              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
-            }}>
-              <button
-                onClick={saveDisplaySettings}
-                disabled={saving}
-                style={{
-                  padding: '12px 32px',
-                  backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
-                  transition: 'all 0.3s ease',
-                  opacity: saving ? 0.6 : 1,
-                  minWidth: '150px'
-                }}
-              >
-                {saving ? 'Saving...' : 'Save Display Settings'}
+                <div className="button-26__content">
+                  <span className="button-26__text text">
+                    {saving ? 'Saving...' : 'Save Location Settings'}
+                  </span>
+                </div>
               </button>
             </div>
           </div>
@@ -1949,21 +1965,15 @@ function Settings() {
 
       {/* Customer Rewards Settings Tab */}
       {activeTab === 'rewards' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
+        <div>
           <h2 style={{
-            marginBottom: '24px',
-            fontSize: '20px',
-            fontWeight: 600,
+            marginBottom: '20px',
+            fontSize: '16px',
+            fontWeight: 700,
             color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
           }}>
             Customer Rewards Program
           </h2>
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {/* Enable Rewards */}
             <div>
@@ -1979,7 +1989,7 @@ function Settings() {
                   onChange={(e) => setRewardsSettings({ ...rewardsSettings, enabled: e.target.checked })}
                 />
                 <span style={{
-                  fontSize: '16px',
+                  fontSize: '14px',
                   fontWeight: 600,
                   color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                 }}>
@@ -1994,7 +2004,7 @@ function Settings() {
                 <div>
                   <h3 style={{
                     marginBottom: '12px',
-                    fontSize: '16px',
+                    fontSize: '14px',
                     fontWeight: 600,
                     color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                   }}>
@@ -2110,8 +2120,8 @@ function Settings() {
                 {/* Reward Type */}
                 <div>
                   <h3 style={{
-                    marginBottom: '12px',
-                    fontSize: '16px',
+                    marginBottom: '8px',
+                    fontSize: '15px',
                     fontWeight: 600,
                     color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
                   }}>
@@ -2314,7 +2324,7 @@ function Settings() {
                   />
                   <p style={{
                     marginTop: '6px',
-                    fontSize: '12px',
+                    fontSize: '14px',
                     color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
                   }}>
                     Customers must spend this amount or more to earn rewards (0 = no minimum)
@@ -2330,24 +2340,21 @@ function Settings() {
                   borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
                 }}>
                   <button
+                    type="button"
+                    className="button-26 button-26--header"
+                    role="button"
                     onClick={saveRewardsSettings}
                     disabled={saving}
                     style={{
-                      padding: '12px 32px',
-                      backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: saving ? 'not-allowed' : 'pointer',
-                      fontSize: '16px',
-                      fontWeight: 600,
-                      boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
-                      transition: 'all 0.3s ease',
                       opacity: saving ? 0.6 : 1,
-                      minWidth: '150px'
+                      cursor: saving ? 'not-allowed' : 'pointer'
                     }}
                   >
-                    {saving ? 'Saving...' : 'Save Rewards Settings'}
+                    <div className="button-26__content">
+                      <span className="button-26__text text">
+                        {saving ? 'Saving...' : 'Save Rewards Settings'}
+                      </span>
+                    </div>
                   </button>
                 </div>
               </>
@@ -2358,33 +2365,23 @@ function Settings() {
 
       {/* POS Settings Tab */}
       {activeTab === 'pos' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          <h2 style={{
-            marginBottom: '24px',
-            fontSize: '20px',
-            fontWeight: 600,
-            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-          }}>
-            POS Setup
-          </h2>
-
+        <div>
+          <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '20px' }}>
+            POS Configuration
+          </FormTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {/* Number of Registers */}
-            <div>
-              <label style={{
-                display: 'block',
-                marginBottom: '6px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Number of Registers
-              </label>
+              </FormLabel>
+              <p style={{
+                marginBottom: '8px',
+                fontSize: '13px',
+                color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
+              }}>
+                How many registers or checkout stations do you have?
+              </p>
               <input
                 type="number"
                 min="1"
@@ -2394,35 +2391,16 @@ function Settings() {
                   ...posSettings,
                   num_registers: parseInt(e.target.value) || 1
                 })}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-              <p style={{
-                marginTop: '6px',
-                fontSize: '12px',
-                color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
-              }}>
-                How many registers or checkout stations do you have?
-              </p>
-            </div>
+            </FormField>
 
             {/* Register Type */}
-            <div>
-              <h3 style={{
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
                 Register Type
-              </h3>
+              </FormTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <label style={{
                   display: 'flex',
@@ -2446,7 +2424,7 @@ function Settings() {
                 </label>
                 <p style={{
                   marginLeft: '24px',
-                  fontSize: '12px',
+                  fontSize: '14px',
                   color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
                   marginTop: '-8px'
                 }}>
@@ -2474,42 +2452,98 @@ function Settings() {
                 </label>
                 <p style={{
                   marginLeft: '24px',
-                  fontSize: '12px',
+                  fontSize: '14px',
                   color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
                   marginTop: '-8px'
                 }}>
                   Separate displays for cashier and customer.
                 </p>
               </div>
+            </FormField>
+
+            {/* Customer Display Settings */}
+            <div style={{
+              marginTop: '32px'
+            }}>
+              <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
+                Customer Display Settings
+              </FormTitle>
+              
+              <FormField>
+                <label style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px', 
+                  cursor: 'pointer'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={displaySettings.tip_enabled}
+                    onChange={(e) => setDisplaySettings({ ...displaySettings, tip_enabled: e.target.checked })}
+                    style={{
+                      width: '18px',
+                      height: '18px',
+                      cursor: 'pointer'
+                    }}
+                  />
+                  <span style={{ 
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}>
+                    Enable tip prompts before payment
+                  </span>
+                </label>
+              </FormField>
+
+              <FormField>
+                <label style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px', 
+                  cursor: 'pointer'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={displaySettings.tip_after_payment}
+                    onChange={(e) => setDisplaySettings({ ...displaySettings, tip_after_payment: e.target.checked })}
+                    style={{
+                      width: '18px',
+                      height: '18px',
+                      cursor: 'pointer'
+                    }}
+                  />
+                  <span style={{ 
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}>
+                    Enable tip option after payment completion
+                  </span>
+                </label>
+              </FormField>
             </div>
 
             {/* Save Button */}
             <div style={{
               display: 'flex',
               justifyContent: 'flex-end',
-              marginTop: '24px',
-              paddingTop: '24px',
-              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
+              marginTop: '24px'
             }}>
               <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
                 onClick={savePosSettings}
                 disabled={saving}
                 style={{
-                  padding: '12px 32px',
-                  backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
-                  transition: 'all 0.3s ease',
                   opacity: saving ? 0.6 : 1,
-                  minWidth: '150px'
+                  cursor: saving ? 'not-allowed' : 'pointer'
                 }}
               >
-                {saving ? 'Saving...' : 'Save POS Settings'}
+                <div className="button-26__content">
+                  <span className="button-26__text text">
+                    {saving ? 'Saving...' : 'Save POS Settings'}
+                  </span>
+                </div>
               </button>
             </div>
           </div>
@@ -2518,71 +2552,21 @@ function Settings() {
 
       {/* SMS Settings Tab */}
       {activeTab === 'sms' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{
-              marginBottom: 0,
-              fontSize: '20px',
-              fontWeight: 600,
-              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-            }}>
-              SMS CRM Settings
-            </h2>
-            {smsStores.length > 0 && (
-              <select
-                value={selectedSmsStore}
-                onChange={(e) => {
-                  setSelectedSmsStore(parseInt(e.target.value))
-                  loadSmsSettings()
-                }}
-                style={{
-                  padding: '8px 12px',
-                  fontSize: '14px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                }}
-              >
-                {smsStores.map(store => (
-                  <option key={store.store_id} value={store.store_id}>
-                    {store.store_name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
+        <div>
+          <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '20px' }}>
+            SMS & Notifications
+          </FormTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {/* SMS Provider Selection */}
-            <div>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '16px',
-                fontWeight: 600,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 SMS Provider
-              </label>
+              </FormLabel>
               <select
                 value={smsSettings.sms_provider || 'email'}
                 onChange={(e) => setSmsSettings({...smsSettings, sms_provider: e.target.value})}
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  maxWidth: '300px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '300px' }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               >
                 <option value="email">Email-to-SMS (FREE)</option>
                 <option value="aws_sns">AWS SNS (~$0.006/SMS)</option>
@@ -2596,247 +2580,135 @@ function Settings() {
                   ? 'Free but limited reliability. Good for testing.'
                   : 'Low cost, high reliability. Recommended for production.'}
               </p>
-            </div>
+            </FormField>
 
             {/* Email Settings */}
             {smsSettings.sms_provider === 'email' && (
               <>
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     SMTP Server
-                  </label>
+                  </FormLabel>
                   <input
                     type="text"
                     value={smsSettings.smtp_server || 'smtp.gmail.com'}
                     onChange={(e) => setSmsSettings({...smsSettings, smtp_server: e.target.value})}
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '400px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '400px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
-                </div>
+                </FormField>
 
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     SMTP Port
-                  </label>
+                  </FormLabel>
                   <input
                     type="number"
                     value={smsSettings.smtp_port || 587}
                     onChange={(e) => setSmsSettings({...smsSettings, smtp_port: parseInt(e.target.value)})}
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '200px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
-                </div>
+                </FormField>
 
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     Email Address (Gmail)
-                  </label>
+                  </FormLabel>
                   <input
                     type="email"
                     value={smsSettings.smtp_user || ''}
                     onChange={(e) => setSmsSettings({...smsSettings, smtp_user: e.target.value})}
                     placeholder="yourstore@gmail.com"
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '400px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '400px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
                   <p style={{
                     marginTop: '4px',
-                    fontSize: '12px',
+                    fontSize: '13px',
                     color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
                   }}>
                     For Gmail: Enable 2FA and create an App Password
                   </p>
-                </div>
+                </FormField>
 
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     App Password
-                  </label>
+                  </FormLabel>
                   <input
                     type="password"
                     value={smsSettings.smtp_password || ''}
                     onChange={(e) => setSmsSettings({...smsSettings, smtp_password: e.target.value})}
                     placeholder="Enter app password"
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '400px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '400px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
-                </div>
+                </FormField>
               </>
             )}
 
             {/* AWS Settings */}
             {smsSettings.sms_provider === 'aws_sns' && (
               <>
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     AWS Access Key ID
-                  </label>
+                  </FormLabel>
                   <input
                     type="text"
                     value={smsSettings.aws_access_key_id || ''}
                     onChange={(e) => setSmsSettings({...smsSettings, aws_access_key_id: e.target.value})}
                     placeholder="AKIA..."
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '400px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '400px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
-                </div>
+                </FormField>
 
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     AWS Secret Access Key
-                  </label>
+                  </FormLabel>
                   <input
                     type="password"
                     value={smsSettings.aws_secret_access_key || ''}
                     onChange={(e) => setSmsSettings({...smsSettings, aws_secret_access_key: e.target.value})}
                     placeholder="Enter secret key"
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '400px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '400px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
-                </div>
+                </FormField>
 
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                  }}>
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>
                     AWS Region
-                  </label>
+                  </FormLabel>
                   <input
                     type="text"
                     value={smsSettings.aws_region || 'us-east-1'}
                     onChange={(e) => setSmsSettings({...smsSettings, aws_region: e.target.value})}
                     placeholder="us-east-1"
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      maxWidth: '200px',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '6px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      fontSize: '14px'
-                    }}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                   />
-                </div>
+                </FormField>
               </>
             )}
 
             {/* Business Name */}
-            <div>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Business Name
-              </label>
+              </FormLabel>
               <input
                 type="text"
                 value={smsSettings.business_name || ''}
                 onChange={(e) => setSmsSettings({...smsSettings, business_name: e.target.value})}
                 placeholder="Your Store Name"
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  maxWidth: '400px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '400px' }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-            </div>
+            </FormField>
 
             {/* Auto-send Options */}
             <div>
@@ -2881,58 +2753,39 @@ function Settings() {
               </label>
             </div>
 
-            {/* Quick Actions */}
-            <div style={{
-              display: 'flex',
-              gap: '12px',
-              marginTop: '20px',
-              paddingTop: '20px',
-              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
-            }}>
-              <button
-                onClick={() => setShowSendSmsModal(true)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#28a745',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: 500
-                }}
-              >
-                Send Test SMS
-              </button>
-            </div>
-
-            {/* Save Button */}
+            {/* Actions */}
             <div style={{
               display: 'flex',
               justifyContent: 'flex-end',
-              marginTop: '24px',
-              paddingTop: '24px',
-              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
+              gap: '12px',
+              marginTop: '24px'
             }}>
               <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
+                onClick={() => setShowSendSmsModal(true)}
+              >
+                <div className="button-26__content">
+                  <span className="button-26__text text">Send Test SMS</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
                 onClick={saveSmsSettings}
                 disabled={saving}
                 style={{
-                  padding: '12px 32px',
-                  backgroundColor: saving ? (isDarkMode ? '#3a3a3a' : '#ccc') : `rgba(${themeColorRgb}, 0.7)`,
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  boxShadow: saving ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
-                  transition: 'all 0.3s ease',
                   opacity: saving ? 0.6 : 1,
-                  minWidth: '150px'
+                  cursor: saving ? 'not-allowed' : 'pointer'
                 }}
               >
-                {saving ? 'Saving...' : 'Save SMS Settings'}
+                <div className="button-26__content">
+                  <span className="button-26__text text">
+                    {saving ? 'Saving...' : 'Save SMS Settings'}
+                  </span>
+                </div>
               </button>
             </div>
           </div>
@@ -2967,170 +2820,107 @@ function Settings() {
               Send Test SMS
             </h2>
             <form onSubmit={handleSendSms}>
-              <div style={{ marginBottom: '15px' }}>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontWeight: 'bold',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                }}>
-                  Phone Number:
-                </label>
+              <FormField>
+                <FormLabel isDarkMode={isDarkMode}>
+                  Phone Number
+                </FormLabel>
                 <input
                   type="tel"
                   value={sendSmsForm.phone_number}
                   onChange={(e) => setSendSmsForm({...sendSmsForm, phone_number: e.target.value})}
                   placeholder="(555) 123-4567"
                   required
-                  style={{
-                    padding: '10px',
-                    width: '100%',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
-              </div>
-              <div style={{ marginBottom: '15px' }}>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontWeight: 'bold',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                }}>
-                  Message:
-                </label>
+              </FormField>
+              <FormField>
+                <FormLabel isDarkMode={isDarkMode}>
+                  Message
+                </FormLabel>
                 <textarea
                   value={sendSmsForm.message_text}
                   onChange={(e) => setSendSmsForm({...sendSmsForm, message_text: e.target.value})}
                   rows={5}
                   required
                   style={{
-                    padding: '10px',
-                    width: '100%',
+                    ...inputBaseStyle(isDarkMode, themeColorRgb),
                     resize: 'vertical',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
+                    fontFamily: 'inherit',
+                    minHeight: '100px'
                   }}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
                 <p style={{
-                  fontSize: '12px',
+                  fontSize: '13px',
                   color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
-                  marginTop: '4px'
+                  marginTop: '8px'
                 }}>
                   {sendSmsForm.message_text.length}/160 characters
                 </p>
-              </div>
+              </FormField>
               <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
                 <button
                   type="submit"
+                  className="button-26 button-26--header"
+                  role="button"
                   disabled={saving}
                   style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#28a745',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: saving ? 'not-allowed' : 'pointer',
                     opacity: saving ? 0.6 : 1,
-                    fontSize: '14px',
-                    fontWeight: 500
+                    cursor: saving ? 'not-allowed' : 'pointer'
                   }}
                 >
-                  {saving ? 'Sending...' : 'Send'}
+                  <div className="button-26__content">
+                    <span className="button-26__text text">
+                      {saving ? 'Sending...' : 'Send'}
+                    </span>
+                  </div>
                 </button>
                 <button
                   type="button"
+                  className="button-26 button-26--header"
+                  role="button"
                   onClick={() => setShowSendSmsModal(false)}
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: 500
-                  }}
                 >
-                  Cancel
+                  <div className="button-26__content">
+                    <span className="button-26__text text">Cancel</span>
+                  </div>
                 </button>
               </div>
             </form>
           </div>
         </div>
-      )}
+          )}
 
       {activeTab === 'cash' && (
-        <div style={{
-          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
-          borderRadius: '8px',
-          padding: '24px',
-          boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          <h2 style={{
-            marginBottom: '24px',
-            fontSize: '20px',
-            fontWeight: 600,
-            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-          }}>
-            Cash Register Settings
-          </h2>
-
+        <div>
+          <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '20px' }}>
+            Cash Register Management
+          </FormTitle>
           {/* Register Cash Configuration */}
           <div style={{ marginBottom: '32px' }}>
-            <h3 style={{
-              marginBottom: '16px',
-              fontSize: '16px',
-              fontWeight: 500,
-              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-            }}>
+            <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
               Base Cash Configuration
-            </h3>
+            </FormTitle>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Register ID
-              </label>
+              </FormLabel>
               <input
                 type="number"
                 min="1"
                 value={cashSettings.register_id}
                 onChange={(e) => setCashSettings({...cashSettings, register_id: parseInt(e.target.value) || 1})}
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  maxWidth: '200px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-            </div>
+            </FormField>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Cash Mode
-              </label>
+              </FormLabel>
               <div style={{ display: 'flex', gap: '20px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <input
@@ -3153,48 +2943,28 @@ function Settings() {
                   <span style={{ color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Denominations</span>
                 </label>
               </div>
-            </div>
+            </FormField>
 
             {cashSettings.cash_mode === 'total' ? (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                }}>
+              <FormField>
+                <FormLabel isDarkMode={isDarkMode}>
                   Total Amount ($)
-                </label>
+                </FormLabel>
                 <input
                   type="number"
                   step="0.01"
                   min="0"
                   value={cashSettings.total_amount}
                   onChange={(e) => setCashSettings({...cashSettings, total_amount: parseFloat(e.target.value) || 0})}
-                  style={{
-                    padding: '10px',
-                    width: '100%',
-                    maxWidth: '200px',
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '6px',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    fontSize: '14px'
-                  }}
+                  style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                 />
-              </div>
+              </FormField>
             ) : (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '12px',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                }}>
+              <FormField>
+                <FormLabel isDarkMode={isDarkMode}>
                   Bill and Coin Counts
-                </label>
+                </FormLabel>
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
@@ -3205,7 +2975,7 @@ function Settings() {
                       <label style={{
                         display: 'block',
                         marginBottom: '4px',
-                        fontSize: '12px',
+                        fontSize: '14px',
                         color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
                       }}>
                         ${denom}
@@ -3221,15 +2991,8 @@ function Settings() {
                             [denom]: parseInt(e.target.value) || 0
                           }
                         })}
-                        style={{
-                          padding: '8px',
-                          width: '100%',
-                          border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                          borderRadius: '6px',
-                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                          fontSize: '14px'
-                        }}
+                        style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                        {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                       />
                     </div>
                   ))}
@@ -3244,25 +3007,28 @@ function Settings() {
                     Total: ${calculateTotalFromDenominations(cashSettings.denominations).toFixed(2)}
                   </strong>
                 </div>
-              </div>
+              </FormField>
             )}
 
-            <button
-              onClick={saveCashSettings}
-              disabled={saving}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: themeColor,
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: saving ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
-                fontWeight: 500
-              }}
-            >
-              {saving ? 'Saving...' : 'Save Cash Settings'}
-            </button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
+                onClick={saveCashSettings}
+                disabled={saving}
+                style={{
+                  opacity: saving ? 0.6 : 1,
+                  cursor: saving ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <div className="button-26__content">
+                  <span className="button-26__text text">
+                    {saving ? 'Saving...' : 'Save Cash Settings'}
+                  </span>
+                </div>
+              </button>
+            </div>
           </div>
 
           {/* Daily Cash Count */}
@@ -3271,111 +3037,61 @@ function Settings() {
             paddingTop: '32px',
             borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`
           }}>
-            <h3 style={{
-              marginBottom: '16px',
-              fontSize: '16px',
-              fontWeight: 500,
-              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-            }}>
+            <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px', fontSize: '15px', fontWeight: 600 }}>
               Daily Cash Count / Drop
-            </h3>
+            </FormTitle>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Count Type
-              </label>
-              <select
+              </FormLabel>
+              <CustomDropdown
                 value={dailyCount.count_type}
                 onChange={(e) => setDailyCount({...dailyCount, count_type: e.target.value})}
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  maxWidth: '200px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
-              >
-                <option value="drop">Drop</option>
-                <option value="opening">Opening</option>
-                <option value="closing">Closing</option>
-              </select>
-            </div>
+                options={[
+                  { value: 'drop', label: 'Drop' },
+                  { value: 'opening', label: 'Opening' },
+                  { value: 'closing', label: 'Closing' }
+                ]}
+                placeholder="Select count type"
+                isDarkMode={isDarkMode}
+                themeColorRgb={themeColorRgb}
+                style={{ maxWidth: '200px' }}
+              />
+            </FormField>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Date
-              </label>
+              </FormLabel>
               <input
                 type="date"
                 value={dailyCount.count_date}
                 onChange={(e) => setDailyCount({...dailyCount, count_date: e.target.value})}
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  maxWidth: '200px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-            </div>
+            </FormField>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Total Amount ($) - or count denominations below
-              </label>
+              </FormLabel>
               <input
                 type="number"
                 step="0.01"
                 min="0"
                 value={dailyCount.total_amount}
                 onChange={(e) => setDailyCount({...dailyCount, total_amount: parseFloat(e.target.value) || 0})}
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  maxWidth: '200px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px'
-                }}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px' }}
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-            </div>
+            </FormField>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '12px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Bill and Coin Counts
-              </label>
+              </FormLabel>
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
@@ -3386,7 +3102,7 @@ function Settings() {
                     <label style={{
                       display: 'block',
                       marginBottom: '4px',
-                      fontSize: '12px',
+                      fontSize: '14px',
                       color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
                     }}>
                       ${denom}
@@ -3406,15 +3122,8 @@ function Settings() {
                           total_amount: calculateTotalFromDenominations(newDenoms)
                         })
                       }}
-                      style={{
-                        padding: '8px',
-                        width: '100%',
-                        border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                        borderRadius: '6px',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                        fontSize: '14px'
-                      }}
+                      style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                      {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                     />
                   </div>
                 ))}
@@ -3429,52 +3138,45 @@ function Settings() {
                   Calculated Total: ${calculateTotalFromDenominations(dailyCount.denominations).toFixed(2)}
                 </strong>
               </div>
-            </div>
+            </FormField>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '14px',
-                fontWeight: 500,
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>
                 Notes (optional)
-              </label>
+              </FormLabel>
               <textarea
                 value={dailyCount.notes}
                 onChange={(e) => setDailyCount({...dailyCount, notes: e.target.value})}
                 style={{
-                  padding: '10px',
-                  width: '100%',
+                  ...inputBaseStyle(isDarkMode, themeColorRgb),
                   minHeight: '80px',
-                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                  borderRadius: '6px',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : 'white',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                  fontSize: '14px',
-                  resize: 'vertical'
+                  resize: 'vertical',
+                  fontFamily: 'inherit'
                 }}
                 placeholder="Additional notes about this count..."
+                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
               />
-            </div>
+            </FormField>
 
-            <button
-              onClick={saveDailyCount}
-              disabled={saving}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: themeColor,
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: saving ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
-                fontWeight: 500
-              }}
-            >
-              {saving ? 'Saving...' : 'Save Daily Count'}
-            </button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
+                onClick={saveDailyCount}
+                disabled={saving}
+                style={{
+                  opacity: saving ? 0.6 : 1,
+                  cursor: saving ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <div className="button-26__content">
+                  <span className="button-26__text text">
+                    {saving ? 'Saving...' : 'Save Daily Count'}
+                  </span>
+                </div>
+              </button>
+            </div>
 
             {/* Recent Counts */}
             {dailyCounts.length > 0 && (
@@ -3507,7 +3209,7 @@ function Settings() {
                         <span>${parseFloat(count.total_amount || 0).toFixed(2)}</span>
                       </div>
                       {count.counted_by_name && (
-                        <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666', marginTop: '4px' }}>
+                        <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666', marginTop: '4px' }}>
                           Counted by: {count.counted_by_name}
                         </div>
                       )}
@@ -3518,7 +3220,9 @@ function Settings() {
             )}
           </div>
         </div>
-      )}
+          )}
+        </div>
+      </div>
     </div>
   )
 }

@@ -8,11 +8,9 @@ from icalendar import Calendar, Event, Alarm
 from datetime import datetime, timedelta
 import pytz
 import uuid
-import sqlite3
 import hashlib
 from typing import Optional, Dict, Any, List
-
-DB_NAME = 'inventory.db'
+from database import get_connection
 
 class CalendarIntegrationSystem:
     
@@ -26,16 +24,10 @@ class CalendarIntegrationSystem:
         self.base_url = base_url.rstrip('/')
         self.timezone = pytz.timezone('America/New_York')  # Adjust to your timezone
     
-    def get_connection(self):
-        """Get database connection"""
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
     def create_subscription(self, employee_id: int, preferences: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Create a calendar subscription for an employee"""
         
-        conn = self.get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Generate unique token
@@ -56,7 +48,8 @@ class CalendarIntegrationSystem:
             INSERT INTO Calendar_Subscriptions
             (employee_id, subscription_token, include_shifts, include_shipments,
              include_meetings, include_deadlines, calendar_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING subscription_id
         """, (
             employee_id, token,
             1 if prefs.get('include_shifts', True) else 0,
@@ -66,7 +59,8 @@ class CalendarIntegrationSystem:
             prefs.get('calendar_name', 'My Work Schedule')
         ))
         
-        subscription_id = cursor.lastrowid
+        row = cursor.fetchone()
+        subscription_id = row[0] if isinstance(row, tuple) else (row['subscription_id'] if row else None)
         conn.commit()
         cursor.close()
         conn.close()
@@ -88,7 +82,7 @@ class CalendarIntegrationSystem:
     def generate_ical_feed(self, token: str) -> Optional[bytes]:
         """Generate iCal feed for a subscription token"""
         
-        conn = self.get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Get subscription preferences
@@ -96,7 +90,7 @@ class CalendarIntegrationSystem:
             SELECT cs.*, e.first_name, e.last_name
             FROM Calendar_Subscriptions cs
             JOIN employees e ON cs.employee_id = e.employee_id
-            WHERE cs.subscription_token = ? AND cs.is_active = 1
+            WHERE cs.subscription_token = %s AND cs.is_active = 1
         """, (token,))
         
         subscription = cursor.fetchone()
@@ -119,58 +113,59 @@ class CalendarIntegrationSystem:
         
         # Get events based on preferences
         events = []
+        subscription_dict = dict(subscription) if isinstance(subscription, dict) else subscription
         
         # Get shifts if enabled
-        if subscription['include_shifts'] == 1:
+        if subscription_dict.get('include_shifts') == 1:
             cursor.execute("""
                 SELECT ce.*, es.shift_type, es.break_duration
                 FROM Calendar_Events ce
                 JOIN Employee_Shifts es ON ce.event_id = es.event_id
-                WHERE es.employee_id = ?
-                AND ce.start_datetime >= datetime('now', '-1 month')
-                AND ce.start_datetime <= datetime('now', '+3 months')
+                WHERE es.employee_id = %s
+                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
                 AND es.status != 'cancelled'
             """, (employee_id,))
-            events.extend([dict(row) for row in cursor.fetchall()])
+            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
         
         # Get shipments if enabled
-        if subscription['include_shipments'] == 1:
+        if subscription_dict.get('include_shipments') == 1:
             cursor.execute("""
                 SELECT ce.*, ss.vendor_id, v.vendor_name, 
                        ss.estimated_delivery_window, ss.tracking_number
                 FROM Calendar_Events ce
                 JOIN Shipment_Schedule ss ON ce.event_id = ss.event_id
                 LEFT JOIN vendors v ON ss.vendor_id = v.vendor_id
-                WHERE ss.assigned_receiver = ?
-                AND ce.start_datetime >= datetime('now', '-1 month')
-                AND ce.start_datetime <= datetime('now', '+3 months')
+                WHERE ss.assigned_receiver = %s
+                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
                 AND ss.status != 'cancelled'
             """, (employee_id,))
-            events.extend([dict(row) for row in cursor.fetchall()])
+            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
         
         # Get meetings if enabled
-        if subscription['include_meetings'] == 1:
+        if subscription_dict.get('include_meetings') == 1:
             cursor.execute("""
                 SELECT ce.*
                 FROM Calendar_Events ce
                 JOIN Event_Attendees ea ON ce.event_id = ea.event_id
-                WHERE ea.employee_id = ?
+                WHERE ea.employee_id = %s
                 AND ce.event_type = 'meeting'
-                AND ce.start_datetime >= datetime('now', '-1 month')
-                AND ce.start_datetime <= datetime('now', '+3 months')
+                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
             """, (employee_id,))
-            events.extend([dict(row) for row in cursor.fetchall()])
+            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
         
         # Get deadlines if enabled
-        if subscription['include_deadlines'] == 1:
+        if subscription_dict.get('include_deadlines') == 1:
             cursor.execute("""
                 SELECT ce.*
                 FROM Calendar_Events ce
                 WHERE ce.event_type IN ('deadline', 'holiday')
-                AND ce.start_datetime >= datetime('now', '-1 month')
-                AND ce.start_datetime <= datetime('now', '+3 months')
+                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
             """)
-            events.extend([dict(row) for row in cursor.fetchall()])
+            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
         
         # Add events to calendar
         for event_data in events:
@@ -273,7 +268,7 @@ class CalendarIntegrationSystem:
         cursor.execute("""
             UPDATE Calendar_Subscriptions
             SET last_synced = CURRENT_TIMESTAMP
-            WHERE subscription_token = ?
+            WHERE subscription_token = %s
         """, (token,))
         conn.commit()
         
@@ -286,14 +281,15 @@ class CalendarIntegrationSystem:
                           shift_type: str, notes: Optional[str] = None, created_by: Optional[int] = None) -> Dict[str, Any]:
         """Create a shift event for an employee"""
         
-        conn = self.get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Create calendar event
         cursor.execute("""
             INSERT INTO Calendar_Events
             (event_type, title, description, start_datetime, end_datetime, created_by, color)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING event_id
         """, (
             'shift',
             f"Shift - {shift_type.title()}",
@@ -304,13 +300,15 @@ class CalendarIntegrationSystem:
             '#4CAF50'  # Green for shifts
         ))
         
-        event_id = cursor.lastrowid
+        row = cursor.fetchone()
+        event_id = row[0] if isinstance(row, tuple) else row['event_id']
         
         # Create shift record
         cursor.execute("""
             INSERT INTO Employee_Shifts
             (event_id, employee_id, shift_type, start_time, end_time, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING shift_id
         """, (
             event_id,
             employee_id,
@@ -320,7 +318,8 @@ class CalendarIntegrationSystem:
             notes
         ))
         
-        shift_id = cursor.lastrowid
+        row = cursor.fetchone()
+        shift_id = row[0] if isinstance(row, tuple) else row['shift_id']
         
         conn.commit()
         cursor.close()
@@ -335,13 +334,14 @@ class CalendarIntegrationSystem:
                             assigned_receiver: int, notes: Optional[str] = None, created_by: Optional[int] = None) -> Dict[str, Any]:
         """Create a shipment delivery event"""
         
-        conn = self.get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Get vendor name
-        cursor.execute("SELECT vendor_name FROM vendors WHERE vendor_id = ?", (vendor_id,))
+        cursor.execute("SELECT vendor_name FROM vendors WHERE vendor_id = %s", (vendor_id,))
         vendor = cursor.fetchone()
-        vendor_name = vendor['vendor_name'] if vendor else 'Unknown Vendor'
+        vendor_dict = dict(vendor) if isinstance(vendor, dict) else {'vendor_name': vendor[0] if vendor else None}
+        vendor_name = vendor_dict.get('vendor_name', 'Unknown Vendor')
         
         # Create calendar event
         title = f"Shipment Delivery - {vendor_name}"
@@ -355,7 +355,8 @@ class CalendarIntegrationSystem:
             INSERT INTO Calendar_Events
             (event_type, title, description, start_datetime, end_datetime, 
              location, created_by, color)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING event_id
         """, (
             'shipment',
             title,
@@ -367,14 +368,16 @@ class CalendarIntegrationSystem:
             '#2196F3'  # Blue for shipments
         ))
         
-        event_id = cursor.lastrowid
+        row = cursor.fetchone()
+        event_id = row[0] if isinstance(row, tuple) else row['event_id']
         
         # Create shipment schedule
         cursor.execute("""
             INSERT INTO Shipment_Schedule
             (event_id, vendor_id, expected_date, estimated_delivery_window, 
              assigned_receiver, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING schedule_id
         """, (
             event_id,
             vendor_id,
@@ -384,7 +387,8 @@ class CalendarIntegrationSystem:
             notes
         ))
         
-        schedule_id = cursor.lastrowid
+        row = cursor.fetchone()
+        schedule_id = row[0] if isinstance(row, tuple) else row['schedule_id']
         
         conn.commit()
         cursor.close()
@@ -398,11 +402,11 @@ class CalendarIntegrationSystem:
     def export_single_event_ics(self, event_id: int, employee_id: Optional[int] = None) -> Optional[bytes]:
         """Export a single event as .ics file for download"""
         
-        conn = self.get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT * FROM Calendar_Events WHERE event_id = ?
+            SELECT * FROM Calendar_Events WHERE event_id = %s
         """, (event_id,))
         
         event_data = cursor.fetchone()
@@ -476,12 +480,12 @@ class CalendarIntegrationSystem:
     def get_employee_calendar_url(self, employee_id: int) -> Optional[Dict[str, Any]]:
         """Get calendar subscription URLs for an employee"""
         
-        conn = self.get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         cursor.execute("""
             SELECT subscription_token FROM Calendar_Subscriptions
-            WHERE employee_id = ? AND is_active = 1
+            WHERE employee_id = %s AND is_active = 1
             ORDER BY created_at DESC
             LIMIT 1
         """, (employee_id,))

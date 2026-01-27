@@ -1,8 +1,9 @@
 -- ============================================================================
--- SUPABASE POSTGRESQL SCHEMA FOR MULTI-TENANT POS SYSTEM
+-- POSTGRESQL SCHEMA FOR POS SYSTEM
 -- ============================================================================
 -- This schema adds establishment_id to all tables for multi-tenant support
 -- Converted from SQLite to PostgreSQL syntax
+-- Local PostgreSQL compatible (no Supabase dependencies)
 
 -- ============================================================================
 -- ESTABLISHMENTS TABLE (Multi-tenant support)
@@ -106,13 +107,20 @@ CREATE TABLE IF NOT EXISTS pending_shipments (
     file_path TEXT,
     purchase_order_number TEXT,
     tracking_number TEXT,
-    status TEXT DEFAULT 'pending_review' CHECK(status IN ('pending_review', 'approved', 'rejected')),
+    status TEXT DEFAULT 'pending_review' CHECK(status IN ('pending_review', 'in_progress', 'approved', 'rejected', 'completed_with_issues')),
     uploaded_by INTEGER,
     approved_by INTEGER,
     approved_date TIMESTAMP,
     reviewed_by TEXT,
     reviewed_date TIMESTAMP,
-    notes TEXT
+    notes TEXT,
+    started_by INTEGER,
+    started_at TIMESTAMP,
+    completed_by INTEGER,
+    completed_at TIMESTAMP,
+    verification_mode TEXT DEFAULT 'verify_whole_shipment',
+    workflow_step TEXT,
+    added_to_inventory INTEGER DEFAULT 0 CHECK(added_to_inventory IN (0, 1))
 );
 
 -- Pending_Shipment_Items Table
@@ -123,12 +131,17 @@ CREATE TABLE IF NOT EXISTS pending_shipment_items (
     product_sku TEXT,
     product_name TEXT,
     quantity_expected INTEGER NOT NULL CHECK(quantity_expected > 0),
-    quantity_verified INTEGER,
+    quantity_verified INTEGER DEFAULT 0,
     unit_cost NUMERIC(10,2) NOT NULL CHECK(unit_cost >= 0),
     lot_number TEXT,
     expiration_date TEXT,
     discrepancy_notes TEXT,
-    product_id INTEGER REFERENCES inventory(product_id)
+    product_id INTEGER REFERENCES inventory(product_id),
+    barcode TEXT,
+    line_number INTEGER,
+    status TEXT DEFAULT 'pending',
+    verified_by INTEGER,
+    verified_at TIMESTAMP
 );
 
 -- ============================================================================
@@ -162,6 +175,152 @@ CREATE TABLE IF NOT EXISTS employees (
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(establishment_id, employee_code)  -- Employee code unique per establishment
 );
+
+-- ============================================================================
+-- SHIPMENT VERIFICATION TABLES
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS shipment_verification_settings (
+    setting_key TEXT PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS shipment_issues (
+    issue_id SERIAL PRIMARY KEY,
+    pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id),
+    pending_item_id INTEGER REFERENCES pending_shipment_items(pending_item_id),
+    issue_type TEXT NOT NULL CHECK(issue_type IN ('missing', 'damaged', 'wrong_item', 'quantity_mismatch', 'expired', 'quality', 'other')),
+    severity TEXT DEFAULT 'minor' CHECK(severity IN ('minor', 'major', 'critical')),
+    quantity_affected INTEGER DEFAULT 1,
+    reported_by INTEGER NOT NULL REFERENCES employees(employee_id),
+    reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    description TEXT,
+    photo_path TEXT,
+    resolution_status TEXT DEFAULT 'open' CHECK(resolution_status IN ('open', 'resolved', 'vendor_contacted', 'credit_issued')),
+    resolved_by INTEGER REFERENCES employees(employee_id),
+    resolved_at TIMESTAMP,
+    resolution_notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS shipment_scan_log (
+    scan_id SERIAL PRIMARY KEY,
+    pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id),
+    pending_item_id INTEGER REFERENCES pending_shipment_items(pending_item_id),
+    scanned_barcode TEXT NOT NULL,
+    scanned_by INTEGER NOT NULL REFERENCES employees(employee_id),
+    scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    scan_result TEXT DEFAULT 'match' CHECK(scan_result IN ('match', 'mismatch', 'unknown', 'duplicate')),
+    device_id TEXT,
+    location TEXT
+);
+
+CREATE TABLE IF NOT EXISTS verification_sessions (
+    session_id SERIAL PRIMARY KEY,
+    pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id),
+    employee_id INTEGER NOT NULL REFERENCES employees(employee_id),
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    total_scans INTEGER DEFAULT 0,
+    items_verified INTEGER DEFAULT 0,
+    issues_reported INTEGER DEFAULT 0,
+    device_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS approved_shipments (
+    shipment_id SERIAL PRIMARY KEY,
+    pending_shipment_id INTEGER REFERENCES pending_shipments(pending_shipment_id),
+    vendor_id INTEGER NOT NULL REFERENCES vendors(vendor_id),
+    purchase_order_number TEXT,
+    received_date DATE,
+    approved_by INTEGER NOT NULL REFERENCES employees(employee_id),
+    approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    total_items_received INTEGER DEFAULT 0,
+    total_cost NUMERIC DEFAULT 0,
+    has_issues INTEGER DEFAULT 0 CHECK(has_issues IN (0, 1)),
+    issue_count INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS approved_shipment_items (
+    approved_item_id SERIAL PRIMARY KEY,
+    shipment_id INTEGER NOT NULL REFERENCES approved_shipments(shipment_id),
+    product_id INTEGER NOT NULL REFERENCES inventory(product_id),
+    quantity_received INTEGER NOT NULL CHECK(quantity_received > 0),
+    unit_cost NUMERIC NOT NULL CHECK(unit_cost >= 0),
+    lot_number TEXT,
+    expiration_date DATE,
+    received_by INTEGER NOT NULL REFERENCES employees(employee_id),
+    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipment_issues_shipment ON shipment_issues(pending_shipment_id);
+CREATE INDEX IF NOT EXISTS idx_shipment_issues_item ON shipment_issues(pending_item_id);
+CREATE INDEX IF NOT EXISTS idx_shipment_scan_log_shipment ON shipment_scan_log(pending_shipment_id);
+CREATE INDEX IF NOT EXISTS idx_shipment_scan_log_item ON shipment_scan_log(pending_item_id);
+CREATE INDEX IF NOT EXISTS idx_verification_sessions_shipment ON verification_sessions(pending_shipment_id);
+CREATE INDEX IF NOT EXISTS idx_approved_shipments_pending ON approved_shipments(pending_shipment_id);
+
+-- ============================================================================
+-- METADATA EXTRACTION TABLES
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS categories (
+    category_id SERIAL PRIMARY KEY,
+    category_name TEXT NOT NULL,
+    description TEXT,
+    parent_category_id INTEGER REFERENCES categories(category_id),
+    is_auto_generated INTEGER DEFAULT 0 CHECK(is_auto_generated IN (0, 1)),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+-- Partial uniques: roots unique by name; non-roots unique by (name, parent)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_root_name
+    ON categories (category_name) WHERE parent_category_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_parent
+    ON categories (category_name, parent_category_id) WHERE parent_category_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS product_metadata (
+    metadata_id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL UNIQUE REFERENCES inventory(product_id) ON DELETE CASCADE,
+    brand TEXT,
+    color TEXT,
+    size TEXT,
+    tags TEXT,
+    keywords TEXT,
+    attributes TEXT,
+    search_vector TEXT,
+    category_id INTEGER REFERENCES categories(category_id),
+    category_confidence REAL DEFAULT 0 CHECK(category_confidence >= 0 AND category_confidence <= 1),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS metadata_extraction_log (
+    log_id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES inventory(product_id) ON DELETE CASCADE,
+    extraction_method TEXT NOT NULL,
+    data_extracted TEXT,
+    execution_time_ms INTEGER,
+    success INTEGER DEFAULT 1 CHECK(success IN (0, 1)),
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS search_history (
+    search_id SERIAL PRIMARY KEY,
+    search_query TEXT NOT NULL,
+    results_count INTEGER DEFAULT 0,
+    filters TEXT,
+    user_id INTEGER REFERENCES employees(employee_id),
+    search_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_metadata_product ON product_metadata(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_metadata_category ON product_metadata(category_id);
+CREATE INDEX IF NOT EXISTS idx_product_metadata_brand ON product_metadata(brand);
+CREATE INDEX IF NOT EXISTS idx_metadata_log_product ON metadata_extraction_log(product_id);
+CREATE INDEX IF NOT EXISTS idx_search_history_timestamp ON search_history(search_timestamp);
+CREATE INDEX IF NOT EXISTS idx_categories_name ON categories(category_name);
+CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_category_id);
 
 -- Customers Table
 CREATE TABLE IF NOT EXISTS customers (

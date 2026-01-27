@@ -8,8 +8,12 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
   
   // Convert hex to RGB for rgba usage
   const hexToRgb = (hex) => {
+    if (!hex || typeof hex !== 'string') {
+      // Fallback to blue if themeColor is invalid
+      return '107, 163, 240' // #6ba3f0 in RGB
+    }
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '107, 163, 240'
   }
   
   const themeColorRgb = hexToRgb(themeColor)
@@ -17,15 +21,21 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
   
   // Create gradient from theme color
   const getGradientBackground = () => {
-    const rgb = hexToRgb(themeColor).split(', ')
+    const rgbStr = hexToRgb(themeColor)
+    const rgb = rgbStr.split(', ')
     // Create a darker shade for gradient end
     const darkerR = Math.max(0, parseInt(rgb[0]) - 30)
     const darkerG = Math.max(0, parseInt(rgb[1]) - 30)
     const darkerB = Math.max(0, parseInt(rgb[2]) - 30)
-    return `linear-gradient(135deg, ${themeColor} 0%, rgb(${darkerR}, ${darkerG}, ${darkerB}) 100%)`
+    const effectiveThemeColor = themeColor || '#6ba3f0'
+    return `linear-gradient(135deg, ${effectiveThemeColor} 0%, rgb(${darkerR}, ${darkerG}, ${darkerB}) 100%)`
   }
   
-  const [currentScreen, setCurrentScreen] = useState('transaction') // transaction, tip, payment, card, cash_confirmation, receipt, success
+  // Start with receipt screen if payment is already completed, otherwise start with transaction
+  const [currentScreen, setCurrentScreen] = useState(() => {
+    // If payment is completed, always start on receipt screen
+    return paymentCompleted ? 'receipt' : 'transaction'
+  }) // transaction, tip, payment, card, cash_confirmation, receipt, success
   const [paymentMethods, setPaymentMethods] = useState([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null)
   const [selectedTip, setSelectedTip] = useState(propTip || 0)
@@ -72,14 +82,13 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
     newSocket.on('payment_processed', (data) => {
       if (data.success) {
         setCardStatus('approved')
-        setTimeout(() => {
-          setCurrentScreen('receipt')
-        }, 2000)
+        // Don't automatically show receipt screen - user must click receipt button
       }
     })
     
     newSocket.on('payment_success', () => {
-      setCurrentScreen('receipt')
+      // Don't automatically show receipt screen - user must click receipt button
+      // Just show success screen or keep current screen
     })
     
     newSocket.on('payment_error', () => {
@@ -112,6 +121,11 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
 
   // Sync props to state when used inline (not as popup)
   useEffect(() => {
+    // Don't interfere if payment is completed - we should be on receipt screen
+    if (paymentCompleted) {
+      return
+    }
+    
     // Don't interfere if we're already in payment flow
     if (currentScreen === 'card' || currentScreen === 'receipt' || currentScreen === 'success' || currentScreen === 'cash_confirmation') {
       return
@@ -133,9 +147,14 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
       // Cart is empty, reset to transaction screen
       setCurrentScreen('transaction')
     }
-  }, [cart, currentScreen, showSummary, tipEnabled, selectedTip])
+  }, [cart, currentScreen, showSummary, tipEnabled, selectedTip, paymentCompleted])
 
   useEffect(() => {
+    // Don't interfere if payment is completed - we should be on receipt screen
+    if (paymentCompleted) {
+      return
+    }
+    
     // Only show payment screens for card payments
     // Don't interfere if we're already in payment flow
     if (currentScreen === 'card' || currentScreen === 'receipt' || currentScreen === 'success' || currentScreen === 'cash_confirmation') {
@@ -147,27 +166,28 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
       setCurrentScreen('card')
     }
     // For cash payments, don't show customer display during payment - only at end for receipt
-  }, [paymentMethod, currentScreen, cart, showSummary])
+  }, [paymentMethod, currentScreen, cart, showSummary, paymentCompleted])
 
   useEffect(() => {
     if (paymentCompleted) {
-      // For cash payments, show receipt screen immediately
-      // For card payments, show approved then receipt
-      if (paymentMethod === 'cash') {
-        // Cash payment completed - show receipt screen
+      // If payment is completed, always show receipt screen (unless already on success or receipt)
+      // Force it to receipt screen immediately
+      if (currentScreen !== 'receipt' && currentScreen !== 'success') {
         setCurrentScreen('receipt')
-      } else if (currentScreen === 'card') {
-        // Card payment - show approved then receipt
+      }
+      // For card payments, show approved status
+      if (currentScreen === 'card') {
         setCardStatus('approved')
-        setTimeout(() => {
-          setCurrentScreen('receipt')
-        }, 2000)
-      } else if (currentScreen === 'transaction' || currentScreen === 'tip') {
-        // Otherwise go straight to receipt
-        setCurrentScreen('receipt')
       }
     }
   }, [paymentCompleted, currentScreen, paymentMethod])
+  
+  // Additional effect to ensure receipt screen when paymentCompleted changes to true
+  useEffect(() => {
+    if (paymentCompleted && currentScreen !== 'receipt' && currentScreen !== 'success') {
+      setCurrentScreen('receipt')
+    }
+  }, [paymentCompleted])
 
   useEffect(() => {
     if (propTransactionId) {
@@ -471,9 +491,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
       
       if (result.success && result.data.success) {
         setCardStatus('approved')
-        setTimeout(() => {
-          setCurrentScreen('receipt')
-        }, 2000)
+        // Don't automatically show receipt screen - user must click receipt button
       } else {
         setCardStatus('declined')
       }
@@ -486,17 +504,11 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
   // Auto-advance when payment is completed from POS
   useEffect(() => {
     if (paymentCompleted) {
-      // If we're on card screen, show approved and move to receipt
+      // If we're on card screen, show approved status
       if (currentScreen === 'card') {
         setCardStatus('approved')
-        setTimeout(() => {
-          setCurrentScreen('receipt')
-        }, 2000)
       }
-      // If we're still on transaction or payment screen, skip to receipt
-      else if (currentScreen === 'transaction' || currentScreen === 'tip') {
-        setCurrentScreen('receipt')
-      }
+      // Don't automatically show receipt screen - user must click receipt button
     }
   }, [paymentCompleted, currentScreen])
 
@@ -526,13 +538,15 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
       }
     }
     
-    if (type === 'printed') {
+    if (type === 'print') {
       // Generate and download receipt PDF
       // Try transaction_id first, then fall back to order_id
       const generateReceiptForId = async (id, isOrder = false) => {
         try {
           const endpoint = isOrder ? `/api/receipt/${id}` : `/api/receipt/transaction/${id}`
+          console.log('Generating receipt for:', endpoint, 'ID:', id, 'isOrder:', isOrder)
           const response = await fetch(endpoint)
+          console.log('Receipt response status:', response.status, 'Content-Type:', response.headers.get('content-type'))
           
           // Check if response is OK and is a PDF
           if (response.ok) {
@@ -544,84 +558,159 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
               
               // Double-check blob type or size
               if (blob.type === 'application/pdf' || blob.size > 0) {
-                const url = window.URL.createObjectURL(blob)
+                // Create blob URL for download
+                const downloadUrl = window.URL.createObjectURL(blob)
                 
-                // Create a hidden iframe to load and print the PDF
-                const iframe = document.createElement('iframe')
-                iframe.style.position = 'fixed'
-                iframe.style.right = '0'
-                iframe.style.bottom = '0'
-                iframe.style.width = '0'
-                iframe.style.height = '0'
-                iframe.style.border = 'none'
-                iframe.src = url
+                // Download the PDF file once with proper name
+                const link = document.createElement('a')
+                link.href = downloadUrl
+                link.download = `receipt-${isOrder ? 'order' : 'transaction'}-${id}.pdf`
+                link.style.display = 'none'
+                document.body.appendChild(link)
                 
-                document.body.appendChild(iframe)
+                // Trigger download
+                link.click()
                 
-                // Wait for PDF to load, then trigger print dialog
-                iframe.onload = () => {
-                  setTimeout(() => {
-                    try {
-                      // Focus the iframe and trigger print
-                      iframe.contentWindow.focus()
-                      iframe.contentWindow.print()
-                      
-                      // Clean up after printing
-                      setTimeout(() => {
-                        document.body.removeChild(iframe)
-                        window.URL.revokeObjectURL(url)
-                      }, 1000)
-                    } catch (e) {
-                      console.error('Error printing from iframe:', e)
-                      // Fallback: open in new window
-                      const printWindow = window.open(url, '_blank')
-                      if (printWindow) {
-                        setTimeout(() => {
-                          try {
-                            printWindow.print()
-                          } catch (printErr) {
-                            console.error('Error printing in new window:', printErr)
-                          }
-                        }, 500)
-                      }
-                      document.body.removeChild(iframe)
-                      setTimeout(() => window.URL.revokeObjectURL(url), 2000)
-                    }
-                  }, 500)
-                }
-                
-                // Fallback: if onload doesn't fire, try after delay
+                // Clean up link after download starts
                 setTimeout(() => {
-                  if (iframe.parentNode) {
-                    try {
-                      iframe.contentWindow.focus()
-                      iframe.contentWindow.print()
-                      setTimeout(() => {
+                  if (link.parentNode) {
+                    document.body.removeChild(link)
+                  }
+                }, 500)
+                
+                // For printing, use a hidden iframe (won't trigger download)
+                // Create a separate blob URL for the iframe
+                const printBlobUrl = window.URL.createObjectURL(blob)
+                setTimeout(() => {
+                  const iframe = document.createElement('iframe')
+                  iframe.style.position = 'fixed'
+                  iframe.style.right = '0'
+                  iframe.style.bottom = '0'
+                  iframe.style.width = '0'
+                  iframe.style.height = '0'
+                  iframe.style.border = 'none'
+                  iframe.style.opacity = '0'
+                  iframe.style.pointerEvents = 'none'
+                  iframe.src = printBlobUrl
+                  document.body.appendChild(iframe)
+                  
+                  iframe.onload = () => {
+                    setTimeout(() => {
+                      try {
+                        iframe.contentWindow.focus()
+                        iframe.contentWindow.print()
+                        // Clean up after printing
+                        setTimeout(() => {
+                          if (iframe.parentNode) {
+                            document.body.removeChild(iframe)
+                          }
+                          window.URL.revokeObjectURL(printBlobUrl)
+                          setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 2000)
+                        }, 1000)
+                      } catch (printErr) {
+                        console.error('Error printing from iframe:', printErr)
+                        // Clean up on error
                         if (iframe.parentNode) {
                           document.body.removeChild(iframe)
                         }
-                        window.URL.revokeObjectURL(url)
-                      }, 1000)
-                    } catch (e) {
-                      console.error('Fallback print error:', e)
-                      // If iframe print fails, open in new window
-                      const printWindow = window.open(url, '_blank')
-                      if (iframe.parentNode) {
-                        document.body.removeChild(iframe)
+                        window.URL.revokeObjectURL(printBlobUrl)
+                        setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 2000)
                       }
-                      if (printWindow) {
-                        setTimeout(() => {
-                          try {
-                            printWindow.print()
-                          } catch (printErr) {
-                            console.error('Error printing in fallback window:', printErr)
-                          }
-                        }, 500)
-                      }
-                      setTimeout(() => window.URL.revokeObjectURL(url), 2000)
-                    }
+                    }, 500)
                   }
-                }, 1500)
+                  
+                  // Fallback if onload doesn't fire
+                  setTimeout(() => {
+                    if (iframe.parentNode) {
+                      try {
+                        if (iframe.contentWindow) {
+                          iframe.contentWindow.focus()
+                          iframe.contentWindow.print()
+                        }
+                        setTimeout(() => {
+                          if (iframe.parentNode) {
+                            document.body.removeChild(iframe)
+                          }
+                          window.URL.revokeObjectURL(printBlobUrl)
+                          setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 2000)
+                        }, 1000)
+                      } catch (printErr) {
+                        console.error('Error in fallback print:', printErr)
+                        if (iframe.parentNode) {
+                          document.body.removeChild(iframe)
+                        }
+                        window.URL.revokeObjectURL(printBlobUrl)
+                        setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 2000)
+                      }
+                    }
+                  }, 2000)
+                }, 300)
+                
+                console.log('Receipt downloaded and print dialog opened successfully')
+                
+                // Check for exchange credit and print exchange receipt
+                const exchangeCreditUsed = sessionStorage.getItem('exchangeCreditUsed')
+                if (exchangeCreditUsed) {
+                  try {
+                    const creditInfo = JSON.parse(exchangeCreditUsed)
+                    // Wait a bit before printing exchange receipt
+                    setTimeout(async () => {
+                      try {
+                        const exchangeResponse = await fetch(`/api/receipt/exchange/${creditInfo.credit_id}`)
+                        if (exchangeResponse.ok) {
+                          const exchangeBlob = await exchangeResponse.blob()
+                          if (exchangeBlob.type === 'application/pdf') {
+                            const exchangeUrl = window.URL.createObjectURL(exchangeBlob)
+                            const exchangeA = document.createElement('a')
+                            exchangeA.href = exchangeUrl
+                            exchangeA.download = `exchange_receipt_${creditInfo.credit_id}.pdf`
+                            document.body.appendChild(exchangeA)
+                            exchangeA.click()
+                            document.body.removeChild(exchangeA)
+                            window.URL.revokeObjectURL(exchangeUrl)
+                            
+                            // Open print dialog
+                            const exchangeIframe = document.createElement('iframe')
+                            exchangeIframe.style.display = 'none'
+                            document.body.appendChild(exchangeIframe)
+                            const exchangePrintBlobUrl = window.URL.createObjectURL(exchangeBlob)
+                            exchangeIframe.src = exchangePrintBlobUrl
+                            
+                            exchangeIframe.onload = () => {
+                              setTimeout(() => {
+                                try {
+                                  if (exchangeIframe.contentWindow) {
+                                    exchangeIframe.contentWindow.focus()
+                                    exchangeIframe.contentWindow.print()
+                                  }
+                                  setTimeout(() => {
+                                    if (exchangeIframe.parentNode) {
+                                      document.body.removeChild(exchangeIframe)
+                                    }
+                                    window.URL.revokeObjectURL(exchangePrintBlobUrl)
+                                  }, 1000)
+                                } catch (printErr) {
+                                  console.error('Error printing exchange receipt:', printErr)
+                                  if (exchangeIframe.parentNode) {
+                                    document.body.removeChild(exchangeIframe)
+                                  }
+                                  window.URL.revokeObjectURL(exchangePrintBlobUrl)
+                                }
+                              }, 500)
+                            }
+                            
+                            // Clear exchange credit from sessionStorage
+                            sessionStorage.removeItem('exchangeCreditUsed')
+                          }
+                        }
+                      } catch (exErr) {
+                        console.error('Error generating exchange receipt:', exErr)
+                      }
+                    }, 1000)
+                  } catch (e) {
+                    console.error('Error parsing exchange credit info:', e)
+                  }
+                }
                 
                 return true
               } else {
@@ -818,89 +907,73 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
             </div>
 
             <div style={{ display: 'flex', gap: '20px', width: '100%', marginTop: '20px' }}>
-              {paymentMethods.length > 0 ? (
-                paymentMethods
-                  .filter(method => method.method_type === 'cash' || method.method_type === 'card')
-                  .map((method) => (
+              {/* Always show both Cash and Card buttons */}
+              {(() => {
+                // Find cash and card methods from API
+                const cashMethod = paymentMethods.find(m => m.method_type === 'cash')
+                const cardMethod = paymentMethods.find(m => m.method_type === 'card' || m.method_type === 'credit_card')
+                
+                // Use API methods if available, otherwise use defaults
+                const cash = cashMethod || { method_type: 'cash', payment_method_id: 'cash_default' }
+                const card = cardMethod || { method_type: 'card', payment_method_id: 'card_default' }
+                
+                const buttonStyle = {
+                  flex: 1,
+                  height: '100px',
+                  padding: '16px',
+                  paddingTop: '8px',
+                  backgroundImage: 'linear-gradient(to bottom, #6ba3f0, #4a90e2)',
+                  color: '#fff',
+                  border: 0,
+                  borderRadius: '8px',
+                  fontSize: '36px',
+                  fontFamily: '-apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: 'inset 0 -8px rgb(0 0 0/0.4), 0 2px 4px rgb(0 0 0/0.2)',
+                  transition: 'transform 0.4s cubic-bezier(0.55, 1, 0.15, 1), opacity 0.2s ease-in-out',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  touchAction: 'manipulation',
+                  textAlign: 'center'
+                }
+                
+                return (
+                  <>
                     <button
-                      key={method.payment_method_id}
-                      onClick={() => selectPaymentMethod(method)}
-                      style={{
-                        flex: 1,
-                        height: '100px',
-                        padding: '16px',
-                        backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                        backdropFilter: 'blur(10px)',
-                        WebkitBackdropFilter: 'blur(10px)',
-                        color: '#fff',
-                        border: '1px solid rgba(255, 255, 255, 0.2)',
-                        borderRadius: '8px',
-                        fontSize: '36px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-                        transition: 'all 0.3s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
+                      onClick={() => selectPaymentMethod(cash)}
+                      style={buttonStyle}
+                      onMouseDown={(e) => {
+                        e.currentTarget.style.transform = 'scale(0.92)'
+                      }}
+                      onMouseUp={(e) => {
+                        e.currentTarget.style.transform = 'scale(1)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'scale(1)'
                       }}
                     >
-                      {method.method_type === 'cash' ? 'Cash' : 'Card'}
+                      Cash
                     </button>
-                  ))
-              ) : (
-                // Fallback: Show default payment buttons if payment methods haven't loaded
-                <>
-                  <button
-                    onClick={() => selectPaymentMethod({ method_type: 'cash', payment_method_id: 'cash_default' })}
-                    style={{
-                      flex: 1,
-                      height: '100px',
-                      padding: '16px',
-                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      color: '#fff',
-                      border: '1px solid rgba(255, 255, 255, 0.2)',
-                      borderRadius: '8px',
-                      fontSize: '36px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                      transition: 'all 0.3s ease',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    Cash
-                  </button>
-                  <button
-                    onClick={() => selectPaymentMethod({ method_type: 'card', payment_method_id: 'card_default' })}
-                    style={{
-                      flex: 1,
-                      height: '100px',
-                      padding: '16px',
-                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      color: '#fff',
-                      border: '1px solid rgba(255, 255, 255, 0.2)',
-                      borderRadius: '8px',
-                      fontSize: '36px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                      transition: 'all 0.3s ease',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    Card
-                  </button>
-                </>
-              )}
+                    <button
+                      onClick={() => selectPaymentMethod(card)}
+                      style={buttonStyle}
+                      onMouseDown={(e) => {
+                        e.currentTarget.style.transform = 'scale(0.92)'
+                      }}
+                      onMouseUp={(e) => {
+                        e.currentTarget.style.transform = 'scale(1)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'scale(1)'
+                      }}
+                    >
+                      Card
+                    </button>
+                  </>
+                )
+              })()}
             </div>
           </div>
         )}
@@ -945,7 +1018,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                     onClick={() => setShowCustomTip(true)}
                     style={{
                       padding: '32px 20px',
-                      backgroundColor: 'rgba(128, 0, 128, 0.7)',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
                       backdropFilter: 'blur(10px)',
                       WebkitBackdropFilter: 'blur(10px)',
                       color: '#fff',
@@ -953,7 +1026,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                       borderRadius: '8px',
                       textAlign: 'center',
                       cursor: 'pointer',
-                      boxShadow: '0 4px 15px rgba(128, 0, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
                       transition: 'all 0.3s ease'
                     }}
                   >
@@ -1186,27 +1259,39 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
             </div>
             
             {/* Receipt Options */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
-              <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', marginTop: '20px' }}>
+              <div style={{ display: 'flex', gap: '20px', width: '100%' }}>
                 <button
-                  onClick={() => selectReceipt('printed')}
+                  onClick={() => selectReceipt('print')}
                   style={{
                     flex: 1,
-                    padding: '24px 16px',
-                    minHeight: '70px',
-                    backgroundColor: receiptType === 'printed' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
+                    height: '100px',
+                    padding: '16px',
+                    paddingTop: '8px',
+                    backgroundImage: 'linear-gradient(to bottom, #6ba3f0, #4a90e2)',
                     color: '#fff',
-                    border: receiptType === 'printed' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                    border: 0,
                     borderRadius: '8px',
-                    fontSize: '28px',
+                    fontSize: '36px',
+                    fontFamily: '-apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif',
                     fontWeight: 600,
                     cursor: 'pointer',
-                    boxShadow: receiptType === 'printed' 
-                      ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
-                      : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
-                    transition: 'all 0.3s ease'
+                    boxShadow: 'inset 0 -8px rgb(0 0 0/0.4), 0 2px 4px rgb(0 0 0/0.2)',
+                    transition: 'transform 0.4s cubic-bezier(0.55, 1, 0.15, 1), opacity 0.2s ease-in-out',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    touchAction: 'manipulation',
+                    textAlign: 'center'
+                  }}
+                  onMouseDown={(e) => {
+                    e.currentTarget.style.transform = 'scale(0.92)'
+                  }}
+                  onMouseUp={(e) => {
+                    e.currentTarget.style.transform = 'scale(1)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'scale(1)'
                   }}
                 >
                   Print
@@ -1216,21 +1301,33 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                   onClick={() => selectReceipt('none')}
                   style={{
                     flex: 1,
-                    padding: '24px 16px',
-                    minHeight: '70px',
-                    backgroundColor: receiptType === 'none' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
+                    height: '100px',
+                    padding: '16px',
+                    paddingTop: '8px',
+                    backgroundImage: 'linear-gradient(to bottom, #6ba3f0, #4a90e2)',
                     color: '#fff',
-                    border: receiptType === 'none' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                    border: 0,
                     borderRadius: '8px',
-                    fontSize: '28px',
+                    fontSize: '36px',
+                    fontFamily: '-apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif',
                     fontWeight: 600,
                     cursor: 'pointer',
-                    boxShadow: receiptType === 'none' 
-                      ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
-                      : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
-                    transition: 'all 0.3s ease'
+                    boxShadow: 'inset 0 -8px rgb(0 0 0/0.4), 0 2px 4px rgb(0 0 0/0.2)',
+                    transition: 'transform 0.4s cubic-bezier(0.55, 1, 0.15, 1), opacity 0.2s ease-in-out',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    touchAction: 'manipulation',
+                    textAlign: 'center'
+                  }}
+                  onMouseDown={(e) => {
+                    e.currentTarget.style.transform = 'scale(0.92)'
+                  }}
+                  onMouseUp={(e) => {
+                    e.currentTarget.style.transform = 'scale(1)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'scale(1)'
                   }}
                 >
                   No Receipt
@@ -1241,21 +1338,33 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
                 onClick={() => selectReceipt('email')}
                 style={{
                   width: '100%',
-                  padding: '24px 16px',
-                  minHeight: '70px',
-                  backgroundColor: receiptType === 'email' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.5)`,
-                  backdropFilter: 'blur(10px)',
-                  WebkitBackdropFilter: 'blur(10px)',
+                  height: '100px',
+                  padding: '16px',
+                  paddingTop: '8px',
+                  backgroundImage: 'linear-gradient(to bottom, #6ba3f0, #4a90e2)',
                   color: '#fff',
-                  border: receiptType === 'email' ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+                  border: 0,
                   borderRadius: '8px',
-                  fontSize: '28px',
+                  fontSize: '36px',
+                  fontFamily: '-apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif',
                   fontWeight: 600,
                   cursor: 'pointer',
-                  boxShadow: receiptType === 'email' 
-                    ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` 
-                    : `0 2px 8px rgba(${themeColorRgb}, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15)`,
-                  transition: 'all 0.3s ease'
+                  boxShadow: 'inset 0 -8px rgb(0 0 0/0.4), 0 2px 4px rgb(0 0 0/0.2)',
+                  transition: 'transform 0.4s cubic-bezier(0.55, 1, 0.15, 1), opacity 0.2s ease-in-out',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  touchAction: 'manipulation',
+                  textAlign: 'center'
+                }}
+                onMouseDown={(e) => {
+                  e.currentTarget.style.transform = 'scale(0.92)'
+                }}
+                onMouseUp={(e) => {
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'scale(1)'
                 }}
               >
                 Email
@@ -1310,6 +1419,32 @@ function CustomerDisplayPopup({ cart, subtotal, tax, total, tip: propTip, paymen
             <div className="success-icon">✓</div>
             <div className="success-message">Payment Successful!</div>
             <div className="success-details">Thank you for your purchase</div>
+            <button
+              onClick={() => setCurrentScreen('receipt')}
+              style={{
+                marginTop: '30px',
+                padding: '20px 40px',
+                fontSize: '24px',
+                fontWeight: 600,
+                backgroundColor: `rgba(${themeColorRgb}, 0.8)`,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3)`,
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 1)`
+                e.target.style.transform = 'scale(1.05)'
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                e.target.style.transform = 'scale(1)'
+              }}
+            >
+              Get Receipt
+            </button>
           </div>
         )}
       </div>

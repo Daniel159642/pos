@@ -5,12 +5,20 @@ PostgreSQL ONLY - All SQLite code has been removed
 """
 
 import hashlib
+import logging
 import secrets
 import json
 import re
 import os
+import threading
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+
+logger = logging.getLogger(__name__)
+_ensure_metadata_lock = threading.Lock()
+_category_path_cache: Dict[str, int] = {}
+_category_cache_max_size = 1000
+_ensure_shipment_lock = threading.Lock()
 
 # Import local PostgreSQL connection - this is the ONLY database backend
 try:
@@ -90,48 +98,269 @@ def get_connection():
 def set_connection_override(connection_func):
     """
     Override the connection function (compatibility function for web_viewer.py)
-    Since this module only uses Supabase now, this is a no-op
+    Since this module only uses PostgreSQL now, this is a no-op
     """
-    # No-op since we only use Supabase
+    # No-op since we only use PostgreSQL
     pass
 
-def create_or_get_category_with_hierarchy(category_path: str, conn=None) -> Optional[int]:
+def ensure_metadata_tables(conn=None):
+    """Ensure metadata extraction tables exist in PostgreSQL."""
+    with _ensure_metadata_lock:
+        should_close = False
+        if conn is None:
+            conn = get_connection()
+            should_close = True
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'product_metadata'")
+            if cursor.fetchone():
+                if should_close:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                return
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS categories (
+                    category_id SERIAL PRIMARY KEY,
+                    category_name TEXT NOT NULL,
+                    description TEXT,
+                    parent_category_id INTEGER REFERENCES categories(category_id),
+                    is_auto_generated INTEGER DEFAULT 0 CHECK(is_auto_generated IN (0, 1)),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_root_name
+                ON categories (category_name) WHERE parent_category_id IS NULL
+            """)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_parent
+                ON categories (category_name, parent_category_id) WHERE parent_category_id IS NOT NULL
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS product_metadata (
+                    metadata_id SERIAL PRIMARY KEY,
+                    product_id INTEGER NOT NULL UNIQUE REFERENCES inventory(product_id) ON DELETE CASCADE,
+                    brand TEXT,
+                    color TEXT,
+                    size TEXT,
+                    tags TEXT,
+                    keywords TEXT,
+                    attributes TEXT,
+                    search_vector TEXT,
+                    category_id INTEGER REFERENCES categories(category_id),
+                    category_confidence REAL DEFAULT 0 CHECK(category_confidence >= 0 AND category_confidence <= 1),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS metadata_extraction_log (
+                    log_id SERIAL PRIMARY KEY,
+                    product_id INTEGER NOT NULL REFERENCES inventory(product_id) ON DELETE CASCADE,
+                    extraction_method TEXT NOT NULL,
+                    data_extracted TEXT,
+                    execution_time_ms INTEGER,
+                    success INTEGER DEFAULT 1 CHECK(success IN (0, 1)),
+                    error_message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS search_history (
+                    search_id SERIAL PRIMARY KEY,
+                    search_query TEXT NOT NULL,
+                    results_count INTEGER DEFAULT 0,
+                    filters TEXT,
+                    user_id INTEGER REFERENCES employees(employee_id),
+                    search_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_product_metadata_product ON product_metadata(product_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_product_metadata_category ON product_metadata(category_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_product_metadata_brand ON product_metadata(brand)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metadata_log_product ON metadata_extraction_log(product_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_search_history_timestamp ON search_history(search_timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_categories_name ON categories(category_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_category_id)")
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            if should_close:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+def ensure_shipment_verification_tables(conn=None):
+    """Ensure shipment verification tables and columns exist."""
+    with _ensure_shipment_lock:
+        should_close = False
+        if conn is None:
+            conn = get_connection()
+            should_close = True
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'shipment_verification_settings'")
+            if cursor.fetchone():
+                if should_close:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                return
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shipment_verification_settings (
+                    setting_key TEXT PRIMARY KEY,
+                    setting_value TEXT NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO shipment_verification_settings (setting_key, setting_value, description)
+                VALUES
+                    ('workflow_mode', 'simple', 'Verification workflow mode: simple or three_step'),
+                    ('auto_add_to_inventory', 'true', 'Automatically add verified items to inventory')
+                ON CONFLICT (setting_key) DO NOTHING
+            """)
+            cursor.execute("ALTER TABLE pending_shipments ADD COLUMN IF NOT EXISTS workflow_step TEXT")
+            cursor.execute("ALTER TABLE pending_shipments ADD COLUMN IF NOT EXISTS added_to_inventory INTEGER DEFAULT 0 CHECK(added_to_inventory IN (0, 1))")
+            cursor.execute("ALTER TABLE pending_shipment_items ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'")
+            cursor.execute("ALTER TABLE pending_shipment_items ADD COLUMN IF NOT EXISTS verified_by INTEGER")
+            cursor.execute("ALTER TABLE pending_shipment_items ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP")
+            cursor.execute("ALTER TABLE pending_shipment_items ADD COLUMN IF NOT EXISTS barcode TEXT")
+            cursor.execute("ALTER TABLE pending_shipment_items ADD COLUMN IF NOT EXISTS line_number INTEGER")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shipment_issues (
+                    issue_id SERIAL PRIMARY KEY,
+                    pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id),
+                    pending_item_id INTEGER REFERENCES pending_shipment_items(pending_item_id),
+                    issue_type TEXT NOT NULL CHECK(issue_type IN ('missing', 'damaged', 'wrong_item', 'quantity_mismatch', 'expired', 'quality', 'other')),
+                    severity TEXT DEFAULT 'minor' CHECK(severity IN ('minor', 'major', 'critical')),
+                    quantity_affected INTEGER DEFAULT 1,
+                    reported_by INTEGER NOT NULL REFERENCES employees(employee_id),
+                    reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    description TEXT,
+                    photo_path TEXT,
+                    resolution_status TEXT DEFAULT 'open' CHECK(resolution_status IN ('open', 'resolved', 'vendor_contacted', 'credit_issued')),
+                    resolved_by INTEGER REFERENCES employees(employee_id),
+                    resolved_at TIMESTAMP,
+                    resolution_notes TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shipment_scan_log (
+                    scan_id SERIAL PRIMARY KEY,
+                    pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id),
+                    pending_item_id INTEGER REFERENCES pending_shipment_items(pending_item_id),
+                    scanned_barcode TEXT NOT NULL,
+                    scanned_by INTEGER NOT NULL REFERENCES employees(employee_id),
+                    scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scan_result TEXT DEFAULT 'match' CHECK(scan_result IN ('match', 'mismatch', 'unknown', 'duplicate')),
+                    device_id TEXT,
+                    location TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS verification_sessions (
+                    session_id SERIAL PRIMARY KEY,
+                    pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id),
+                    employee_id INTEGER NOT NULL REFERENCES employees(employee_id),
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ended_at TIMESTAMP,
+                    total_scans INTEGER DEFAULT 0,
+                    items_verified INTEGER DEFAULT 0,
+                    issues_reported INTEGER DEFAULT 0,
+                    device_id TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS approved_shipments (
+                    shipment_id SERIAL PRIMARY KEY,
+                    pending_shipment_id INTEGER REFERENCES pending_shipments(pending_shipment_id),
+                    vendor_id INTEGER NOT NULL REFERENCES vendors(vendor_id),
+                    purchase_order_number TEXT,
+                    received_date DATE,
+                    approved_by INTEGER NOT NULL REFERENCES employees(employee_id),
+                    approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    total_items_received INTEGER DEFAULT 0,
+                    total_cost NUMERIC DEFAULT 0,
+                    has_issues INTEGER DEFAULT 0 CHECK(has_issues IN (0, 1)),
+                    issue_count INTEGER DEFAULT 0
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS approved_shipment_items (
+                    approved_item_id SERIAL PRIMARY KEY,
+                    shipment_id INTEGER NOT NULL REFERENCES approved_shipments(shipment_id),
+                    product_id INTEGER NOT NULL REFERENCES inventory(product_id),
+                    quantity_received INTEGER NOT NULL CHECK(quantity_received > 0),
+                    unit_cost NUMERIC NOT NULL CHECK(unit_cost >= 0),
+                    lot_number TEXT,
+                    expiration_date DATE,
+                    received_by INTEGER NOT NULL REFERENCES employees(employee_id),
+                    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_shipment_issues_shipment ON shipment_issues(pending_shipment_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_shipment_issues_item ON shipment_issues(pending_item_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_shipment_scan_log_shipment ON shipment_scan_log(pending_shipment_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_shipment_scan_log_item ON shipment_scan_log(pending_item_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_verification_sessions_shipment ON verification_sessions(pending_shipment_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_approved_shipments_pending ON approved_shipments(pending_shipment_id)")
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            if should_close:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+def _normalize_category_path(category_path: str) -> List[str]:
+    """Normalize and split category path. Returns list of segments, or empty if invalid."""
+    if not category_path or not isinstance(category_path, str):
+        return []
+    # Collapse whitespace, split by > or →
+    raw = re.sub(r'\s+', ' ', category_path).strip()
+    parts = [p.strip() for p in re.split(r'[>→]', raw) if p.strip()]
+    return parts
+
+
+def get_category_by_path(category_path: str, conn=None) -> Optional[int]:
     """
-    Create or get category with parent-child hierarchy
-    Example: "Electronics > Phones > Smartphones" creates:
-    - Electronics (parent)
-    - Phones (child of Electronics)
-    - Smartphones (child of Phones)
-    
-    Args:
-        category_path: Category path like "Electronics > Phones" or "Electronics"
-        conn: Optional database connection (creates new if None)
-    
-    Returns:
-        The category_id of the most specific category, or None if invalid
+    Look up category_id by path (read-only). Does not create.
+    Returns the most specific category_id, or None if any segment is missing.
     """
+    parts = _normalize_category_path(category_path)
+    if not parts:
+        return None
+    path_key = " > ".join(parts)
+    if path_key in _category_path_cache:
+        return _category_path_cache[path_key]
     if conn is None:
         conn = get_connection()
         should_close = True
     else:
         should_close = False
-    
     try:
         cursor = conn.cursor()
-        
-        # Split category path by > or →
-        parts = [p.strip() for p in re.split(r'[>→]', category_path) if p.strip()]
-        
-        if not parts:
-            if should_close:
-                conn.close()
-            return None
-        
         parent_id = None
-        
-        for i, category_name in enumerate(parts):
-            # Check if category exists
-            if parent_id:
+        for category_name in parts:
+            if parent_id is not None:
                 cursor.execute("""
                     SELECT category_id FROM categories
                     WHERE category_name = %s AND parent_category_id = %s
@@ -141,32 +370,228 @@ def create_or_get_category_with_hierarchy(category_path: str, conn=None) -> Opti
                     SELECT category_id FROM categories
                     WHERE category_name = %s AND parent_category_id IS NULL
                 """, (category_name,))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                category_id = result[0]
-            else:
-                # Create new category
-                cursor.execute("""
-                    INSERT INTO categories (category_name, parent_category_id, is_auto_generated)
-                    VALUES (%s, %s, 1)
-                """, (category_name, parent_id))
-                category_id = cursor.lastrowid
-            
-            parent_id = category_id
-        
-        conn.commit()
-        return parent_id  # Return most specific category
-        
+            row = cursor.fetchone()
+            if not row:
+                return None
+            parent_id = row[0]
+        if len(_category_path_cache) < _category_cache_max_size:
+            _category_path_cache[path_key] = parent_id
+        return parent_id
     except Exception as e:
-        print(f"Error creating category hierarchy: {e}")
-        if should_close:
-            conn.close()
+        logger.warning("get_category_by_path failed: %s", e)
         return None
     finally:
-        if should_close:
-            conn.close()
+        if should_close and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def create_or_get_category_with_hierarchy(category_path: str, conn=None) -> Optional[int]:
+    """
+    Create or get category with parent-child hierarchy.
+    Example: "Electronics > Phones > Smartphones" creates:
+    - Electronics (parent)
+    - Phones (child of Electronics)
+    - Smartphones (child of Phones)
+    Uses RETURNING for Postgres; normalizes/validates path; idempotent under races.
+    """
+    import psycopg2
+    parts = _normalize_category_path(category_path)
+    if not parts:
+        logger.debug("create_or_get_category: empty or invalid path %r", category_path)
+        return None
+    path_key = " > ".join(parts)
+    if path_key in _category_path_cache:
+        return _category_path_cache[path_key]
+    if conn is None:
+        conn = get_connection()
+        should_close = True
+    else:
+        should_close = False
+    try:
+        cursor = conn.cursor()
+        parent_id = None
+        for category_name in parts:
+            if parent_id is not None:
+                cursor.execute("""
+                    SELECT category_id FROM categories
+                    WHERE category_name = %s AND parent_category_id = %s
+                """, (category_name, parent_id))
+            else:
+                cursor.execute("""
+                    SELECT category_id FROM categories
+                    WHERE category_name = %s AND parent_category_id IS NULL
+                """, (category_name,))
+            row = cursor.fetchone()
+            if row:
+                category_id = row[0]
+            else:
+                try:
+                    cursor.execute("""
+                        INSERT INTO categories (category_name, parent_category_id, is_auto_generated)
+                        VALUES (%s, %s, 1)
+                        RETURNING category_id
+                    """, (category_name, parent_id))
+                    r = cursor.fetchone()
+                    category_id = r[0] if r else None
+                except psycopg2.IntegrityError:
+                    conn.rollback()
+                    if parent_id is not None:
+                        cursor.execute("""
+                            SELECT category_id FROM categories
+                            WHERE category_name = %s AND parent_category_id = %s
+                        """, (category_name, parent_id))
+                    else:
+                        cursor.execute("""
+                            SELECT category_id FROM categories
+                            WHERE category_name = %s AND parent_category_id IS NULL
+                        """, (category_name,))
+                    row = cursor.fetchone()
+                    category_id = row[0] if row else None
+                if category_id is None:
+                    logger.warning("create_or_get_category: failed for %r", category_name)
+                    return None
+            parent_id = category_id
+        conn.commit()
+        if len(_category_path_cache) < _category_cache_max_size:
+            _category_path_cache[path_key] = parent_id
+        return parent_id
+    except Exception as e:
+        logger.warning("create_or_get_category_with_hierarchy failed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        if should_close and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+def _build_category_path(category_id: int, by_id: Dict[int, Dict]) -> str:
+    """Build full path (e.g. 'Electronics > Phones') by walking parent_category_id."""
+    parts = []
+    cid = category_id
+    while cid:
+        node = by_id.get(cid)
+        if not node:
+            break
+        name = node.get("category_name")
+        if isinstance(name, bytes):
+            name = name.decode("utf-8", errors="replace")
+        parts.append(str(name))
+        cid = node.get("parent_category_id")
+    return " > ".join(reversed(parts)) if parts else ""
+
+
+def list_categories(include_path: bool = True) -> List[Dict[str, Any]]:
+    """List all categories. Optionally include category_path (e.g. 'Electronics > Phones')."""
+    from psycopg2.extras import RealDictCursor
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        cursor.execute("SELECT * FROM categories ORDER BY category_name")
+        rows = cursor.fetchall()
+        if not rows:
+            return []
+        out = [dict(row) for row in rows]
+        if include_path:
+            by_id = {r["category_id"]: r for r in out}
+            for r in out:
+                r["category_path"] = _build_category_path(r["category_id"], by_id)
+        return out
+    except Exception as e:
+        error_message = str(e).lower()
+        if "categories" in error_message and "does not exist" in error_message:
+            return []
+        logger.exception("list_categories failed")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def suggest_categories_for_product(product_name: str, barcode: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return category suggestions for a product (no DB write)."""
+    try:
+        from metadata_extraction import FreeMetadataSystem
+        system = FreeMetadataSystem()
+        metadata = system.extract_metadata_from_product(
+            product_name=product_name,
+            barcode=barcode,
+            description=None
+        )
+        suggestions = metadata.get("category_suggestions") or []
+        return [
+            {"category_name": s.get("category_name"), "confidence": s.get("confidence", 0)}
+            for s in suggestions if s.get("category_name")
+        ]
+    except Exception as e:
+        logger.warning("suggest_categories_for_product failed: %s", e)
+        return []
+
+
+def assign_category_to_product(
+    product_id: int,
+    category_id: Optional[int] = None,
+    category_path: Optional[str] = None,
+    confidence: float = 1.0
+) -> bool:
+    """Assign category to product. Provide category_id or category_path. Updates product_metadata and inventory.category."""
+    if category_id is None and not category_path:
+        return False
+    if category_id is None:
+        category_id = create_or_get_category_with_hierarchy(category_path)
+    if category_id is None:
+        return False
+    parts = _normalize_category_path(category_path) if category_path else []
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT metadata_id FROM product_metadata WHERE product_id = %s", (product_id,))
+        exists = cursor.fetchone()
+        if exists:
+            cursor.execute("""
+                UPDATE product_metadata SET category_id = %s, category_confidence = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE product_id = %s
+            """, (category_id, confidence, product_id))
+        else:
+            cursor.execute("""
+                INSERT INTO product_metadata (product_id, category_id, category_confidence, updated_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            """, (product_id, category_id, confidence))
+        cursor.execute("SELECT category_name FROM categories WHERE category_id = %s", (category_id,))
+        row = cursor.fetchone()
+        leaf_name = (row[0] if row else None) or (parts[-1] if parts else str(category_id))
+        cursor.execute("""
+            UPDATE inventory SET category = %s, updated_at = NOW() WHERE product_id = %s
+        """, (leaf_name, product_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("assign_category_to_product failed: %s", e)
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
 
 def extract_metadata_for_product(product_id: int, auto_sync_category: bool = True):
     """
@@ -177,67 +602,127 @@ def extract_metadata_for_product(product_id: int, auto_sync_category: bool = Tru
         product_id: ID of the product to extract metadata for
         auto_sync_category: If True, sync category to inventory.category field
     """
+    print(f"  [extract_metadata_for_product] Starting for product_id={product_id}, auto_sync_category={auto_sync_category}")
     try:
+        print(f"  [extract_metadata_for_product] Importing FreeMetadataSystem...")
         from metadata_extraction import FreeMetadataSystem
+        print(f"  [extract_metadata_for_product] Import successful")
         
         # Get product
+        print(f"  [extract_metadata_for_product] Getting product {product_id}...")
         product = get_product(product_id)
         if not product:
+            print(f"⚠ ERROR: Product {product_id} not found - cannot extract metadata")
             return False
         
+        print(f"  Product found: {product.get('product_name')} (SKU: {product.get('sku')})")
+        
         # Extract metadata
+        print(f"  Extracting metadata for: {product.get('product_name')} (SKU: {product.get('sku')}, Barcode: {product.get('barcode')})")
         metadata_system = FreeMetadataSystem()
         metadata = metadata_system.extract_metadata_from_product(
             product_name=product['product_name'],
             barcode=product.get('barcode'),
             description=None
         )
+        print(f"  Extracted metadata: {json.dumps(metadata, indent=2, default=str)[:500]}...")  # Print first 500 chars
         
         # Save metadata
-        metadata_system.save_product_metadata(
-            product_id=product_id,
-            metadata=metadata,
-            extraction_method='auto_on_create'
-        )
+        try:
+            metadata_system.save_product_metadata(
+                product_id=product_id,
+                metadata=metadata,
+                extraction_method='auto_on_create'
+            )
+            print(f"✓ Saved metadata to product_metadata table for product {product_id}")
+            
+            # Verify metadata was saved
+            verify_conn = get_connection()
+            try:
+                verify_cursor = verify_conn.cursor()
+                verify_cursor.execute("""
+                    SELECT brand, color, size, category_id, tags, keywords 
+                    FROM product_metadata 
+                    WHERE product_id = %s
+                """, (product_id,))
+                verify_row = verify_cursor.fetchone()
+                if verify_row:
+                    print(f"  Verified metadata in DB: brand={verify_row[0]}, color={verify_row[1]}, size={verify_row[2]}, category_id={verify_row[3]}")
+                    if verify_row[4]:  # tags
+                        print(f"  Tags: {verify_row[4][:100]}...")
+                    if verify_row[5]:  # keywords
+                        print(f"  Keywords: {verify_row[5][:100]}...")
+                else:
+                    print(f"  ⚠ WARNING: Metadata not found in database after save!")
+            except Exception as verify_err:
+                print(f"  ⚠ Error verifying metadata: {verify_err}")
+            finally:
+                verify_conn.close()
+        except Exception as e:
+            print(f"⚠ Error saving metadata for product {product_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # Optionally sync category to inventory.category field
         if auto_sync_category:
             try:
-                # Get category from metadata
                 category_suggestions = metadata.get('category_suggestions', [])
-                if category_suggestions and len(category_suggestions) > 0:
+                if not category_suggestions:
+                    print(f"⚠ No category suggestions for product {product_id} ({product.get('product_name')})")
+                else:
                     suggested_category = category_suggestions[0].get('category_name')
+                    confidence = category_suggestions[0].get('confidence', 0)
                     if suggested_category:
+                        print(f"✓ Category suggestion for product {product_id}: {suggested_category} (confidence: {confidence:.2f})")
                         conn = get_connection()
-                        cursor = conn.cursor()
-                        
-                        # Create or get category with hierarchy (e.g., "Electronics > Phones")
-                        category_id = create_or_get_category_with_hierarchy(
-                            suggested_category, conn
-                        )
-                        
-                        # Update inventory.category with most specific category name
-                        # Extract just the last part (most specific)
-                        category_parts = [p.strip() for p in re.split(r'[>→]', suggested_category)]
-                        most_specific = category_parts[-1] if category_parts else suggested_category
-                        
-                        if product.get('category') != most_specific:
-                            cursor.execute("""
-                                UPDATE inventory 
-                                SET category = %s, updated_at = NOW()
-                                WHERE product_id = %s
-                            """, (most_specific, product_id))
-                        
-                        conn.commit()
-                        conn.close()
+                        try:
+                            cursor = conn.cursor()
+                            cat_id = create_or_get_category_with_hierarchy(suggested_category, conn)
+                            if cat_id is None:
+                                print(f"⚠ Failed to create/get category '{suggested_category}' for product {product_id}")
+                            else:
+                                parts = _normalize_category_path(suggested_category)
+                                most_specific = parts[-1] if parts else suggested_category
+                                # Get current category from database (not from cached product dict)
+                                cursor.execute("SELECT category FROM inventory WHERE product_id = %s", (product_id,))
+                                current_row = cursor.fetchone()
+                                current_category = current_row[0] if current_row else None
+                                
+                                if current_category != most_specific:
+                                    cursor.execute("""
+                                        UPDATE inventory
+                                        SET category = %s, updated_at = NOW()
+                                        WHERE product_id = %s
+                                    """, (most_specific, product_id))
+                                    conn.commit()
+                                    print(f"✓ Updated category for product {product_id}: '{current_category}' -> '{most_specific}'")
+                                    # Verify the update
+                                    cursor.execute("SELECT category FROM inventory WHERE product_id = %s", (product_id,))
+                                    verify_row = cursor.fetchone()
+                                    verified_category = verify_row[0] if verify_row else None
+                                    print(f"  Verified category in DB: '{verified_category}'")
+                                else:
+                                    print(f"✓ Category already set for product {product_id}: '{most_specific}'")
+                        except Exception as e:
+                            print(f"⚠ Error syncing category for product {product_id}: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            conn.rollback()
+                        finally:
+                            conn.close()
+                    else:
+                        print(f"⚠ Empty category_name in suggestions for product {product_id}")
             except Exception as e:
-                print(f"Warning: Category sync failed for product {product_id}: {e}")
-                pass  # Don't fail if category sync fails
-        
+                print(f"⚠ Category sync failed for product_id={product_id}: {e}")
+                import traceback
+                traceback.print_exc()
         return True
     except Exception as e:
-        # Silently fail - metadata extraction is optional
-        # Uncomment for debugging: print(f"Metadata extraction failed for product {product_id}: {e}")
+        print(f"⚠ ERROR: Metadata extraction failed for product_id={product_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        logger.debug("Metadata extraction failed for product_id=%s: %s", product_id, e)
         return False
 
 def add_product(
@@ -290,14 +775,18 @@ def add_product(
 
 def get_product(product_id: int) -> Optional[Dict[str, Any]]:
     """Get a product by ID"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    cursor.execute("SELECT * FROM inventory WHERE product_id = %s", (product_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    return dict(row) if row else None
+    try:
+        cursor.execute("SELECT * FROM inventory WHERE product_id = %s", (product_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+    finally:
+        conn.close()
 
 def get_product_by_sku(sku: str) -> Optional[Dict[str, Any]]:
     """Get a product by SKU"""
@@ -490,6 +979,131 @@ def update_quantity(product_id: int, quantity_change: int) -> bool:
 # Vendor Management Functions
 # ============================================================================
 
+def _get_or_create_default_establishment(conn=None) -> int:
+    """Get or create a default establishment (for local PostgreSQL)"""
+    from psycopg2.extras import RealDictCursor
+    should_close = False
+    if conn is None:
+        conn = get_connection()
+        should_close = True
+    
+    # Use RealDictCursor for consistent results
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        # Check if connection is in a bad state and rollback if needed
+        try:
+            conn.rollback()
+        except:
+            pass  # Ignore if already rolled back or no transaction
+        
+        # Check if establishments table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'establishments'
+            )
+        """)
+        table_exists_result = cursor.fetchone()
+        if isinstance(table_exists_result, dict):
+            table_exists = table_exists_result.get('exists', False)
+        else:
+            table_exists = table_exists_result[0] if table_exists_result else False
+        
+        if not table_exists:
+            # Create the establishments table if it doesn't exist
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS establishments (
+                    establishment_id SERIAL PRIMARY KEY,
+                    establishment_name TEXT NOT NULL,
+                    establishment_code TEXT UNIQUE NOT NULL,
+                    subdomain TEXT UNIQUE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    settings JSONB DEFAULT '{}'::jsonb
+                )
+            """)
+            # Commit table creation
+            if should_close:
+                conn.commit()
+            else:
+                # If using shared connection, commit the table creation
+                conn.commit()
+                # Then rollback to start fresh for caller
+                conn.rollback()
+        
+        # Try to get the first establishment
+        cursor.execute("SELECT establishment_id FROM establishments LIMIT 1")
+        result = cursor.fetchone()
+        
+        if result:
+            # Handle both dict (RealDictCursor) and tuple results
+            if isinstance(result, dict):
+                establishment_id = result.get('establishment_id')
+            else:
+                establishment_id = result[0] if result else None
+        else:
+            establishment_id = None
+        
+        if not establishment_id:
+            # Create a default establishment if none exists
+            try:
+                cursor.execute("""
+                    INSERT INTO establishments (establishment_name, establishment_code, is_active)
+                    VALUES ('Default Store', 'default', TRUE)
+                    RETURNING establishment_id
+                """)
+                result = cursor.fetchone()
+                if isinstance(result, dict):
+                    establishment_id = result.get('establishment_id')
+                else:
+                    establishment_id = result[0] if result else None
+                # Only commit if we're managing our own connection
+                if should_close:
+                    conn.commit()
+                # If using shared connection, commit the establishment creation
+                # so it's available for the caller's transaction
+                else:
+                    conn.commit()
+                    # Rollback to start fresh transaction for caller
+                    conn.rollback()
+            except Exception as create_err:
+                # If creation fails (e.g., duplicate key), rollback and try to get existing one
+                try:
+                    conn.rollback()
+                    # Try to get it again in case it was created by another process
+                    cursor.execute("SELECT establishment_id FROM establishments WHERE establishment_code = 'default' LIMIT 1")
+                    result = cursor.fetchone()
+                    if result:
+                        if isinstance(result, dict):
+                            establishment_id = result.get('establishment_id')
+                        else:
+                            establishment_id = result[0] if result else None
+                except:
+                    conn.rollback()
+                    raise
+        
+        if not establishment_id:
+            raise ValueError("Failed to get or create default establishment")
+        
+        return establishment_id
+    except Exception as e:
+        # Rollback on any error
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        if should_close:
+            try:
+                conn.close()
+            except:
+                pass
+
 def add_vendor(
     vendor_name: str,
     contact_person: Optional[str] = None,
@@ -498,19 +1112,53 @@ def add_vendor(
     address: Optional[str] = None
 ) -> int:
     """Add a new vendor"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    cursor.execute("""
-        INSERT INTO vendors (vendor_name, contact_person, email, phone, address)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (vendor_name, contact_person, email, phone, address))
-    
-    conn.commit()
-    vendor_id = cursor.lastrowid
-    conn.close()
-    
-    return vendor_id
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass  # Ignore if already rolled back or no transaction
+        
+        # Get or create default establishment
+        establishment_id = _get_or_create_default_establishment(conn)
+        
+        cursor.execute("""
+            INSERT INTO vendors (establishment_id, vendor_name, contact_person, email, phone, address)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING vendor_id
+        """, (establishment_id, vendor_name, contact_person, email, phone, address))
+        
+        result = cursor.fetchone()
+        if isinstance(result, dict):
+            vendor_id = result.get('vendor_id')
+        else:
+            vendor_id = result[0] if result else None
+        
+        # Commit the transaction
+        conn.commit()
+        
+        if vendor_id is None:
+            raise ValueError("Failed to create vendor - no ID returned")
+        
+        return vendor_id
+    except Exception as e:
+        # Rollback on any error
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 def get_vendor(vendor_id: int) -> Optional[Dict[str, Any]]:
     """Get a vendor by ID"""
@@ -525,14 +1173,41 @@ def get_vendor(vendor_id: int) -> Optional[Dict[str, Any]]:
 
 def list_vendors() -> List[Dict[str, Any]]:
     """List all vendors"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM vendors ORDER BY vendor_name")
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
+    from psycopg2.extras import RealDictCursor
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass  # Ignore if already rolled back or no transaction
+        
+        cursor.execute("SELECT * FROM vendors ORDER BY vendor_name")
+        rows = cursor.fetchall()
+        
+        # RealDictCursor returns dict-like rows, convert to list of dicts
+        if rows:
+            return [dict(row) for row in rows]
+        else:
+            return []
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 def update_vendor(vendor_id: int, **kwargs) -> bool:
     """Update vendor information"""
@@ -1026,43 +1701,289 @@ def create_pending_shipment(
     tracking_number: Optional[str] = None,
     notes: Optional[str] = None,
     uploaded_by: Optional[int] = None,
-    verification_mode: str = 'verify_whole_shipment'
+    verification_mode: str = 'auto_add'
 ) -> int:
     """Create a new pending shipment record"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Ensure verification_mode column exists
     try:
-        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'pending_shipments\' AND table_schema = 'public'")
-        columns = [col[0] for col in cursor.fetchall()]
-        if 'verification_mode' not in columns:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        # Get or create default establishment
+        # This function handles its own transaction state
+        try:
+            establishment_id = _get_or_create_default_establishment(conn)
+        except Exception as e:
+            # If establishment creation fails, rollback and re-raise
+            try:
+                conn.rollback()
+            except:
+                pass
+            raise
+        
+        # Ensure we're in a clean transaction state after establishment creation
+        try:
+            conn.rollback()  # Start fresh transaction
+        except:
+            pass
+        
+        # Check if vendors table exists (required for foreign key)
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'vendors'
+            )
+        """)
+        vendors_exists_result = cursor.fetchone()
+        if isinstance(vendors_exists_result, dict):
+            vendors_exists = vendors_exists_result.get('exists', False)
+        else:
+            vendors_exists = vendors_exists_result[0] if vendors_exists_result else False
+        
+        if not vendors_exists:
+            # Create vendors table if it doesn't exist
             cursor.execute("""
-                ALTER TABLE pending_shipments 
-                ADD COLUMN verification_mode TEXT DEFAULT 'verify_whole_shipment'
+                CREATE TABLE IF NOT EXISTS vendors (
+                    vendor_id SERIAL PRIMARY KEY,
+                    establishment_id INTEGER NOT NULL REFERENCES establishments(establishment_id) ON DELETE CASCADE,
+                    vendor_name TEXT NOT NULL,
+                    contact_person TEXT,
+                    email TEXT,
+                    phone TEXT,
+                    address TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
             """)
             conn.commit()
-    except Exception:
-        pass  # Column might already exist
-    
-    if expected_date is None:
-        expected_date = datetime.now().date().isoformat()
-    
-    # Validate verification_mode
-    if verification_mode not in ('auto_add', 'verify_whole_shipment'):
-        verification_mode = 'verify_whole_shipment'
-    
-    cursor.execute("""
-        INSERT INTO pending_shipments 
-        (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by, verification_mode)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-    """, (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by, verification_mode))
-    
-    conn.commit()
-    pending_shipment_id = cursor.lastrowid
-    conn.close()
-    
-    return pending_shipment_id
+            conn.rollback()
+        
+        # Check if pending_shipments table exists, create if not
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'pending_shipments'
+            )
+        """)
+        table_exists_result = cursor.fetchone()
+        if isinstance(table_exists_result, dict):
+            table_exists = table_exists_result.get('exists', False)
+        else:
+            table_exists = table_exists_result[0] if table_exists_result else False
+        
+        if not table_exists:
+            # Create pending_shipments table
+            try:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS pending_shipments (
+                        pending_shipment_id SERIAL PRIMARY KEY,
+                        establishment_id INTEGER NOT NULL REFERENCES establishments(establishment_id) ON DELETE CASCADE,
+                        vendor_id INTEGER NOT NULL REFERENCES vendors(vendor_id),
+                        expected_date TEXT,
+                        upload_timestamp TIMESTAMP DEFAULT NOW(),
+                        file_path TEXT,
+                        purchase_order_number TEXT,
+                        tracking_number TEXT,
+                        status TEXT DEFAULT 'in_progress' CHECK(status IN ('pending_review', 'in_progress', 'approved', 'rejected', 'completed_with_issues')),
+                        uploaded_by INTEGER,
+                        approved_by INTEGER,
+                        approved_date TIMESTAMP,
+                        reviewed_by TEXT,
+                        reviewed_date TIMESTAMP,
+                        notes TEXT,
+                        started_by INTEGER,
+                        started_at TIMESTAMP,
+                        completed_by INTEGER,
+                        completed_at TIMESTAMP,
+                        verification_mode TEXT DEFAULT 'verify_whole_shipment'
+                    )
+                """)
+                conn.commit()
+                conn.rollback()
+            except Exception as create_err:
+                # If creation fails, rollback and check if table was created anyway
+                try:
+                    conn.rollback()
+                    # Check again if table exists
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = 'public' 
+                            AND table_name = 'pending_shipments'
+                        )
+                    """)
+                    check_result = cursor.fetchone()
+                    if isinstance(check_result, dict):
+                        table_exists = check_result.get('exists', False)
+                    else:
+                        table_exists = check_result[0] if check_result else False
+                    if not table_exists:
+                        # Table still doesn't exist, raise the error
+                        import traceback
+                        traceback.print_exc()
+                        raise ValueError(f"Failed to create pending_shipments table: {create_err}") from create_err
+                except Exception as check_err:
+                    import traceback
+                    traceback.print_exc()
+                    raise
+        
+        # Check if pending_shipment_items table exists, create if not
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'pending_shipment_items'
+            )
+        """)
+        items_table_exists_result = cursor.fetchone()
+        if isinstance(items_table_exists_result, dict):
+            items_table_exists = items_table_exists_result.get('exists', False)
+        else:
+            items_table_exists = items_table_exists_result[0] if items_table_exists_result else False
+        
+        if not items_table_exists:
+            # Create pending_shipment_items table
+            try:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS pending_shipment_items (
+                        pending_item_id SERIAL PRIMARY KEY,
+                        establishment_id INTEGER NOT NULL REFERENCES establishments(establishment_id) ON DELETE CASCADE,
+                        pending_shipment_id INTEGER NOT NULL REFERENCES pending_shipments(pending_shipment_id) ON DELETE CASCADE,
+                        product_sku TEXT,
+                        product_name TEXT,
+                        quantity_expected INTEGER NOT NULL CHECK(quantity_expected > 0),
+                        quantity_verified INTEGER,
+                        unit_cost NUMERIC(10,2) NOT NULL CHECK(unit_cost >= 0),
+                        lot_number TEXT,
+                        expiration_date TEXT,
+                        discrepancy_notes TEXT,
+                        product_id INTEGER REFERENCES inventory(product_id),
+                        barcode TEXT,
+                        line_number INTEGER
+                    )
+                """)
+                conn.commit()
+                conn.rollback()
+            except Exception as create_err:
+                # If creation fails, rollback and check if table was created anyway
+                try:
+                    conn.rollback()
+                    # Check again if table exists
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = 'public' 
+                            AND table_name = 'pending_shipment_items'
+                        )
+                    """)
+                    check_result = cursor.fetchone()
+                    if isinstance(check_result, dict):
+                        items_table_exists = check_result.get('exists', False)
+                    else:
+                        items_table_exists = check_result[0] if check_result else False
+                    if not items_table_exists:
+                        # Table still doesn't exist, raise the error
+                        import traceback
+                        traceback.print_exc()
+                        raise ValueError(f"Failed to create pending_shipment_items table: {create_err}") from create_err
+                except Exception as check_err:
+                    import traceback
+                    traceback.print_exc()
+                    raise
+        
+        # Ensure verification tracking columns exist
+        try:
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'pending_shipments' AND table_schema = 'public'")
+            columns = [col[0] for col in cursor.fetchall()]
+            if 'verification_mode' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments 
+                    ADD COLUMN verification_mode TEXT DEFAULT 'verify_whole_shipment'
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'started_by' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments 
+                    ADD COLUMN started_by INTEGER
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'started_at' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments 
+                    ADD COLUMN started_at TIMESTAMP
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'completed_by' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments 
+                    ADD COLUMN completed_by INTEGER
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'completed_at' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments 
+                    ADD COLUMN completed_at TIMESTAMP
+                """)
+                conn.commit()
+                conn.rollback()
+        except Exception as e:
+            # Rollback on error and continue
+            try:
+                conn.rollback()
+            except:
+                pass
+            # Column might already exist, continue
+        
+        if expected_date is None:
+            expected_date = datetime.now().date().isoformat()
+        
+        # Validate verification_mode
+        if verification_mode not in ('auto_add', 'verify_whole_shipment'):
+            verification_mode = 'verify_whole_shipment'
+        
+        cursor.execute("""
+            INSERT INTO pending_shipments 
+            (establishment_id, vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by, verification_mode, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'in_progress')
+            RETURNING pending_shipment_id
+        """, (establishment_id, vendor_id, file_path, expected_date, purchase_order_number, tracking_number, notes, uploaded_by, verification_mode))
+        
+        result = cursor.fetchone()
+        if isinstance(result, dict):
+            pending_shipment_id = result.get('pending_shipment_id')
+        else:
+            pending_shipment_id = result[0] if result else None
+        
+        conn.commit()
+        
+        if pending_shipment_id is None:
+            raise ValueError("Failed to create pending shipment - no ID returned")
+        
+        return pending_shipment_id
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 def add_pending_shipment_item(
     pending_shipment_id: int,
@@ -1076,100 +1997,181 @@ def add_pending_shipment_item(
     line_number: Optional[int] = None
 ) -> int:
     """Add an item to a pending shipment"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Try to match SKU to existing product
-    cursor.execute("SELECT product_id FROM inventory WHERE sku = %s", (product_sku,))
-    product_row = cursor.fetchone()
-    product_id = product_row['product_id'] if product_row else None
-    
-    # Check if barcode and line_number columns exist
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = \'pending_shipment_items\' AND table_schema = 'public'")
-    columns = [col[0] for col in cursor.fetchall()]
-    has_barcode = 'barcode' in columns
-    has_line_number = 'line_number' in columns
-    
-    if has_barcode and has_line_number:
-        cursor.execute("""
-            INSERT INTO pending_shipment_items 
-            (pending_shipment_id, product_sku, product_name, quantity_expected, 
-             unit_cost, lot_number, expiration_date, product_id, barcode, line_number)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
-              unit_cost, lot_number, expiration_date, product_id, barcode, line_number))
-    elif has_barcode:
-        cursor.execute("""
-            INSERT INTO pending_shipment_items 
-            (pending_shipment_id, product_sku, product_name, quantity_expected, 
-             unit_cost, lot_number, expiration_date, product_id, barcode)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
-              unit_cost, lot_number, expiration_date, product_id, barcode))
-    elif has_line_number:
-        cursor.execute("""
-            INSERT INTO pending_shipment_items 
-            (pending_shipment_id, product_sku, product_name, quantity_expected, 
-             unit_cost, lot_number, expiration_date, product_id, line_number)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
-              unit_cost, lot_number, expiration_date, product_id, line_number))
-    else:
-        cursor.execute("""
-            INSERT INTO pending_shipment_items 
-            (pending_shipment_id, product_sku, product_name, quantity_expected, 
-             unit_cost, lot_number, expiration_date, product_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (pending_shipment_id, product_sku, product_name, quantity_expected,
-              unit_cost, lot_number, expiration_date, product_id))
-    
-    conn.commit()
-    pending_item_id = cursor.lastrowid
-    conn.close()
-    
-    return pending_item_id
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        # Get or create default establishment
+        establishment_id = _get_or_create_default_establishment(conn)
+        
+        # Try to match SKU to existing product
+        cursor.execute("SELECT product_id FROM inventory WHERE sku = %s", (product_sku,))
+        product_row = cursor.fetchone()
+        if isinstance(product_row, dict):
+            product_id = product_row.get('product_id')
+        else:
+            product_id = product_row[0] if product_row else None
+        
+        # Check if barcode and line_number columns exist
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'pending_shipment_items' AND table_schema = 'public'")
+        column_rows = cursor.fetchall()
+        # Handle both dict (RealDictCursor) and tuple results
+        if column_rows and isinstance(column_rows[0], dict):
+            columns = [row.get('column_name') for row in column_rows]
+        else:
+            columns = [row[0] for row in column_rows]
+        has_barcode = 'barcode' in columns
+        has_line_number = 'line_number' in columns
+        
+        if has_barcode and has_line_number:
+            cursor.execute("""
+                INSERT INTO pending_shipment_items 
+                (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                 unit_cost, lot_number, expiration_date, product_id, barcode, line_number)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING pending_item_id
+            """, (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected,
+                  unit_cost, lot_number, expiration_date, product_id, barcode, line_number))
+        elif has_barcode:
+            cursor.execute("""
+                INSERT INTO pending_shipment_items 
+                (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                 unit_cost, lot_number, expiration_date, product_id, barcode)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING pending_item_id
+            """, (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected,
+                  unit_cost, lot_number, expiration_date, product_id, barcode))
+        elif has_line_number:
+            cursor.execute("""
+                INSERT INTO pending_shipment_items 
+                (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                 unit_cost, lot_number, expiration_date, product_id, line_number)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING pending_item_id
+            """, (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected,
+                  unit_cost, lot_number, expiration_date, product_id, line_number))
+        else:
+            cursor.execute("""
+                INSERT INTO pending_shipment_items 
+                (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                 unit_cost, lot_number, expiration_date, product_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING pending_item_id
+            """, (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected,
+                  unit_cost, lot_number, expiration_date, product_id))
+        
+        result = cursor.fetchone()
+        if isinstance(result, dict):
+            pending_item_id = result.get('pending_item_id')
+        else:
+            pending_item_id = result[0] if result else None
+        
+        conn.commit()
+        
+        if pending_item_id is None:
+            raise ValueError("Failed to create pending shipment item - no ID returned")
+        
+        return pending_item_id
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 def get_pending_shipment(pending_shipment_id: int) -> Optional[Dict[str, Any]]:
     """Get a pending shipment by ID"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    cursor.execute("""
-        SELECT ps.*, v.vendor_name, v.contact_person, v.email, v.phone
-        FROM pending_shipments ps
-        JOIN vendors v ON ps.vendor_id = v.vendor_id
-        WHERE ps.pending_shipment_id = %s
-    """, (pending_shipment_id,))
-    
-    row = cursor.fetchone()
-    conn.close()
-    
-    return dict(row) if row else None
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        cursor.execute("""
+            SELECT ps.*, v.vendor_name, v.contact_person, v.email, v.phone
+            FROM pending_shipments ps
+            JOIN vendors v ON ps.vendor_id = v.vendor_id
+            WHERE ps.pending_shipment_id = %s
+        """, (pending_shipment_id,))
+        
+        row = cursor.fetchone()
+        
+        if row:
+            return dict(row)
+        return None
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        # Don't close the shared global connection
+        pass
 
 def get_pending_shipment_items(pending_shipment_id: int) -> List[Dict[str, Any]]:
     """Get all items for a pending shipment"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    cursor.execute("""
-        SELECT 
-            psi.*,
-            i.product_id as matched_product_id,
-            i.product_name as matched_product_name,
-            CASE 
-                WHEN i.product_id IS NOT NULL THEN 'matched'
-                ELSE 'unmatched'
-            END as match_status
-        FROM pending_shipment_items psi
-        LEFT JOIN inventory i ON psi.product_sku = i.sku
-        WHERE psi.pending_shipment_id = %s
-        ORDER BY psi.pending_item_id
-    """, (pending_shipment_id,))
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        cursor.execute("""
+            SELECT 
+                psi.*,
+                i.product_id as matched_product_id,
+                i.product_name as matched_product_name,
+                CASE 
+                    WHEN i.product_id IS NOT NULL THEN 'matched'
+                    ELSE 'unmatched'
+                END as match_status
+            FROM pending_shipment_items psi
+            LEFT JOIN inventory i ON psi.product_sku = i.sku
+            WHERE psi.pending_shipment_id = %s
+            ORDER BY psi.pending_item_id
+        """, (pending_shipment_id,))
+        
+        rows = cursor.fetchall()
+        
+        return [dict(row) for row in rows]
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        # Don't close the shared global connection
+        pass
 
 def get_pending_shipment_details(pending_shipment_id: int) -> Optional[Dict[str, Any]]:
     """Get full pending shipment details including vendor and items"""
@@ -1181,6 +2183,173 @@ def get_pending_shipment_details(pending_shipment_id: int) -> Optional[Dict[str,
     shipment['items'] = items
     
     return shipment
+
+def save_shipment_draft(
+    vendor_id: int,
+    items: List[Dict[str, Any]],
+    file_path: Optional[str] = None,
+    expected_date: Optional[str] = None,
+    purchase_order_number: Optional[str] = None,
+    tracking_number: Optional[str] = None,
+    uploaded_by: Optional[int] = None,
+    draft_id: Optional[int] = None
+) -> int:
+    """Save or update a shipment draft"""
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        conn.rollback()
+        establishment_id = _get_or_create_default_establishment(conn)
+        conn.rollback()
+        
+        if draft_id:
+            # Update existing draft
+            cursor.execute("""
+                UPDATE pending_shipments
+                SET vendor_id = %s,
+                    file_path = %s,
+                    expected_date = %s,
+                    purchase_order_number = %s,
+                    tracking_number = %s,
+                    upload_timestamp = NOW()
+                WHERE pending_shipment_id = %s AND status = 'draft'
+            """, (vendor_id, file_path, expected_date, purchase_order_number, tracking_number, draft_id))
+            
+            if cursor.rowcount == 0:
+                raise ValueError("Draft not found or not a draft")
+            
+            # Delete existing items
+            cursor.execute("DELETE FROM pending_shipment_items WHERE pending_shipment_id = %s", (draft_id,))
+            
+            pending_shipment_id = draft_id
+        else:
+            # Create new draft
+            # Try to insert with 'draft' status, if constraint fails, we'll handle it
+            try:
+                cursor.execute("""
+                    INSERT INTO pending_shipments 
+                    (establishment_id, vendor_id, file_path, expected_date, purchase_order_number, 
+                     tracking_number, status, uploaded_by, upload_timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, NOW())
+                    RETURNING pending_shipment_id
+                """, (establishment_id, vendor_id, file_path, expected_date, purchase_order_number, 
+                      tracking_number, uploaded_by))
+                result = cursor.fetchone()
+                pending_shipment_id = result['pending_shipment_id'] if isinstance(result, dict) else result[0]
+            except Exception as e:
+                # If constraint error, try to alter the constraint
+                error_str = str(e).lower()
+                if 'check constraint' in error_str or 'violates check constraint' in error_str:
+                    # Try to alter the constraint to allow 'draft'
+                    try:
+                        conn.rollback()
+                        # Drop and recreate the constraint
+                        cursor.execute("""
+                            ALTER TABLE pending_shipments 
+                            DROP CONSTRAINT IF EXISTS pending_shipments_status_check
+                        """)
+                        cursor.execute("""
+                            ALTER TABLE pending_shipments 
+                            ADD CONSTRAINT pending_shipments_status_check 
+                            CHECK (status IN ('pending_review', 'in_progress', 'approved', 'rejected', 'completed_with_issues', 'draft'))
+                        """)
+                        conn.commit()
+                        conn.rollback()
+                        
+                        # Retry the insert
+                        cursor.execute("""
+                            INSERT INTO pending_shipments 
+                            (establishment_id, vendor_id, file_path, expected_date, purchase_order_number, 
+                             tracking_number, status, uploaded_by, upload_timestamp)
+                            VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, NOW())
+                            RETURNING pending_shipment_id
+                        """, (establishment_id, vendor_id, file_path, expected_date, purchase_order_number, 
+                              tracking_number, uploaded_by))
+                        result = cursor.fetchone()
+                        pending_shipment_id = result['pending_shipment_id'] if isinstance(result, dict) else result[0]
+                    except Exception as alter_err:
+                        conn.rollback()
+                        raise ValueError(f"Failed to create draft: {str(alter_err)}") from alter_err
+                else:
+                    raise
+        
+        # Commit the pending_shipment first so items can reference it
+        conn.commit()
+        
+        # Add items using the same connection
+        for idx, item in enumerate(items):
+            barcode = item.get('barcode')
+            if not barcode or barcode.strip() == '':
+                from database import generate_unique_barcode
+                barcode = generate_unique_barcode(
+                    pending_shipment_id=pending_shipment_id,
+                    line_number=idx + 1,
+                    product_sku=item.get('product_sku', '')
+                )
+            
+            # Try to match SKU to existing product
+            cursor.execute("SELECT product_id FROM inventory WHERE sku = %s", (item.get('product_sku', ''),))
+            product_row = cursor.fetchone()
+            if isinstance(product_row, dict):
+                product_id = product_row.get('product_id')
+            else:
+                product_id = product_row[0] if product_row else None
+            
+            # Check if barcode and line_number columns exist
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'pending_shipment_items' AND table_schema = 'public'")
+            column_rows = cursor.fetchall()
+            if column_rows and isinstance(column_rows[0], dict):
+                columns = [row.get('column_name') for row in column_rows]
+            else:
+                columns = [row[0] for row in column_rows]
+            has_barcode = 'barcode' in columns
+            has_line_number = 'line_number' in columns
+            
+            if has_barcode and has_line_number:
+                cursor.execute("""
+                    INSERT INTO pending_shipment_items 
+                    (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                     unit_cost, lot_number, expiration_date, product_id, barcode, line_number)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING pending_item_id
+                """, (establishment_id, pending_shipment_id, item.get('product_sku', ''), 
+                      item.get('product_name'), item.get('quantity_expected', 0), 
+                      float(item.get('unit_cost', 0.0)), item.get('lot_number'), 
+                      item.get('expiration_date'), product_id, barcode, idx + 1))
+            elif has_barcode:
+                cursor.execute("""
+                    INSERT INTO pending_shipment_items 
+                    (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                     unit_cost, lot_number, expiration_date, product_id, barcode)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING pending_item_id
+                """, (establishment_id, pending_shipment_id, item.get('product_sku', ''), 
+                      item.get('product_name'), item.get('quantity_expected', 0), 
+                      float(item.get('unit_cost', 0.0)), item.get('lot_number'), 
+                      item.get('expiration_date'), product_id, barcode))
+            else:
+                cursor.execute("""
+                    INSERT INTO pending_shipment_items 
+                    (establishment_id, pending_shipment_id, product_sku, product_name, quantity_expected, 
+                     unit_cost, lot_number, expiration_date, product_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING pending_item_id
+                """, (establishment_id, pending_shipment_id, item.get('product_sku', ''), 
+                      item.get('product_name'), item.get('quantity_expected', 0), 
+                      float(item.get('unit_cost', 0.0)), item.get('lot_number'), 
+                      item.get('expiration_date'), product_id))
+        
+        conn.commit()
+        return pending_shipment_id
+    except Exception as e:
+        conn.rollback()
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        pass
 
 def list_pending_shipments(
     status: Optional[str] = None,
@@ -1220,12 +2389,13 @@ def add_item_to_inventory_immediately(
 ) -> Dict[str, Any]:
     """
     Add a pending shipment item to inventory immediately (for auto-add mode)
-    Returns success status and details
+    Returns success status and details. Runs metadata extraction and category assignment.
     """
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     try:
+        establishment_id = _get_or_create_default_establishment(conn)
         # Get the pending item and shipment info
         cursor.execute("""
             SELECT psi.*, ps.vendor_id, ps.pending_shipment_id, v.vendor_name
@@ -1234,13 +2404,11 @@ def add_item_to_inventory_immediately(
             JOIN vendors v ON ps.vendor_id = v.vendor_id
             WHERE psi.pending_item_id = %s
         """, (pending_item_id,))
-        
-        item = cursor.fetchone()
-        if not item:
+        row = cursor.fetchone()
+        if not row or not cursor.description:
             conn.close()
             return {'success': False, 'message': 'Item not found'}
-        
-        item = dict(item)
+        item = dict(zip([c[0] for c in cursor.description], row))
         vendor_id = item['vendor_id']
         vendor_name = item['vendor_name']
         pending_shipment_id = item['pending_shipment_id']
@@ -1255,41 +2423,38 @@ def add_item_to_inventory_immediately(
         
         # Get or create product
         product_id = item.get('product_id')
+        created_new_product = False
         if not product_id:
             # Create product if it doesn't exist
             product_name = item['product_name'] or f"Product {item['product_sku']}"
             unit_cost = item.get('unit_cost', 0.0)
             barcode = item.get('barcode')
             sku = item['product_sku']
-            
+
             if not sku or not sku.strip():
                 conn.close()
                 return {'success': False, 'message': 'SKU is required'}
-            
-            cursor.execute("SELECT product_id FROM inventory WHERE sku = %s", (sku,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                existing = dict(existing)
+
+            cursor.execute(
+                "SELECT product_id FROM inventory WHERE sku = %s AND establishment_id = %s",
+                (sku, establishment_id)
+            )
+            existing_row = cursor.fetchone()
+            if existing_row and cursor.description:
+                existing = dict(zip([c[0] for c in cursor.description], existing_row))
                 product_id = existing['product_id']
             else:
-                # Create new product
+                # Create new product (no vendor column; use vendor_id only)
                 cursor.execute("""
                     INSERT INTO inventory 
-                    (product_name, sku, barcode, product_price, product_cost, vendor, vendor_id, current_quantity, category)
+                    (establishment_id, product_name, sku, barcode, product_price, product_cost, vendor_id, current_quantity, category)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL)
-                """, (product_name, sku, barcode, unit_cost, unit_cost, vendor_name, vendor_id))
-                product_id = cursor.lastrowid
-                
-                # Extract metadata
-                try:
-                    extract_metadata_for_product(product_id, auto_sync_category=True)
-                    print(f"✓ Extracted metadata for new product {product_id} ({product_name})")
-                except Exception as e:
-                    print(f"⚠ Warning: Metadata extraction failed for product {product_id}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                
+                    RETURNING product_id
+                """, (establishment_id, product_name, sku, barcode, unit_cost, unit_cost, vendor_id))
+                product_row = cursor.fetchone()
+                product_id = product_row[0] if product_row else None
+                created_new_product = True
+
                 # Update pending item with product_id
                 cursor.execute("""
                     UPDATE pending_shipment_items
@@ -1321,8 +2486,8 @@ def add_item_to_inventory_immediately(
             WHERE pending_shipment_id = %s
         """, (pending_shipment_id,))
         
-        approved_shipment = cursor.fetchone()
-        if not approved_shipment:
+        approved_row = cursor.fetchone()
+        if not approved_row:
             # Create approved shipment record
             cursor.execute("""
                 INSERT INTO approved_shipments
@@ -1333,28 +2498,32 @@ def add_item_to_inventory_immediately(
                     %s,
                     vendor_id,
                     purchase_order_number,
-                    DATE('now'), %s,
+                    CURRENT_DATE, %s,
                     0,
                     0,
                     0,
                     0
                 FROM pending_shipments
                 WHERE pending_shipment_id = %s
+                RETURNING shipment_id
             """, (pending_shipment_id, employee_id, pending_shipment_id))
-            approved_shipment_id = cursor.lastrowid
+            row = cursor.fetchone()
+            approved_shipment_id = row[0] if row else None
         else:
-            approved_shipment = dict(approved_shipment)
-            approved_shipment_id = approved_shipment['shipment_id']
+            if cursor.description:
+                approved = dict(zip([c[0] for c in cursor.description], approved_row))
+                approved_shipment_id = approved['shipment_id']
+            else:
+                approved_shipment_id = approved_row[0]
         
-        # Add quantity to inventory
+        # Add quantity to inventory (vendor_id only; vendor column removed)
         cursor.execute("""
             UPDATE inventory
             SET current_quantity = current_quantity + %s,
                 vendor_id = %s,
-                vendor = %s,
                 last_restocked = CURRENT_TIMESTAMP
             WHERE product_id = %s
-        """, (quantity_verified, vendor_id, vendor_name, product_id))
+        """, (quantity_verified, vendor_id, product_id))
         
         # Check if item already in approved_shipment_items for this specific pending item
         # In auto-add mode, we track by product_id only (one record per product per shipment)
@@ -1363,10 +2532,9 @@ def add_item_to_inventory_immediately(
             WHERE shipment_id = %s AND product_id = %s
             LIMIT 1
         """, (approved_shipment_id, product_id))
-        
-        existing_item = cursor.fetchone()
-        if existing_item:
-            # Update existing record - add to quantity
+        existing_row = cursor.fetchone()
+        if existing_row and cursor.description:
+            existing_item = dict(zip([c[0] for c in cursor.description], existing_row))
             cursor.execute("""
                 UPDATE approved_shipment_items
                 SET quantity_received = quantity_received + %s,
@@ -1400,13 +2568,39 @@ def add_item_to_inventory_immediately(
         
         conn.commit()
         conn.close()
-        
+
+        # Run metadata extraction + category assignment after commit so get_product sees the row.
+        # For new products always run; for existing we already ran in !has_metadata branch.
+        if created_new_product and product_id:
+            print(f"\n{'='*60}")
+            print(f"Starting metadata extraction for new product {product_id}")
+            print(f"{'='*60}")
+            try:
+                result = extract_metadata_for_product(product_id, auto_sync_category=True)
+                if result:
+                    print(f"✓ Successfully extracted metadata and category for new product {product_id}")
+                else:
+                    print(f"⚠ Metadata extraction returned False for product {product_id}")
+                    # Try to get product info to debug
+                    try:
+                        product = get_product(product_id)
+                        if product:
+                            print(f"  Product exists: {product.get('product_name')} (SKU: {product.get('sku')})")
+                        else:
+                            print(f"  ⚠ Product {product_id} not found in database!")
+                    except Exception as debug_err:
+                        print(f"  ⚠ Error getting product for debug: {debug_err}")
+            except Exception as e:
+                print(f"⚠ ERROR: Metadata extraction exception for product {product_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
         return {
             'success': True,
             'product_id': product_id,
             'quantity_added': quantity_verified
         }
-        
+
     except Exception as e:
         if conn:
             conn.rollback()
@@ -1448,9 +2642,9 @@ def update_pending_item_verification(
                     JOIN pending_shipments ps ON psi.pending_shipment_id = ps.pending_shipment_id
                     WHERE psi.pending_item_id = %s
                 """, (pending_item_id,))
-                item = cursor.fetchone()
-                if item:
-                    item = dict(item)
+                row = cursor.fetchone()
+                if row and cursor.description:
+                    item = dict(zip([c[0] for c in cursor.description], row))
                     expected = item['quantity_expected']
                     current_verified = item['quantity_verified']
                     verification_mode = item.get('verification_mode', 'verify_whole_shipment')
@@ -1511,7 +2705,9 @@ def update_pending_item_verification(
                     print(f"Warning: Metadata extraction failed for product {product_id}: {e}")
             
             # If auto-add mode and quantity was updated, add to inventory immediately
+            print(f"DEBUG: verification_mode={verification_mode}, quantity_verified={quantity_verified}, employee_id={employee_id}, success={success}")
             if success and verification_mode == 'auto_add' and quantity_verified is not None and quantity_verified > 0 and employee_id:
+                print(f"✓ Auto-add mode detected - adding item {pending_item_id} to inventory immediately...")
                 conn.close()  # Close current connection first
                 try:
                     # Add to inventory immediately
@@ -1521,7 +2717,7 @@ def update_pending_item_verification(
                         import traceback
                         traceback.print_exc()
                     else:
-                        print(f"SUCCESS: Added {result.get('quantity_added', 0)} units of product {result.get('product_id')} to inventory")
+                        print(f"✓ SUCCESS: Added {result.get('quantity_added', 0)} units of product {result.get('product_id')} to inventory")
                 except Exception as e:
                     print(f"ERROR: Exception adding item to inventory in auto-add mode: {e}")
                     import traceback
@@ -1590,10 +2786,10 @@ def approve_pending_shipment(
         
         pending = dict(pending_row)
         
-        if pending['status'] != 'pending_review':
+        if pending['status'] not in ('pending_review', 'in_progress'):
             conn.rollback()
             conn.close()
-            raise ValueError(f"Pending shipment {pending_shipment_id} is not in pending_review status")
+            raise ValueError(f"Pending shipment {pending_shipment_id} is not in a valid status for approval (current: {pending['status']})")
         
         # Create actual shipment
         received_date = datetime.now().date().isoformat()
@@ -1666,7 +2862,7 @@ def approve_pending_shipment(
                 record_id=pending_shipment_id,
                 action_type='APPROVE',
                 employee_id=int(reviewed_by) if reviewed_by.isdigit() else None,
-                old_values={'status': 'pending_review'},
+                old_values={'status': pending.get('status', 'in_progress')},
                 new_values={'status': 'approved'},
                 notes=f'Shipment approved by {reviewed_by}'
             )
@@ -1839,7 +3035,7 @@ def add_employee(
         raise ValueError("Either username or employee_code must be provided")
     
     try:
-        # Get establishment_id (required for Supabase)
+        # Get establishment_id (for multi-tenant support if needed)
         establishment_id = get_current_establishment()
         if not establishment_id:
             conn.close()
@@ -1903,7 +3099,7 @@ def add_employee(
                       date_started, password_hash, hourly_rate, salary, employment_type, address,
                       emergency_contact_name, emergency_contact_phone, notes]
         
-        # Add establishment_id (required for Supabase)
+        # Add establishment_id (for multi-tenant support if needed)
         if has_establishment_id and establishment_id:
             base_fields.insert(0, 'establishment_id')
             base_values.insert(0, establishment_id)
@@ -2144,17 +3340,31 @@ def get_employee(employee_id: int) -> Optional[Dict[str, Any]]:
 
 def list_employees(active_only: bool = True) -> List[Dict[str, Any]]:
     """List all employees with tip summaries"""
+    from psycopg2.extras import RealDictCursor
     conn = None
     try:
-        from database_postgres import get_cursor
-        cursor = get_cursor()  # Use get_cursor which returns RealDictCursor
-        conn = cursor.connection
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
         
         # Check if employee_tips table exists
         cursor.execute("""
-            SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'employee_tips'
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'employee_tips'
+            )
         """)
-        has_tips_table = cursor.fetchone() is not None
+        tips_table_result = cursor.fetchone()
+        if isinstance(tips_table_result, dict):
+            has_tips_table = tips_table_result.get('exists', False)
+        else:
+            has_tips_table = tips_table_result[0] if tips_table_result else False
         
         if active_only:
             if has_tips_table:
@@ -2228,10 +3438,18 @@ def list_employees(active_only: bool = True) -> List[Dict[str, Any]]:
         print(f"Error in list_employees: {e}")
         import traceback
         traceback.print_exc()
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
         return []
     finally:
-        if conn and not conn.closed:
-            conn.close()
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 def update_employee(employee_id: int, **kwargs) -> bool:
     """Update employee information"""
@@ -2333,10 +3551,16 @@ def add_customer(
     cursor.execute("""
         INSERT INTO customers (customer_name, email, phone)
         VALUES (%s, %s, %s)
+        RETURNING customer_id
     """, (customer_name, email, phone))
     
+    result = cursor.fetchone()
+    if isinstance(result, dict):
+        customer_id = result.get('customer_id')
+    else:
+        customer_id = result[0] if result else None
+    
     conn.commit()
-    customer_id = cursor.lastrowid
     conn.close()
     
     return customer_id
@@ -2427,12 +3651,24 @@ def create_order(
     cursor = conn.cursor()
     
     try:
+        # Get establishment_id (use current establishment for the order)
+        from database_postgres import get_current_establishment
+        establishment_id = get_current_establishment()
+        
+        # If establishment_id is None, use _get_or_create_default_establishment as fallback
+        if establishment_id is None:
+            establishment_id = _get_or_create_default_establishment(conn)
+        
         # Validate inventory availability first
+        # Check products by product_id only (products may have different establishment_id)
+        product_establishment_map = {}  # Track each product's establishment_id
+        
         for item in items:
             product_id = item['product_id']
-            quantity = item['quantity']
+            quantity = int(item['quantity'])
             
-            cursor.execute("SELECT current_quantity FROM inventory WHERE product_id = %s", (product_id,))
+            # Check if product exists (by product_id only, not filtering by establishment_id)
+            cursor.execute("SELECT current_quantity, establishment_id FROM inventory WHERE product_id = %s", (product_id,))
             row = cursor.fetchone()
             
             if not row:
@@ -2444,7 +3680,17 @@ def create_order(
                     'order_id': None
                 }
             
-            available_qty = row['current_quantity']
+            # Handle both dict and tuple row formats
+            if isinstance(row, dict):
+                available_qty = row.get('current_quantity', 0)
+                product_establishment_id = row.get('establishment_id')
+            else:
+                available_qty = row[0] if row else 0
+                product_establishment_id = row[1] if len(row) > 1 else None
+            
+            # Store product's establishment_id for later use in order_items
+            product_establishment_map[product_id] = product_establishment_id or establishment_id
+                
             if available_qty < quantity:
                 conn.rollback()
                 conn.close()
@@ -2499,8 +3745,13 @@ def create_order(
                 cursor.execute("""
                     INSERT INTO customers (customer_name, email, phone, address)
                     VALUES (%s, %s, %s, %s)
+                    RETURNING customer_id
                 """, (customer_name, customer_email, customer_phone, customer_address))
-                customer_id = cursor.lastrowid
+                result = cursor.fetchone()
+                if isinstance(result, dict):
+                    customer_id = result.get('customer_id')
+                else:
+                    customer_id = result[0] if result else None
         
 
         
@@ -2512,15 +3763,19 @@ def create_order(
         total_tax = 0.0
         
         for item in items:
-            item_qty = item['quantity']
-            item_price = item['unit_price']
-            item_discount = item.get('discount', 0.0)
-            item_tax_rate = item.get('tax_rate', tax_rate)  # Item-specific tax rate or use order tax rate
+            item_qty = int(item['quantity'])
+            item_price = float(item['unit_price'])  # Ensure it's a float
+            item_discount = float(item.get('discount', 0.0))
+            item_tax_rate = float(item.get('tax_rate', tax_rate))  # Item-specific tax rate or use order tax rate
             item_subtotal = (item_qty * item_price) - item_discount
             item_tax = item_subtotal * item_tax_rate
             
             subtotal += item_subtotal
             total_tax += item_tax
+        
+        # Ensure establishment_id is set (should already be set above, but double-check)
+        if establishment_id is None:
+            establishment_id = _get_or_create_default_establishment(conn)
         
         # Calculate transaction fee (on subtotal + tax - discount, before tip)
         pre_fee_total = subtotal + total_tax - discount
@@ -2550,48 +3805,105 @@ def create_order(
         if has_tip and has_order_type:
             cursor.execute("""
                 INSERT INTO orders (
-                    order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
+                    establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
                     discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s, %s)
-            """, (order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s, %s)
+                RETURNING order_id
+            """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
                   discount, transaction_fee, tip, total, payment_method, order_type, notes))
         elif has_tip:
             cursor.execute("""
                 INSERT INTO orders (
-                    order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
+                    establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
                     discount, transaction_fee, tip, total, payment_method, payment_status, order_status, notes
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s)
-            """, (order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s)
+                RETURNING order_id
+            """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
                   discount, transaction_fee, tip, total, payment_method, notes))
         else:
-            # Fallback for older schema
+            # Fallback for older schema (no tip or order_type)
             cursor.execute("""
                 INSERT INTO orders (
-                    order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
+                    establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
                     discount, transaction_fee, total, payment_method, payment_status, order_status, notes
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s)
-            """, (order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'completed', %s)
+                RETURNING order_id
+            """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
                   discount, transaction_fee, total, payment_method, notes))
         
-        order_id = cursor.lastrowid
+        result = cursor.fetchone()
+        if isinstance(result, dict):
+            order_id = result.get('order_id')
+        else:
+            order_id = result[0] if result else None
         
         # Add order items (triggers will update inventory)
-        for item in items:
+        print(f"Creating order_items for order_id {order_id}, {len(items)} items")
+        for idx, item in enumerate(items):
+            print(f"Processing item {idx + 1}/{len(items)}: {item}")
             product_id = item['product_id']
-            quantity = item['quantity']
-            unit_price = item['unit_price']
-            item_discount = item.get('discount', 0.0)
-            item_tax_rate = item.get('tax_rate', tax_rate)
+            quantity = int(item['quantity'])
+            unit_price = float(item['unit_price'])  # Ensure it's a float
+            item_discount = float(item.get('discount', 0.0))
+            item_tax_rate = float(item.get('tax_rate', tax_rate))
             item_subtotal = (quantity * unit_price) - item_discount
             item_tax = item_subtotal * item_tax_rate
             
-            cursor.execute("""
-                INSERT INTO order_items (
-                    order_id, product_id, quantity, unit_price, discount, subtotal,
-                    tax_rate, tax_amount
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
-                  item_tax_rate, item_tax))
+            # Use the product's establishment_id for the order_item
+            item_establishment_id = product_establishment_map.get(product_id, establishment_id)
+            
+            # Verify product exists before inserting
+            cursor.execute("SELECT product_id FROM inventory WHERE product_id = %s", (product_id,))
+            product_check = cursor.fetchone()
+            if not product_check:
+                conn.rollback()
+                conn.close()
+                return {
+                    'success': False,
+                    'message': f'Product ID {product_id} does not exist in inventory',
+                    'order_id': None
+                }
+            
+            try:
+                # Insert order item with all fields
+                cursor.execute("""
+                    INSERT INTO order_items (
+                        establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                        tax_rate, tax_amount
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (item_establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                      item_tax_rate, item_tax))
+                
+                # Verify the insert succeeded
+                if cursor.rowcount == 0:
+                    raise Exception(f"Failed to insert order_item for product_id {product_id}")
+                
+                print(f"Successfully inserted order_item: order_id={order_id}, product_id={product_id}, quantity={quantity}")
+                
+                # Update inventory quantity (decrease by quantity sold)
+                # Use the product's establishment_id for the update
+                cursor.execute("""
+                    UPDATE inventory
+                    SET current_quantity = current_quantity - %s,
+                        updated_at = NOW()
+                    WHERE product_id = %s AND establishment_id = %s
+                """, (quantity, product_id, item_establishment_id))
+                
+                if cursor.rowcount == 0:
+                    print(f"Warning: Inventory update affected 0 rows for product_id {product_id}, establishment_id {item_establishment_id}")
+                    
+            except Exception as item_error:
+                # If order_item insertion fails, rollback the entire transaction
+                import traceback
+                print(f"Error inserting order_item for product_id {product_id}: {str(item_error)}")
+                traceback.print_exc()
+                conn.rollback()
+                conn.close()
+                return {
+                    'success': False,
+                    'message': f'Error inserting order item for product_id {product_id}: {str(item_error)}',
+                    'order_id': None
+                }
         
         # Record payment transaction with fee details and tip
         # Check if tip and employee_id columns exist
@@ -2603,22 +3915,28 @@ def create_order(
         if has_tip and has_employee_id:
             cursor.execute("""
                 INSERT INTO payment_transactions (
-                    order_id, payment_method, amount, transaction_fee, transaction_fee_rate,
+                    establishment_id, order_id, payment_method, amount, transaction_fee, transaction_fee_rate,
                     net_amount, status, tip, employee_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, 'approved', %s, %s)
-            """, (order_id, payment_method, pre_fee_total, transaction_fee, 
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'approved', %s, %s)
+                RETURNING transaction_id
+            """, (establishment_id, order_id, payment_method, pre_fee_total, transaction_fee, 
                   fee_calc['fee_rate'], fee_calc['net_amount'], tip, employee_id))
         else:
             # Fallback for older schema
             cursor.execute("""
                 INSERT INTO payment_transactions (
-                    order_id, payment_method, amount, transaction_fee, transaction_fee_rate,
+                    establishment_id, order_id, payment_method, amount, transaction_fee, transaction_fee_rate,
                     net_amount, status
-                ) VALUES (%s, %s, %s, %s, %s, %s, 'approved')
-            """, (order_id, payment_method, pre_fee_total, transaction_fee, 
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'approved')
+                RETURNING transaction_id
+            """, (establishment_id, order_id, payment_method, pre_fee_total, transaction_fee, 
                   fee_calc['fee_rate'], fee_calc['net_amount']))
         
-        transaction_id = cursor.lastrowid
+        result = cursor.fetchone()
+        if isinstance(result, dict):
+            transaction_id = result.get('transaction_id')
+        else:
+            transaction_id = result[0] if result else None
         
         # Record tip in employee_tips table if tip exists
         if tip > 0:
@@ -2669,6 +3987,22 @@ def create_order(
                 import traceback
                 traceback.print_exc()
         
+        # Verify order_items were inserted before committing
+        cursor.execute("SELECT COUNT(*) FROM order_items WHERE order_id = %s", (order_id,))
+        items_count_result = cursor.fetchone()
+        items_count = items_count_result[0] if items_count_result else 0
+        
+        if items_count != len(items):
+            conn.rollback()
+            conn.close()
+            return {
+                'success': False,
+                'message': f'Order created but only {items_count} of {len(items)} items were saved. Transaction rolled back.',
+                'order_id': None
+            }
+        
+        print(f"Order {order_number} (ID: {order_id}) created successfully with {items_count} items")
+        
         conn.commit()
         conn.close()
         
@@ -2681,6 +4015,7 @@ def create_order(
             'transaction_fee': transaction_fee,
             'total': total,
             'rewards': rewards_info,
+            'items_count': items_count,
             'message': f'Order {order_number} processed successfully'
         }
         
@@ -3247,6 +4582,247 @@ def reject_pending_return(return_id: int, rejected_by: int, reason: Optional[str
         conn.close()
         return {'success': False, 'message': str(e)}
 
+def process_return_immediate(
+    order_id: int,
+    items_to_return: List[Dict[str, Any]],
+    employee_id: int,
+    customer_id: Optional[int] = None,
+    reason: Optional[str] = None,
+    notes: Optional[str] = None,
+    return_type: str = 'refund',  # 'exchange' or 'refund'
+    exchange_timing: Optional[str] = None,  # 'now' or 'later' (only for exchange)
+    return_subtotal: float = 0,
+    return_tax: float = 0,
+    return_processing_fee: float = 0,
+    return_total: float = 0,
+    payment_method: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Process a return immediately (no pending state)
+    Returns items to inventory, processes refund or creates exchange credit
+    """
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        # Verify order exists
+        cursor.execute("SELECT order_id, order_number, establishment_id FROM orders WHERE order_id = %s", (order_id,))
+        order = cursor.fetchone()
+        if not order:
+            conn.close()
+            return {'success': False, 'message': 'Order not found'}
+        
+        order = dict(order)
+        establishment_id = order['establishment_id']
+        
+        # Generate unique return number
+        date_str = datetime.now().strftime('%Y%m%d')
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM pending_returns
+            WHERE order_id = %s AND return_number LIKE %s
+        """, (order_id, f"RET-{date_str}-{order_id}%"))
+        
+        existing_count = cursor.fetchone()['count']
+        if existing_count > 0:
+            return_number = f"RET-{date_str}-{order_id}-{existing_count + 1}"
+        else:
+            return_number = f"RET-{date_str}-{order_id}"
+        
+        # Calculate return amounts from items
+        calculated_subtotal = 0
+        calculated_tax = 0
+        
+        # Process return items and calculate amounts
+        for item in items_to_return:
+            order_item_id = item['order_item_id']
+            return_qty = item['quantity']
+            condition = item.get('condition', 'new')
+            item_notes = item.get('notes', '')
+            
+            # Get original item details
+            cursor.execute("""
+                SELECT oi.product_id, oi.quantity, oi.unit_price, oi.discount, oi.subtotal,
+                       oi.tax_rate, oi.tax_amount, i.product_name, i.sku
+                FROM order_items oi
+                JOIN inventory i ON oi.product_id = i.product_id
+                WHERE oi.order_item_id = %s
+            """, (order_item_id,))
+            
+            original = cursor.fetchone()
+            if not original:
+                raise ValueError(f"Order item {order_item_id} not found")
+            
+            original = dict(original)
+            
+            if return_qty > original['quantity']:
+                raise ValueError(f"Return quantity ({return_qty}) exceeds original quantity ({original['quantity']})")
+            
+            # Calculate refund amounts for this item
+            item_unit_price = float(original['unit_price'])
+            item_discount = float(original.get('discount', 0))
+            item_subtotal = (item_unit_price * return_qty) - (item_discount * return_qty / original['quantity'])
+            item_tax_rate = float(original.get('tax_rate', 0.08))
+            item_tax = item_subtotal * item_tax_rate
+            
+            calculated_subtotal += item_subtotal
+            calculated_tax += item_tax
+            
+            return_items_data.append({
+                'order_item_id': order_item_id,
+                'product_id': original['product_id'],
+                'quantity': return_qty,
+                'original_quantity': original['quantity'],
+                'unit_price': item_unit_price,
+                'discount': item_discount * return_qty / original['quantity'],
+                'refund_amount': item_subtotal,
+                'tax': item_tax,
+                'condition': condition,
+                'notes': item_notes
+            })
+        
+        # Use calculated values if provided values are 0 or use provided values
+        final_subtotal = return_subtotal if return_subtotal > 0 else calculated_subtotal
+        final_tax = return_tax if return_tax > 0 else calculated_tax
+        
+        # Calculate processing fee (proportional to original order)
+        final_processing_fee = return_processing_fee
+        if final_processing_fee == 0:
+            cursor.execute("SELECT transaction_fee, subtotal FROM orders WHERE order_id = %s", (order_id,))
+            order_fees = cursor.fetchone()
+            if order_fees and order_fees.get('transaction_fee') and order_fees.get('subtotal'):
+                fee_rate = float(order_fees['transaction_fee']) / float(order_fees['subtotal'])
+                final_processing_fee = final_subtotal * fee_rate
+        
+        # Final return total
+        final_return_total = return_total if return_total > 0 else (final_subtotal + final_tax - final_processing_fee)
+        
+        # Create return record (using pending_returns table but immediately approved)
+        cursor.execute("""
+            INSERT INTO pending_returns (
+                return_number, order_id, employee_id, customer_id,
+                total_refund_amount, reason, notes, status, approved_by, approved_date
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'approved', %s, CURRENT_TIMESTAMP)
+            RETURNING return_id
+        """, (return_number, order_id, employee_id, customer_id, final_return_total, reason, notes, employee_id))
+        
+        return_result = cursor.fetchone()
+        return_id = return_result['return_id'] if isinstance(return_result, dict) else return_result[0]
+        
+        # Create return item records and process inventory
+        for item_data in return_items_data:
+            cursor.execute("""
+                INSERT INTO pending_return_items (
+                    return_id, order_item_id, product_id, quantity,
+                    unit_price, discount, refund_amount, condition, notes
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                return_id, item_data['order_item_id'], item_data['product_id'],
+                item_data['quantity'], item_data['unit_price'], 
+                item_data['discount'],
+                item_data['refund_amount'], item_data['condition'], item_data['notes']
+            ))
+            
+            # Return items to inventory
+            cursor.execute("""
+                UPDATE inventory
+                SET current_quantity = current_quantity + %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE product_id = %s
+            """, (item_data['quantity'], item_data['product_id']))
+            
+            # Update order item quantity if partial return
+            original_qty = item_data['original_quantity']
+            return_qty = item_data['quantity']
+            
+            if return_qty < original_qty:
+                new_qty = original_qty - return_qty
+                new_subtotal = (item_data['unit_price'] * new_qty) - (item_data['discount'] * new_qty / original_qty)
+                
+                cursor.execute("""
+                    UPDATE order_items
+                    SET quantity = %s,
+                        subtotal = %s
+                    WHERE order_item_id = %s
+                """, (new_qty, new_subtotal, item_data['order_item_id']))
+            else:
+                # Full return - delete item
+                cursor.execute("DELETE FROM order_items WHERE order_item_id = %s", (item_data['order_item_id'],))
+        
+        # Create exchange credit if exchange type
+        exchange_credit_id = None
+        exchange_credit_number = None
+        if return_type == 'exchange':
+            # Generate exchange credit number
+            exchange_credit_number = f"EXC-{date_str}-{return_id}"
+            
+            # Create exchange credit record (we'll use a simple table or store in a JSON field)
+            # For now, we'll store it in a way that can be scanned at checkout
+            # This could be a new table: exchange_credits
+            # For simplicity, we'll create a record that can be looked up by the credit number
+            cursor.execute("""
+                INSERT INTO payment_transactions (
+                    establishment_id, order_id, payment_method, amount, 
+                    net_amount, status, transaction_date, notes
+                ) VALUES (%s, %s, 'store_credit', %s, %s, 'approved', CURRENT_TIMESTAMP, %s)
+                RETURNING transaction_id
+            """, (
+                establishment_id, order_id, final_return_total, final_return_total,
+                f'Exchange credit for return {return_number}. Credit: {exchange_credit_number}'
+            ))
+            
+            exchange_result = cursor.fetchone()
+            exchange_credit_id = exchange_result['transaction_id'] if isinstance(exchange_result, dict) else exchange_result[0]
+        
+        # Process refund if refund type
+        if return_type == 'refund':
+            # Record refund transaction
+            cursor.execute("""
+                INSERT INTO payment_transactions (
+                    establishment_id, order_id, payment_method, amount, 
+                    net_amount, status, transaction_date
+                ) VALUES (%s, %s, 'refund', %s, %s, 'refunded', CURRENT_TIMESTAMP)
+            """, (establishment_id, order_id, -final_return_total, -final_return_total))
+        
+        # Update order notes
+        notes_text = f"\nReturn processed by employee_id {employee_id} on {datetime.now().isoformat()}"
+        if reason:
+            notes_text += f". Reason: {reason}"
+        notes_text += f". Refund: ${final_return_total:.2f}. Type: {return_type}"
+        if return_type == 'exchange':
+            notes_text += f". Exchange credit: {exchange_credit_number}"
+        
+        cursor.execute("""
+            UPDATE orders
+            SET notes = COALESCE(notes, '') || %s
+            WHERE order_id = %s
+        """, (notes_text, order_id))
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            'success': True,
+            'return_id': return_id,
+            'return_number': return_number,
+            'return_total': final_return_total,
+            'return_subtotal': final_subtotal,
+            'return_tax': final_tax,
+            'return_processing_fee': final_processing_fee,
+            'return_type': return_type,
+            'exchange_credit_id': exchange_credit_id,
+            'exchange_credit_number': exchange_credit_number,
+            'message': 'Return processed successfully'
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': str(e)}
+
 def get_pending_return(return_id: int) -> Optional[Dict[str, Any]]:
     """Get a pending return with items"""
     conn = get_connection()
@@ -3434,72 +5010,77 @@ def list_orders(
     order_status: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """List orders with optional filters, including receipt preferences"""
+    from psycopg2.extras import RealDictCursor
+    
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Check if receipt_preferences table exists
-    cursor.execute("""
-        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'receipt_preferences'
-    """)
-    has_receipt_prefs = cursor.fetchone() is not None
-    
-    if has_receipt_prefs:
-        # Join with receipt preferences through payment_transactions
-        # Note: If multiple transactions exist, this will get the first matching receipt preference
-        query = """
-            SELECT DISTINCT
-                o.*,
-                e.first_name || ' ' || e.last_name as employee_name,
-                c.customer_name,
-                rp.receipt_type,
-                rp.email_address as receipt_email,
-                rp.phone_number as receipt_phone,
-                rp.sent as receipt_sent,
-                rp.sent_at as receipt_sent_at
-            FROM orders o
-            LEFT JOIN employees e ON o.employee_id = e.employee_id
-            LEFT JOIN customers c ON o.customer_id = c.customer_id
-            LEFT JOIN payment_transactions pt ON o.order_id = pt.order_id
-            LEFT JOIN receipt_preferences rp ON pt.transaction_id = rp.transaction_id
-            WHERE 1=1
-        """
-    else:
-        query = """
-            SELECT 
-                o.*,
-                e.first_name || ' ' || e.last_name as employee_name,
-                c.customer_name
-            FROM orders o
-            LEFT JOIN employees e ON o.employee_id = e.employee_id
-            LEFT JOIN customers c ON o.customer_id = c.customer_id
-            WHERE 1=1
-        """
-    
-    params = []
-    
-    if start_date:
-        query += " AND DATE(o.order_date) >= ?"
-        params.append(start_date)
-    
-    if end_date:
-        query += " AND DATE(o.order_date) <= ?"
-        params.append(end_date)
-    
-    if employee_id:
-        query += " AND o.employee_id = %s"
-        params.append(employee_id)
-    
-    if order_status:
-        query += " AND o.order_status = %s"
-        params.append(order_status)
-    
-    query += " ORDER BY o.order_date DESC"
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
+    try:
+        # Check if receipt_preferences table exists
+        check_cursor = conn.cursor()
+        check_cursor.execute("""
+            SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'receipt_preferences'
+        """)
+        has_receipt_prefs = check_cursor.fetchone() is not None
+        check_cursor.close()
+        
+        if has_receipt_prefs:
+            # Join with receipt preferences through payment_transactions
+            # Note: If multiple transactions exist, this will get the first matching receipt preference
+            query = """
+                SELECT DISTINCT
+                    o.*,
+                    e.first_name || ' ' || e.last_name as employee_name,
+                    c.customer_name,
+                    rp.receipt_type,
+                    rp.email_address as receipt_email,
+                    rp.phone_number as receipt_phone
+                FROM orders o
+                LEFT JOIN employees e ON o.employee_id = e.employee_id
+                LEFT JOIN customers c ON o.customer_id = c.customer_id
+                LEFT JOIN payment_transactions pt ON o.order_id = pt.order_id
+                LEFT JOIN receipt_preferences rp ON pt.transaction_id = rp.transaction_id
+                WHERE 1=1
+            """
+        else:
+            query = """
+                SELECT 
+                    o.*,
+                    e.first_name || ' ' || e.last_name as employee_name,
+                    c.customer_name
+                FROM orders o
+                LEFT JOIN employees e ON o.employee_id = e.employee_id
+                LEFT JOIN customers c ON o.customer_id = c.customer_id
+                WHERE 1=1
+            """
+        
+        params = []
+        
+        if start_date:
+            query += " AND DATE(o.order_date) >= %s"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND DATE(o.order_date) <= %s"
+            params.append(end_date)
+        
+        if employee_id:
+            query += " AND o.employee_id = %s"
+            params.append(employee_id)
+        
+        if order_status:
+            query += " AND o.order_status = %s"
+            params.append(order_status)
+        
+        query += " ORDER BY o.order_date DESC"
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        # RealDictCursor already returns dict-like objects
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
 
 def get_tips_by_employee(
     employee_id: Optional[int] = None,
@@ -3980,18 +5561,20 @@ def add_calendar_event(
     cursor = conn.cursor()
     
     try:
+        establishment_id = _get_or_create_default_establishment(conn)
         cursor.execute("""
             INSERT INTO master_calendar (
-                event_date, event_type, title, description, start_time, end_time,
-                related_id, related_table, created_by
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (event_date, event_type, title, description, start_time, end_time,
-              related_id, related_table, created_by))
-        
-        calendar_id = cursor.lastrowid
+                establishment_id, event_date, event_type, title, description,
+                start_time, end_time, related_id, related_table, created_by
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING calendar_id
+        """, (establishment_id, event_date, event_type, title, description,
+              start_time, end_time, related_id, related_table, created_by))
+        row = cursor.fetchone()
+        calendar_id = row[0] if row else None
         
         # If employee_ids provided, assign event to specific employees
-        if employee_ids:
+        if calendar_id and employee_ids:
             for employee_id in employee_ids:
                 cursor.execute("""
                     INSERT INTO calendar_event_employees (calendar_id, employee_id)
@@ -4012,38 +5595,34 @@ def get_calendar_events(
     event_type: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Get calendar events"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
-    
-    query = """
-        SELECT 
-            c.*,
-            e.first_name || ' ' || e.last_name as created_by_name
-        FROM master_calendar c
-        LEFT JOIN employees e ON c.created_by = e.employee_id
-        WHERE 1=1
-    """
-    params = []
-    
-    if start_date:
-        query += " AND c.event_date >= ?"
-        params.append(start_date)
-    
-    if end_date:
-        query += " AND c.event_date <= ?"
-        params.append(end_date)
-    
-    if event_type:
-        query += " AND c.event_type = %s"
-        params.append(event_type)
-    
-    query += " ORDER BY c.event_date, c.start_time"
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        query = """
+            SELECT 
+                c.*,
+                e.first_name || ' ' || e.last_name as created_by_name
+            FROM master_calendar c
+            LEFT JOIN employees e ON c.created_by = e.employee_id
+            WHERE 1=1
+        """
+        params = []
+        if start_date:
+            query += " AND c.event_date >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND c.event_date <= %s"
+            params.append(end_date)
+        if event_type:
+            query += " AND c.event_type = %s"
+            params.append(event_type)
+        query += " ORDER BY c.event_date, c.start_time"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 def add_shipment_to_calendar(shipment_id: int, shipment_date: str) -> int:
     """Add a shipment to the calendar"""
@@ -4298,6 +5877,7 @@ def assign_role_to_employee(employee_id: int, role_id: int) -> bool:
 
 def verify_session(session_token: str) -> Dict[str, Any]:
     """Verify if session is valid"""
+    from psycopg2.extras import RealDictCursor
     if not session_token:
         return {'valid': False, 'message': 'Session token is required'}
     
@@ -4307,7 +5887,13 @@ def verify_session(session_token: str) -> Dict[str, Any]:
         if conn is None or conn.closed:
             return {'valid': False, 'message': 'Database connection failed'}
         
-        cursor = conn.cursor()
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute("""
             SELECT es.*, e.first_name, e.last_name, e.position, e.active
@@ -4350,10 +5936,18 @@ def verify_session(session_token: str) -> Dict[str, Any]:
         print(f"Error in verify_session: {e}")
         import traceback
         traceback.print_exc()
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
         return {'valid': False, 'message': str(e)}
     finally:
-        if conn and not conn.closed:
-            conn.close()
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 def employee_logout(session_token: str) -> Dict[str, Any]:
     """End employee session"""
@@ -5768,6 +7362,83 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        ensure_shipment_verification_tables(conn)
+        
+        # Ensure verification columns exist for pending_shipments
+        try:
+            cursor.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'pending_shipments' AND table_schema = 'public'
+            """)
+            columns = [col[0] for col in cursor.fetchall()]
+            if 'started_by' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments
+                    ADD COLUMN started_by INTEGER
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'started_at' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments
+                    ADD COLUMN started_at TIMESTAMP
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'completed_by' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments
+                    ADD COLUMN completed_by INTEGER
+                """)
+                conn.commit()
+                conn.rollback()
+            if 'completed_at' not in columns:
+                cursor.execute("""
+                    ALTER TABLE pending_shipments
+                    ADD COLUMN completed_at TIMESTAMP
+                """)
+                conn.commit()
+                conn.rollback()
+            # Ensure status constraint allows in_progress
+            cursor.execute("""
+                SELECT conname, pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class t ON c.conrelid = t.oid
+                WHERE t.relname = 'pending_shipments' AND c.contype = 'c'
+            """)
+            constraints = cursor.fetchall()
+            status_constraint = None
+            status_definition = None
+            for constraint in constraints:
+                if isinstance(constraint, dict):
+                    name = constraint.get('conname')
+                    definition = constraint.get('pg_get_constraintdef')
+                else:
+                    name = constraint[0] if constraint else None
+                    definition = constraint[1] if constraint and len(constraint) > 1 else None
+                if definition and 'status' in definition:
+                    status_constraint = name
+                    status_definition = definition
+                    break
+            if status_definition and "'in_progress'" not in status_definition:
+                cursor.execute(
+                    f'ALTER TABLE pending_shipments DROP CONSTRAINT IF EXISTS "{status_constraint}"'
+                )
+                cursor.execute("""
+                    ALTER TABLE pending_shipments
+                    ADD CONSTRAINT pending_shipments_status_check
+                    CHECK (status IN ('pending_review', 'in_progress', 'approved', 'rejected', 'completed_with_issues'))
+                """)
+                conn.commit()
+                conn.rollback()
+        except Exception:
+            try:
+                conn.rollback()
+            except:
+                pass
+            # Best effort; continue and rely on fallback update below
         
         # Update shipment status (try with started_by/started_at if columns exist, otherwise just status)
         try:
@@ -5780,7 +7451,7 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
             """, (employee_id, pending_shipment_id))
         except Exception as e:
             # Columns might not exist, try without them
-            if 'no such column' in str(e).lower():
+            if 'no such column' in str(e).lower() or 'does not exist' in str(e).lower() or 'undefined column' in str(e).lower():
                 cursor.execute("""
                     UPDATE pending_shipments 
                     SET status = 'in_progress'
@@ -5794,10 +7465,11 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
             INSERT INTO verification_sessions 
             (pending_shipment_id, employee_id, device_id)
             VALUES (%s, %s, %s)
+            RETURNING session_id
         """, (pending_shipment_id, employee_id, device_id))
-        
-        session_id = cursor.lastrowid
-        
+        session_row = cursor.fetchone()
+        session_id = session_row[0] if session_row else None
+
         # Get shipment details
         cursor.execute("""
             SELECT ps.*, v.vendor_name,
@@ -5806,14 +7478,17 @@ def start_verification_session(pending_shipment_id: int, employee_id: int, devic
             LEFT JOIN vendors v ON ps.vendor_id = v.vendor_id
             WHERE ps.pending_shipment_id = %s
         """, (pending_shipment_id,))
-        
-        shipment = cursor.fetchone()
-        
+        shipment_row = cursor.fetchone()
+        if shipment_row and cursor.description:
+            shipment = dict(zip([c[0] for c in cursor.description], shipment_row))
+        else:
+            shipment = None
+
         conn.commit()
-        
+
         return {
             'session_id': session_id,
-            'shipment': dict(shipment) if shipment else None
+            'shipment': shipment
         }
     except Exception as e:
         if conn:
@@ -5829,6 +7504,8 @@ def scan_item(pending_shipment_id: int, barcode: str, employee_id: int,
     """Process a scanned barcode during verification"""
     conn = get_connection()
     cursor = conn.cursor()
+
+    ensure_shipment_verification_tables(conn)
     
     # Find matching item in pending shipment
     cursor.execute("""
@@ -5839,15 +7516,14 @@ def scan_item(pending_shipment_id: int, barcode: str, employee_id: int,
         AND (psi.barcode = %s OR psi.product_sku = %s OR i.barcode = %s)
         AND psi.status != 'verified'
     """, (barcode, pending_shipment_id, barcode, barcode, barcode))
-    
-    item = cursor.fetchone()
-    
+    row = cursor.fetchone()
+    item = dict(zip([c[0] for c in cursor.description], row)) if row and cursor.description else None
+
     scan_result = 'unknown'
     response = {}
     pending_item_id = None
-    
+
     if item:
-        item = dict(item)
         pending_item_id = item['pending_item_id']
         
         # Check if already fully verified
@@ -5922,6 +7598,8 @@ def report_shipment_issue(pending_shipment_id: int, pending_item_id: Optional[in
     """Report an issue with a shipment item"""
     conn = get_connection()
     cursor = conn.cursor()
+
+    ensure_shipment_verification_tables(conn)
     
     # Create issue record
     cursor.execute("""
@@ -5929,10 +7607,11 @@ def report_shipment_issue(pending_shipment_id: int, pending_item_id: Optional[in
         (pending_shipment_id, pending_item_id, issue_type, severity,
          quantity_affected, reported_by, description, photo_path)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING issue_id
     """, (pending_shipment_id, pending_item_id, issue_type, severity,
           quantity_affected, employee_id, description, photo_path))
-    
-    issue_id = cursor.lastrowid
+    row = cursor.fetchone()
+    issue_id = row[0] if row else None
     
     # Mark item as having issue if pending_item_id provided
     if pending_item_id:
@@ -5961,60 +7640,119 @@ def report_shipment_issue(pending_shipment_id: int, pending_item_id: Optional[in
 
 def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
     """Get current verification progress"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Overall stats
-    cursor.execute("""
-        SELECT 
-            COUNT(*) as total_items,
-            COALESCE(SUM(quantity_expected), 0) as total_expected_quantity,
-            COALESCE(SUM(quantity_verified), 0) as total_verified_quantity,
-            SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as items_fully_verified,
-            SUM(CASE WHEN status = 'issue' THEN 1 ELSE 0 END) as items_with_issues
-        FROM pending_shipment_items
-        WHERE pending_shipment_id = %s
-    """, (pending_shipment_id,))
-    
-    progress = dict(cursor.fetchone())
-    
-    # Items still pending
-    cursor.execute("""
-        SELECT pending_item_id, product_sku, product_name, 
-               quantity_expected, COALESCE(quantity_verified, 0) as quantity_verified,
-               unit_cost, product_id, barcode, lot_number, expiration_date,
-               verification_photo,
-               (quantity_expected - COALESCE(quantity_verified, 0)) as remaining
-        FROM pending_shipment_items
-        WHERE pending_shipment_id = %s
-        ORDER BY COALESCE(line_number, pending_item_id)
-    """, (pending_shipment_id,))
-    
-    pending_items = [dict(row) for row in cursor.fetchall()]
-    
-    # Issues
-    cursor.execute("""
-        SELECT si.*, psi.product_name, psi.product_sku,
-               e.first_name || ' ' || e.last_name as reported_by_name
-        FROM shipment_issues si
-        LEFT JOIN pending_shipment_items psi ON si.pending_item_id = psi.pending_item_id
-        JOIN employees e ON si.reported_by = e.employee_id
-        WHERE si.pending_shipment_id = %s
-        ORDER BY si.reported_at DESC
-    """, (pending_shipment_id,))
-    
-    issues = [dict(row) for row in cursor.fetchall()]
-    
-    # Get shipment info including workflow_step
-    cursor.execute("""
-        SELECT pending_shipment_id, status, workflow_step, added_to_inventory, vendor_id
-        FROM pending_shipments
-        WHERE pending_shipment_id = %s
-    """, (pending_shipment_id,))
-    shipment_row = cursor.fetchone()
-    shipment = dict(shipment_row) if shipment_row else {}
-    
-    conn.close()
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        # Overall stats - calculate verified/issue status based on quantity_verified and discrepancy_notes
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_items,
+                COALESCE(SUM(quantity_expected), 0) as total_expected_quantity,
+                COALESCE(SUM(quantity_verified), 0) as total_verified_quantity,
+                SUM(CASE 
+                    WHEN COALESCE(quantity_verified, 0) >= quantity_expected 
+                    THEN 1 ELSE 0 
+                END) as items_fully_verified,
+                SUM(CASE 
+                    WHEN discrepancy_notes IS NOT NULL AND discrepancy_notes != '' 
+                    THEN 1 ELSE 0 
+                END) as items_with_issues
+            FROM pending_shipment_items
+            WHERE pending_shipment_id = %s
+        """, (pending_shipment_id,))
+        
+        progress_row = cursor.fetchone()
+        if isinstance(progress_row, dict):
+            progress = dict(progress_row)
+        else:
+            progress = {}
+        
+        # Items still pending
+        cursor.execute("""
+            SELECT pending_item_id, product_sku, product_name, 
+                   quantity_expected, COALESCE(quantity_verified, 0) as quantity_verified,
+                   unit_cost, product_id, barcode, lot_number, expiration_date,
+                   discrepancy_notes,
+                   (quantity_expected - COALESCE(quantity_verified, 0)) as remaining
+            FROM pending_shipment_items
+            WHERE pending_shipment_id = %s
+            ORDER BY COALESCE(line_number, pending_item_id)
+        """, (pending_shipment_id,))
+        
+        raw_items = [dict(row) for row in cursor.fetchall()]
+        # Exclude summary rows (e.g. TOTAL, SUBTOTAL from vendor sheets) — they are not verifiable line items
+        _SUMMARY_SKUS = frozenset(s.strip().upper() for s in ('TOTAL', 'SUBTOTAL', 'GRAND TOTAL', 'TOTAL ITEMS'))
+        pending_items = [
+            it for it in raw_items
+            if (it.get('product_sku') or '').strip().upper() not in _SUMMARY_SKUS
+        ]
+        
+        # Issues - use discrepancy_notes from pending_shipment_items instead of shipment_issues table
+        issues = []
+        for item in pending_items:
+            if item.get('discrepancy_notes'):
+                issues.append({
+                    'pending_item_id': item.get('pending_item_id'),
+                    'product_name': item.get('product_name'),
+                    'product_sku': item.get('product_sku'),
+                    'notes': item.get('discrepancy_notes'),
+                    'quantity_expected': item.get('quantity_expected'),
+                    'quantity_verified': item.get('quantity_verified')
+                })
+        
+        # Get shipment info
+        cursor.execute("""
+            SELECT pending_shipment_id, status, vendor_id
+            FROM pending_shipments
+            WHERE pending_shipment_id = %s
+        """, (pending_shipment_id,))
+        shipment_row = cursor.fetchone()
+        if isinstance(shipment_row, dict):
+            shipment = dict(shipment_row)
+        else:
+            shipment = {}
+        
+        # Calculate completion percentage
+        total_expected = progress.get('total_expected_quantity', 0) or 0
+        total_verified = progress.get('total_verified_quantity', 0) or 0
+        if total_expected > 0:
+            completion_pct = (total_verified / total_expected) * 100
+        else:
+            completion_pct = 0.0
+        
+        return {
+            'pending_shipment_id': pending_shipment_id,
+            'total_items': progress.get('total_items', 0) or 0,
+            'total_expected_quantity': total_expected,
+            'total_verified_quantity': total_verified,
+            'items_fully_verified': progress.get('items_fully_verified', 0) or 0,
+            'items_with_issues': progress.get('items_with_issues', 0) or 0,
+            'completion_percentage': round(completion_pct, 2),
+            'pending_items': pending_items,
+            'issues': issues,
+            'shipment': shipment
+        }
+        
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        # Don't close the shared global connection
+        # The connection is managed by database_postgres.py
+        pass
     
     # Calculate completion percentage
     if progress['total_expected_quantity']:
@@ -6035,10 +7773,19 @@ def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
 
 def complete_verification(pending_shipment_id: int, employee_id: int, notes: Optional[str] = None) -> Dict[str, Any]:
     """Complete verification and move to approved shipments"""
+    print(f"\n{'='*60}")
+    print(f"Starting completion for shipment {pending_shipment_id} (employee {employee_id})")
+    print(f"{'='*60}")
+    
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Get establishment_id for product creation
+    establishment_id = _get_or_create_default_establishment(conn)
+    print(f"✓ Using establishment_id: {establishment_id}")
+    
     # Check if all items are verified or have issues
+    # Allow completion if items are verified (status='verified') OR have quantity_verified >= quantity_expected
     cursor.execute("""
         SELECT COUNT(*) as unverified_count
         FROM pending_shipment_items
@@ -6055,6 +7802,8 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
             'success': False,
             'message': f"{result['unverified_count']} items still need verification"
         }
+    
+    print(f"✓ All items verified for shipment {pending_shipment_id}, proceeding with completion...")
     
     # Get shipment info
     cursor.execute("""
@@ -6118,15 +7867,20 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     
     # First, ensure product_id is set for all items by matching with inventory
     # Also update barcodes for existing products that don't have one
+    # Match products by SKU within the same establishment
     cursor.execute("""
         UPDATE pending_shipment_items
         SET product_id = (
-            SELECT product_id FROM inventory WHERE sku = pending_shipment_items.product_sku LIMIT 1
+            SELECT product_id FROM inventory 
+            WHERE sku = pending_shipment_items.product_sku 
+            AND establishment_id = %s
+            LIMIT 1
         )
         WHERE pending_shipment_id = %s
         AND product_id IS NULL
         AND product_sku IS NOT NULL
-    """, (pending_shipment_id,))
+        AND product_sku != ''
+    """, (establishment_id, pending_shipment_id))
     
     # Extract metadata for newly matched products (that now have product_id set)
     try:
@@ -6198,7 +7952,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         
         try:
             # Check if product already exists (in case it was just created)
-            cursor.execute("SELECT product_id, barcode FROM inventory WHERE sku = %s", (sku,))
+            cursor.execute("SELECT product_id, barcode FROM inventory WHERE sku = %s AND establishment_id = %s", (sku, establishment_id))
             existing = cursor.fetchone()
             if existing:
                 new_product_id = existing['product_id']
@@ -6223,11 +7977,22 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
                 # Create new product in inventory with barcode
                 cursor.execute("""
                     INSERT INTO inventory 
-                    (product_name, sku, barcode, product_price, product_cost, vendor, vendor_id, current_quantity, category)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL)
-                """, (product_name, sku, barcode, unit_cost, unit_cost, vendor_name, vendor_id))
+                    (establishment_id, product_name, sku, barcode, product_price, product_cost, vendor, vendor_id, current_quantity, category)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, NULL)
+                    RETURNING product_id
+                """, (establishment_id, product_name, sku, barcode, unit_cost, unit_cost, vendor_name, vendor_id))
                 
-                new_product_id = cursor.lastrowid
+                result = cursor.fetchone()
+                if isinstance(result, dict):
+                    new_product_id = result.get('product_id')
+                else:
+                    new_product_id = result[0] if result else None
+                
+                if not new_product_id:
+                    print(f"⚠ ERROR: Failed to get product_id after creating product for SKU {sku}")
+                    continue
+                
+                print(f"✓ Created new product {new_product_id} for SKU {sku} ({product_name})")
                 
                 # Automatically extract metadata and assign category with hierarchy
                 try:
@@ -6247,6 +8012,7 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
                 AND product_sku = %s
                 AND product_id IS NULL
             """, (new_product_id, pending_shipment_id, sku))
+            print(f"✓ Updated {cursor.rowcount} pending_shipment_items with product_id {new_product_id} for SKU {sku}")
         except Exception as e:
             # Log error but continue with other items
             print(f"Error creating product for SKU {sku}: {e}")
@@ -6289,6 +8055,22 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     # Update inventory quantities and vendor_id for all verified items (only if not auto-add mode)
     if verification_mode != 'auto_add':
         # Get all verified items with their product_ids
+        # First, try to match any items that still don't have product_id
+        cursor.execute("""
+            UPDATE pending_shipment_items
+            SET product_id = (
+                SELECT product_id FROM inventory 
+                WHERE sku = pending_shipment_items.product_sku 
+                AND establishment_id = %s
+                LIMIT 1
+            )
+            WHERE pending_shipment_id = %s
+            AND product_id IS NULL
+            AND product_sku IS NOT NULL
+            AND product_sku != ''
+        """, (establishment_id, pending_shipment_id))
+        
+        # Get all verified items with their product_ids
         cursor.execute("""
             SELECT product_id, SUM(quantity_verified) as total_quantity
             FROM pending_shipment_items
@@ -6301,17 +8083,44 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
         items_to_update = cursor.fetchall()
         
         # Update inventory for each product - set vendor_id and update quantity
+        inventory_updates = 0
         for item in items_to_update:
             product_id = item['product_id']
             quantity = item['total_quantity']
-            cursor.execute("""
-                UPDATE inventory
-                SET current_quantity = current_quantity + %s,
-                    vendor_id = %s,
-                    vendor = %s,
-                    last_restocked = CURRENT_TIMESTAMP
-                WHERE product_id = %s
-            """, (quantity, vendor_id, vendor_name, product_id))
+            try:
+                cursor.execute("""
+                    UPDATE inventory
+                    SET current_quantity = current_quantity + %s,
+                        vendor_id = %s,
+                        vendor = %s,
+                        last_restocked = CURRENT_TIMESTAMP
+                    WHERE product_id = %s
+                """, (quantity, vendor_id, vendor_name, product_id))
+                if cursor.rowcount > 0:
+                    inventory_updates += 1
+                    print(f"✓ Added {quantity} units of product {product_id} to inventory")
+                else:
+                    print(f"⚠ Warning: Product {product_id} not found in inventory - skipping quantity update")
+            except Exception as e:
+                print(f"⚠ Error updating inventory for product {product_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with other items even if one fails
+        
+        # Check for items that still don't have product_id but have verified quantity
+        cursor.execute("""
+            SELECT COUNT(*) as unmatched_count
+            FROM pending_shipment_items
+            WHERE pending_shipment_id = %s
+            AND product_id IS NULL
+            AND COALESCE(quantity_verified, 0) > 0
+            AND (product_sku IS NULL OR product_sku = '')
+        """, (pending_shipment_id,))
+        unmatched = cursor.fetchone()
+        if unmatched and unmatched['unmatched_count'] > 0:
+            print(f"⚠ Warning: {unmatched['unmatched_count']} verified items have no SKU and cannot be added to inventory")
+        
+        print(f"✓ Updated inventory for {inventory_updates} products")
     
     # Update pending shipment status
     status = 'completed_with_issues' if shipment['issue_count'] > 0 else 'approved'
@@ -6334,6 +8143,12 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
     conn.commit()
     conn.close()
     
+    print(f"✓ Shipment {pending_shipment_id} completed successfully!")
+    print(f"  - Approved shipment ID: {approved_shipment_id}")
+    print(f"  - Total items: {shipment['total_received']}")
+    print(f"  - Total cost: ${float(shipment['total_cost']):.2f}")
+    print(f"  - Issues: {shipment['issue_count']}")
+    
     return {
         'success': True,
         'approved_shipment_id': approved_shipment_id,
@@ -6345,46 +8160,126 @@ def complete_verification(pending_shipment_id: int, employee_id: int, notes: Opt
 
 def get_pending_shipments_with_progress(status: Optional[str] = None) -> List[Dict[str, Any]]:
     """Get list of pending shipments with verification progress"""
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    query = """
-        SELECT 
-            ps.*, 
-            v.vendor_name,
-            e1.first_name || ' ' || e1.last_name as uploaded_by_name,
-            e2.first_name || ' ' || e2.last_name as started_by_name,
-            COUNT(DISTINCT psi.pending_item_id) as total_items,
-            COALESCE(SUM(psi.quantity_expected), 0) as total_expected,
-            COALESCE(SUM(psi.quantity_verified), 0) as total_verified,
-            COUNT(DISTINCT si.issue_id) as issue_count,
-            CASE 
-                WHEN COALESCE(SUM(psi.quantity_expected), 0) > 0 
-                THEN ROUND((COALESCE(SUM(psi.quantity_verified), 0) * 100.0 / SUM(psi.quantity_expected)), 2)
-                ELSE 0
-            END as progress_percentage
-        FROM pending_shipments ps
-        JOIN vendors v ON ps.vendor_id = v.vendor_id
-        LEFT JOIN employees e1 ON ps.uploaded_by = e1.employee_id
-        LEFT JOIN employees e2 ON ps.started_by = e2.employee_id
-        LEFT JOIN pending_shipment_items psi 
-            ON ps.pending_shipment_id = psi.pending_shipment_id
-        LEFT JOIN shipment_issues si 
-            ON ps.pending_shipment_id = si.pending_shipment_id
-    """
-    
-    if status:
-        query += " WHERE ps.status = %s"
-        cursor.execute(query + " GROUP BY ps.pending_shipment_id ORDER BY ps.upload_timestamp DESC", 
-                     (status,))
-    else:
-        cursor.execute(query + " GROUP BY ps.pending_shipment_id ORDER BY ps.upload_timestamp DESC")
-    
-    shipments = [dict(row) for row in cursor.fetchall()]
-    
-    conn.close()
-    
-    return shipments
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass  # Ignore if already rolled back or no transaction
+        
+        # Check if pending_shipments table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'pending_shipments'
+            )
+        """)
+        table_exists = cursor.fetchone()
+        if isinstance(table_exists, dict):
+            table_exists = table_exists.get('exists', False)
+        else:
+            table_exists = table_exists[0] if table_exists else False
+        
+        if not table_exists:
+            # Table doesn't exist, return empty list
+            return []
+        
+        # Use a subquery approach to handle GROUP BY properly with ps.*
+        base_query = """
+            SELECT 
+                ps.pending_shipment_id,
+                ps.establishment_id,
+                ps.vendor_id,
+                ps.expected_date,
+                ps.upload_timestamp,
+                ps.file_path,
+                ps.purchase_order_number,
+                ps.tracking_number,
+                ps.status,
+                ps.uploaded_by,
+                ps.approved_by,
+                ps.approved_date,
+                ps.reviewed_by,
+                ps.reviewed_date,
+                ps.notes,
+                ps.started_by,
+                v.vendor_name,
+                e1.first_name || ' ' || e1.last_name as uploaded_by_name,
+                e2.first_name || ' ' || e2.last_name as started_by_name,
+                COALESCE(item_stats.total_items, 0) as total_items,
+                COALESCE(item_stats.total_expected, 0) as total_expected,
+                COALESCE(item_stats.total_verified, 0) as total_verified,
+                COALESCE(issue_stats.issue_count, 0) as issue_count,
+                CASE 
+                    WHEN COALESCE(item_stats.total_expected, 0) > 0 
+                    THEN ROUND((COALESCE(item_stats.total_verified, 0) * 100.0 / item_stats.total_expected), 2)
+                    ELSE 0
+                END as progress_percentage
+            FROM pending_shipments ps
+            JOIN vendors v ON ps.vendor_id = v.vendor_id
+            LEFT JOIN employees e1 ON ps.uploaded_by = e1.employee_id
+            LEFT JOIN employees e2 ON ps.started_by = e2.employee_id
+            LEFT JOIN (
+                SELECT 
+                    pending_shipment_id,
+                    COUNT(DISTINCT pending_item_id) as total_items,
+                    COALESCE(SUM(quantity_expected), 0) as total_expected,
+                    COALESCE(SUM(quantity_verified), 0) as total_verified
+                FROM pending_shipment_items
+                GROUP BY pending_shipment_id
+            ) item_stats ON ps.pending_shipment_id = item_stats.pending_shipment_id
+            LEFT JOIN (
+                SELECT 
+                    pending_shipment_id,
+                    COUNT(*) as issue_count
+                FROM pending_shipment_items
+                WHERE discrepancy_notes IS NOT NULL AND discrepancy_notes != ''
+                GROUP BY pending_shipment_id
+            ) issue_stats ON ps.pending_shipment_id = issue_stats.pending_shipment_id
+        """
+        
+        if status:
+            base_query += " WHERE ps.status = %s"
+            base_query += " ORDER BY ps.upload_timestamp DESC"
+            cursor.execute(base_query, (status,))
+        else:
+            base_query += " ORDER BY ps.upload_timestamp DESC"
+            cursor.execute(base_query)
+        
+        shipments = [dict(row) for row in cursor.fetchall()]
+        
+        # Ensure progress_percentage is a number (not string)
+        for shipment in shipments:
+            if 'progress_percentage' in shipment:
+                try:
+                    shipment['progress_percentage'] = float(shipment['progress_percentage']) if shipment['progress_percentage'] is not None else 0.0
+                except (ValueError, TypeError):
+                    shipment['progress_percentage'] = 0.0
+        
+        return shipments
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
+        # If table doesn't exist, return empty list instead of raising
+        if "does not exist" in str(e) or "UndefinedTable" in str(type(e).__name__):
+            return []
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 def get_shipment_items(pending_shipment_id: int) -> List[Dict[str, Any]]:
     """Get all items in a shipment with verification status"""
@@ -6500,19 +8395,69 @@ def create_shipment_from_document(
             print(f"Error adding item {idx}: {e}")
             continue
     
-    # Update shipment totals
+    # Update shipment totals (only update columns that exist)
+    from psycopg2.extras import RealDictCursor
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE pending_shipments
-        SET total_expected_items = %s,
-            total_expected_cost = %s,
-            document_path = %s,
-            status = 'pending_review'
-        WHERE pending_shipment_id = %s
-    """, (items_added, total_cost, file_path, pending_shipment_id))
-    conn.commit()
-    conn.close()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        # Ensure connection is in a good state
+        try:
+            conn.rollback()
+        except:
+            pass
+        
+        # Check which columns exist
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'pending_shipments' AND table_schema = 'public'")
+        column_rows = cursor.fetchall()
+        if column_rows and isinstance(column_rows[0], dict):
+            columns = [row.get('column_name') for row in column_rows]
+        else:
+            columns = [row[0] for row in column_rows]
+        
+        # Build UPDATE query with only existing columns
+        updates = []
+        values = []
+        
+        if 'total_expected_items' in columns:
+            updates.append("total_expected_items = %s")
+            values.append(items_added)
+        
+        if 'total_expected_cost' in columns:
+            updates.append("total_expected_cost = %s")
+            values.append(total_cost)
+        
+        if 'document_path' in columns:
+            updates.append("document_path = %s")
+            values.append(file_path)
+        elif 'file_path' in columns:
+            # Use file_path if document_path doesn't exist
+            updates.append("file_path = %s")
+            values.append(file_path)
+        
+        updates.append("status = %s")
+        values.append('in_progress')
+        
+        values.append(pending_shipment_id)
+        
+        if updates:
+            query = f"UPDATE pending_shipments SET {', '.join(updates)} WHERE pending_shipment_id = %s"
+            cursor.execute(query, tuple(values))
+            conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        import traceback
+        traceback.print_exc()
+        # Don't fail the whole operation if update fails
+        print(f"Warning: Failed to update shipment totals: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
     
     return {
         'success': True,
@@ -7362,7 +9307,7 @@ def get_onboarding_status() -> Dict[str, Any]:
         
         # Handle both Row objects (SQLite) and tuple/dict (PostgreSQL)
         if hasattr(row, 'keys'):
-            # SQLite Row object or dict-like
+            # PostgreSQL RealDictCursor provides dict-like access
             row_dict = dict(row)
         else:
             # Tuple or list - need to get column names

@@ -22,36 +22,39 @@
   height: 100%;
   padding: 1.25em;
   border-radius: 8px;
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  background: rgba(var(--theme-color-rgb, 132, 0, 255), 0.85);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  border: 0;
+  background-image: linear-gradient(to bottom, #6ba3f0, #4a90e2);
+  box-shadow: inset 0 -8px rgb(0 0 0/0.4), 0 2px 4px rgb(0 0 0/0.2);
   color: #fff;
-  font-weight: 300;
+  font-weight: 600;
   overflow: hidden;
-  transition: all 0.3s ease;
+  transition-property: transform, opacity;
+  transition-duration: .4s, .2s;
+  transition-timing-function: cubic-bezier(0.55, 1, 0.15, 1), ease-in-out;
   box-sizing: border-box;
   isolation: isolate;
+  text-align: center;
+  touch-action: manipulation;
 
   --glow-x: 50%;
   --glow-y: 50%;
   --glow-intensity: 0;
   --glow-radius: 200px;
-  
-  /* Enhanced 3D border effect with multiple shadows */
-  box-shadow: 
-    0 6px 20px rgba(var(--theme-color-rgb, 132, 0, 255), 0.5),
-    0 2px 8px rgba(var(--theme-color-rgb, 132, 0, 255), 0.3),
-    inset 0 2px 4px rgba(255, 255, 255, 0.4),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.2),
-    0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.magic-bento-card:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.magic-bento-card:disabled {
+  background-image: linear-gradient(to bottom, #9f9f9f, #848484);
+  cursor: not-allowed;
+  opacity: .4;
 }
 
 .dark-theme .magic-bento-card {
-  background: rgba(var(--theme-color-rgb, 132, 0, 255), 0.85);
-  border-color: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background-image: linear-gradient(to bottom, #6ba3f0, #4a90e2);
+  border: 0;
 }
 
 .dark-theme .magic-bento-card__header,
@@ -70,7 +73,7 @@
 }
 
 .magic-bento-card:hover {
-  /* Hover effect removed */
+  /* Hover effect matches button-15 style */
 }
 
 .magic-bento-card__header,
@@ -92,6 +95,8 @@
 .magic-bento-card__label {
   font-size: 16px;
   color: #fff;
+  font-family: -apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-weight: 600;
 }
 
 .magic-bento-card__title,
@@ -101,10 +106,11 @@
 }
 
 .magic-bento-card__title {
-  font-weight: 400;
+  font-weight: 600;
   font-size: 16px;
   margin: 0 0 0.25em;
   color: #fff;
+  font-family: -apple-system, "system-ui", "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
 }
 
 .magic-bento-card__description {
@@ -142,24 +148,19 @@
 }
 
 .magic-bento-card--border-glow {
-  box-shadow: 
-    0 6px 20px rgba(var(--theme-color-rgb, 132, 0, 255), 0.5),
-    0 2px 8px rgba(var(--theme-color-rgb, 132, 0, 255), 0.3),
-    inset 0 2px 4px rgba(255, 255, 255, 0.4),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.2),
-    0 0 0 1px rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 -8px rgb(0 0 0/0.4), 0 2px 4px rgb(0 0 0/0.2);
 }
 
 .magic-bento-card--border-glow:hover {
-  /* Hover effect removed */
+  /* Hover effect matches button-15 style */
 }
 
 .magic-bento-card--lighter {
-  background: rgba(var(--theme-color-rgb, 132, 0, 255), 0.95) !important;
+  background-image: linear-gradient(to bottom, #6ba3f0, #4a90e2) !important;
 }
 
 .magic-bento-card--lighter.magic-bento-card--pos {
-  background: rgba(var(--theme-color-rgb, 132, 0, 255), 1.0) !important;
+  background-image: linear-gradient(to bottom, #6ba3f0, #4a90e2) !important;
 }
 
 .magic-bento-card--white {
@@ -177,6 +178,11 @@
 
 .magic-bento-card--white .magic-bento-card__description {
   color: #666 !important;
+}
+
+.magic-bento-card--statistics-outline {
+  border: 3px solid #6ba3f0 !important;
+  box-sizing: border-box !important;
 }
 
 .particle-container {

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
+import BarcodeScanner from '../components/BarcodeScanner'
+import { ScanBarcode, Plus, ChevronDown, Upload, Image as ImageIcon, Share2, Download, Printer, X } from 'lucide-react'
 
 function Inventory() {
   const { themeColor, themeMode } = useTheme()
@@ -15,6 +17,9 @@ function Inventory() {
   
   const [inventory, setInventory] = useState([])
   const [allVendors, setAllVendors] = useState([])
+  const [allCategories, setAllCategories] = useState([])
+  const [categoryColumns, setCategoryColumns] = useState([])
+  const [vendorColumns, setVendorColumns] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -26,12 +31,27 @@ function Inventory() {
   const [editLoading, setEditLoading] = useState(false)
   const [editError, setEditError] = useState(null)
   const [editSuccess, setEditSuccess] = useState(false)
+  const [editPhotoPreview, setEditPhotoPreview] = useState(null)
+  const [editShowPhotoPreview, setEditShowPhotoPreview] = useState(false)
+  const [editIsCroppingPhoto, setEditIsCroppingPhoto] = useState(false)
+  const [editPhotoDimensions, setEditPhotoDimensions] = useState({ width: 0, height: 0 })
+  const [editPhotoDisplaySize, setEditPhotoDisplaySize] = useState({ width: 0, height: 0 })
+  const [editFixedContainerSize, setEditFixedContainerSize] = useState({ width: 0, height: 0 })
+  const [editCropBox, setEditCropBox] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  const [editIsDrawingCrop, setEditIsDrawingCrop] = useState(false)
+  const [editCropStart, setEditCropStart] = useState({ x: 0, y: 0 })
+  const [editResizingHandle, setEditResizingHandle] = useState(null)
+  const editResizeStartRef = useRef({ cropBox: null, clientX: 0, clientY: 0 })
+  const editFileInputRef = useRef(null)
+  const editCropImageRef = useRef(null)
+  const editCropContainerRef = useRef(null)
   const [sessionToken, setSessionToken] = useState(null)
   
   // Create forms state
   const [showCreateProduct, setShowCreateProduct] = useState(false)
   const [showCreateCategory, setShowCreateCategory] = useState(false)
   const [showCreateVendor, setShowCreateVendor] = useState(false)
+  const [showCreateDropdown, setShowCreateDropdown] = useState(false)
   const [createProductData, setCreateProductData] = useState({
     product_name: '',
     sku: '',
@@ -45,6 +65,21 @@ function Inventory() {
     photo: null
   })
   const [photoPreview, setPhotoPreview] = useState(null)
+  const [showPhotoPreview, setShowPhotoPreview] = useState(false)
+  const [isCroppingPhoto, setIsCroppingPhoto] = useState(false)
+  const [photoDimensions, setPhotoDimensions] = useState({ width: 0, height: 0 })
+  const [photoDisplaySize, setPhotoDisplaySize] = useState({ width: 0, height: 0 })
+  const [fixedContainerSize, setFixedContainerSize] = useState({ width: 0, height: 0 })
+  const [cropBox, setCropBox] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  const [isDrawingCrop, setIsDrawingCrop] = useState(false)
+  const [cropStart, setCropStart] = useState({ x: 0, y: 0 })
+  const [resizingHandle, setResizingHandle] = useState(null)
+  const resizeStartRef = useRef({ cropBox: null, clientX: 0, clientY: 0 })
+  const fileInputRef = useRef(null)
+  const cropImageRef = useRef(null)
+  const cropContainerRef = useRef(null)
+
+  const MIN_CROP = 20
   const [createCategoryData, setCreateCategoryData] = useState({ category_name: '' })
   const [createVendorData, setCreateVendorData] = useState({
     vendor_name: '',
@@ -53,9 +88,16 @@ function Inventory() {
     phone: '',
     address: ''
   })
+  const [editingCategory, setEditingCategory] = useState(null)
+  const [editingVendor, setEditingVendor] = useState(null)
   const [createLoading, setCreateLoading] = useState(false)
   const [createError, setCreateError] = useState(null)
   const [createSuccess, setCreateSuccess] = useState(false)
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
+  const [barcodePreview, setBarcodePreview] = useState(null)
+  const [barcodeLoading, setBarcodeLoading] = useState(false)
+  const [barcodeError, setBarcodeError] = useState(null)
+  const barcodeObjectUrlRef = useRef(null)
   
   // Determine if dark mode is active
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -85,7 +127,43 @@ function Inventory() {
   useEffect(() => {
     loadInventory()
     loadVendors()
+    loadCategories()
   }, [])
+
+  // Hide scrollbar for inventory buttons
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = `
+      .inventory-buttons-scroll::-webkit-scrollbar {
+        display: none;
+      }
+    `
+    document.head.appendChild(style)
+    return () => {
+      if (document.head.contains(style)) {
+        document.head.removeChild(style)
+      }
+    }
+  }, [])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showCreateDropdown && !event.target.closest('[data-create-dropdown]')) {
+        setShowCreateDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showCreateDropdown])
+
+  const handleBarcodeScan = async (barcode) => {
+    // Set the search query to the scanned barcode
+    setSearchQuery(barcode)
+    // Optionally, you could also filter the inventory immediately
+  }
 
   const loadInventory = async () => {
     setLoading(true)
@@ -113,8 +191,32 @@ function Inventory() {
       if (result.data) {
         setAllVendors(result.data)
       }
+      if (result.columns) {
+        setVendorColumns(result.columns)
+      } else if (result.data && result.data.length > 0) {
+        setVendorColumns(Object.keys(result.data[0]))
+      }
     } catch (err) {
       console.error('Error loading vendors:', err)
+    }
+  }
+
+  const loadCategories = async () => {
+    try {
+      const response = await fetch('/api/categories')
+      const result = await response.json()
+      if (result.data) {
+        setAllCategories(result.data)
+      } else {
+        setAllCategories([])
+      }
+      if (result.columns) {
+        setCategoryColumns(result.columns)
+      } else if (result.data && result.data.length > 0) {
+        setCategoryColumns(Object.keys(result.data[0]))
+      }
+    } catch (err) {
+      console.error('Error loading categories:', err)
     }
   }
 
@@ -128,12 +230,27 @@ function Inventory() {
       product_cost: product.product_cost || 0,
       current_quantity: product.current_quantity || 0,
       category: product.category || '',
-      vendor: product.vendor || '',
+      vendor: product.vendor || product.vendor_name || '',
       vendor_id: product.vendor_id || null,
-      photo: product.photo || ''
+      photo: null
     })
+    // Set photo preview from existing product photo if available
+    if (product.photo) {
+      setEditPhotoPreview(product.photo)
+    } else {
+      setEditPhotoPreview(null)
+    }
     setEditError(null)
     setEditSuccess(false)
+    setEditIsCroppingPhoto(false)
+    setEditCropBox({ x: 0, y: 0, width: 0, height: 0 })
+    setEditFixedContainerSize({ width: 0, height: 0 })
+    // Close any open create forms
+    setShowCreateProduct(false)
+    setShowCreateCategory(false)
+    setShowCreateVendor(false)
+    setShowCreateDropdown(false)
+    handleCloseBarcodePreview()
   }
 
   const handleCloseEdit = () => {
@@ -141,7 +258,293 @@ function Inventory() {
     setEditFormData({})
     setEditError(null)
     setEditSuccess(false)
+    setEditPhotoPreview(null)
+    setEditIsCroppingPhoto(false)
+    setEditCropBox({ x: 0, y: 0, width: 0, height: 0 })
+    setEditFixedContainerSize({ width: 0, height: 0 })
   }
+
+  const handleCloseBarcodePreview = () => {
+    if (barcodeObjectUrlRef.current) {
+      URL.revokeObjectURL(barcodeObjectUrlRef.current)
+      barcodeObjectUrlRef.current = null
+    }
+    setBarcodePreview(null)
+    setBarcodeError(null)
+  }
+
+  const handleGenerateBarcode = async (product) => {
+    const pid = product?.product_id
+    if (!pid) return
+    
+    // Close other forms when opening barcode
+    setShowCreateProduct(false)
+    setShowCreateCategory(false)
+    setShowCreateVendor(false)
+    setEditingProduct(null)
+    setEditingCategory(null)
+    setEditingVendor(null)
+    
+    if (barcodeObjectUrlRef.current) {
+      URL.revokeObjectURL(barcodeObjectUrlRef.current)
+      barcodeObjectUrlRef.current = null
+    }
+    setBarcodeLoading(true)
+    setBarcodeError(null)
+    setBarcodePreview(null)
+    try {
+      const res = await fetch(`/api/product_barcode_image?product_id=${pid}`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `Failed to generate barcode (${res.status})`)
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      barcodeObjectUrlRef.current = url
+      setBarcodePreview({ product, imageDataUrl: url, blob })
+    } catch (e) {
+      setBarcodeError(e.message || 'Failed to generate barcode')
+    } finally {
+      setBarcodeLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (barcodeObjectUrlRef.current) {
+        URL.revokeObjectURL(barcodeObjectUrlRef.current)
+      }
+    }
+  }, [])
+
+  const handleEditPhotoChange = (e) => {
+    const file = e.target.files[0]
+    if (file) {
+      setEditFormData({ ...editFormData, photo: file })
+      setEditShowPhotoPreview(false)
+      setEditIsCroppingPhoto(false)
+      setEditCropBox({ x: 0, y: 0, width: 0, height: 0 })
+      setEditPhotoDisplaySize({ width: 0, height: 0 })
+      setEditFixedContainerSize({ width: 0, height: 0 })
+      // Create preview
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setEditPhotoPreview(reader.result)
+      }
+      reader.readAsDataURL(file)
+    } else {
+      setEditFormData({ ...editFormData, photo: null })
+      setEditPhotoPreview(null)
+      setEditShowPhotoPreview(false)
+      setEditIsCroppingPhoto(false)
+      setEditCropBox({ x: 0, y: 0, width: 0, height: 0 })
+      setEditPhotoDisplaySize({ width: 0, height: 0 })
+      setEditFixedContainerSize({ width: 0, height: 0 })
+    }
+  }
+
+  useEffect(() => {
+    if (!editPhotoPreview) {
+      setEditPhotoDimensions({ width: 0, height: 0 })
+      setEditCropBox({ x: 0, y: 0, width: 0, height: 0 })
+      setEditPhotoDisplaySize({ width: 0, height: 0 })
+      return
+    }
+
+    const img = new window.Image()
+    img.onload = () => {
+      const width = img.naturalWidth || 0
+      const height = img.naturalHeight || 0
+      setEditPhotoDimensions({ width, height })
+      setEditCropBox({ x: 0, y: 0, width: 0, height: 0 })
+    }
+    img.src = editPhotoPreview
+  }, [editPhotoPreview])
+
+  useEffect(() => {
+    if (editIsCroppingPhoto && editPhotoDisplaySize.width > 0 && editPhotoDisplaySize.height > 0) {
+      setEditCropBox({
+        x: 0,
+        y: 0,
+        width: editPhotoDisplaySize.width,
+        height: editPhotoDisplaySize.height
+      })
+    }
+  }, [editIsCroppingPhoto, editPhotoDisplaySize])
+
+  const applyEditPhotoCrop = () => {
+    if (!editPhotoPreview || !editCropBox.width || !editCropBox.height) return
+    const displayWidth = editPhotoDisplaySize.width || editCropImageRef.current?.getBoundingClientRect().width || 0
+    const displayHeight = editPhotoDisplaySize.height || editCropImageRef.current?.getBoundingClientRect().height || 0
+    if (!displayWidth || !displayHeight || !editPhotoDimensions.width || !editPhotoDimensions.height) return
+
+    const scaleX = editPhotoDimensions.width / displayWidth
+    const scaleY = editPhotoDimensions.height / displayHeight
+    const scaledCrop = {
+      x: Math.round(editCropBox.x * scaleX),
+      y: Math.round(editCropBox.y * scaleY),
+      width: Math.round(editCropBox.width * scaleX),
+      height: Math.round(editCropBox.height * scaleY)
+    }
+
+    const img = new window.Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = scaledCrop.width
+      canvas.height = scaledCrop.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      ctx.drawImage(
+        img,
+        scaledCrop.x,
+        scaledCrop.y,
+        scaledCrop.width,
+        scaledCrop.height,
+        0,
+        0,
+        scaledCrop.width,
+        scaledCrop.height
+      )
+
+      canvas.toBlob((blob) => {
+        if (!blob) return
+        const fileName = editFormData.photo?.name || 'cropped-image.png'
+        const croppedFile = new File([blob], fileName, { type: blob.type || 'image/png' })
+        setEditFormData((prev) => ({ ...prev, photo: croppedFile }))
+
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setEditPhotoPreview(reader.result)
+          setEditIsCroppingPhoto(false)
+        }
+        reader.readAsDataURL(blob)
+      })
+    }
+    img.src = editPhotoPreview
+  }
+
+  const handleEditRemovePhoto = () => {
+    setEditFormData((prev) => ({ ...prev, photo: null }))
+    setEditPhotoPreview(null)
+    setEditShowPhotoPreview(false)
+    setEditIsCroppingPhoto(false)
+    setEditFixedContainerSize({ width: 0, height: 0 })
+    if (editFileInputRef.current) {
+      editFileInputRef.current.value = ''
+    }
+  }
+
+  const getEditCropPoint = (event) => {
+    if (!editCropContainerRef.current) return null
+    const rect = editCropContainerRef.current.getBoundingClientRect()
+    const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width))
+    const y = Math.max(0, Math.min(event.clientY - rect.top, rect.height))
+    return { x, y, width: rect.width, height: rect.height }
+  }
+
+  const handleEditCropMouseDown = (event) => {
+    if (!editIsCroppingPhoto) return
+  }
+
+  const handleEditCropMouseMove = (event) => {
+    if (!editIsDrawingCrop || !editIsCroppingPhoto) return
+    const point = getEditCropPoint(event)
+    if (!point) return
+    const startX = editCropStart.x
+    const startY = editCropStart.y
+    const currentX = point.x
+    const currentY = point.y
+    const x = Math.min(startX, currentX)
+    const y = Math.min(startY, currentY)
+    const width = Math.abs(currentX - startX)
+    const height = Math.abs(currentY - startY)
+    setEditCropBox({ x, y, width, height })
+  }
+
+  const handleEditCropMouseUp = () => {
+    if (editIsDrawingCrop) {
+      setEditIsDrawingCrop(false)
+    }
+  }
+
+  const handleEditResizeMouseDown = (e, handle) => {
+    e.stopPropagation()
+    setEditResizingHandle(handle)
+    editResizeStartRef.current = {
+      cropBox: { ...editCropBox },
+      clientX: e.clientX,
+      clientY: e.clientY
+    }
+  }
+
+  useEffect(() => {
+    if (!editResizingHandle) return
+    const container = editCropContainerRef.current
+    const getRect = () => container?.getBoundingClientRect() ?? { width: 0, height: 0, left: 0, top: 0 }
+
+    const onMouseMove = (e) => {
+      const { cropBox: start, clientX: startX, clientY: startY } = editResizeStartRef.current
+      if (!start) return
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      const rect = getRect()
+      const maxW = rect.width
+      const maxH = rect.height
+      let { x, y, width, height } = start
+
+      switch (editResizingHandle) {
+        case 'nw':
+          x = Math.max(0, Math.min(start.x + dx, start.x + start.width - MIN_CROP))
+          width = start.x + start.width - x
+          y = Math.max(0, Math.min(start.y + dy, start.y + start.height - MIN_CROP))
+          height = start.y + start.height - y
+          break
+        case 'n':
+          y = Math.max(0, Math.min(start.y + dy, start.y + start.height - MIN_CROP))
+          height = start.y + start.height - y
+          break
+        case 'ne':
+          width = Math.max(MIN_CROP, Math.min(start.width + dx, maxW - start.x))
+          y = Math.max(0, Math.min(start.y + dy, start.y + start.height - MIN_CROP))
+          height = start.y + start.height - y
+          break
+        case 'e':
+          width = Math.max(MIN_CROP, Math.min(start.width + dx, maxW - start.x))
+          break
+        case 'se':
+          width = Math.max(MIN_CROP, Math.min(start.width + dx, maxW - start.x))
+          height = Math.max(MIN_CROP, Math.min(start.height + dy, maxH - start.y))
+          break
+        case 's':
+          height = Math.max(MIN_CROP, Math.min(start.height + dy, maxH - start.y))
+          break
+        case 'sw':
+          x = Math.max(0, Math.min(start.x + dx, start.x + start.width - MIN_CROP))
+          width = start.x + start.width - x
+          height = Math.max(MIN_CROP, Math.min(start.height + dy, maxH - start.y))
+          break
+        case 'w':
+          x = Math.max(0, Math.min(start.x + dx, start.x + start.width - MIN_CROP))
+          width = start.x + start.width - x
+          break
+        default:
+          return
+      }
+      setEditCropBox({ x, y, width, height })
+    }
+
+    const onMouseUp = () => {
+      setEditResizingHandle(null)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [editResizingHandle])
 
   const handleEditChange = (e) => {
     const { name, value } = e.target
@@ -160,17 +563,27 @@ function Inventory() {
     setEditSuccess(false)
 
     try {
-      const updateData = {
-        ...editFormData,
-        session_token: sessionToken
+      // Create FormData to support file uploads
+      const formData = new FormData()
+      formData.append('product_name', editFormData.product_name)
+      formData.append('sku', editFormData.sku)
+      formData.append('barcode', editFormData.barcode || '')
+      formData.append('product_price', editFormData.product_price)
+      formData.append('product_cost', editFormData.product_cost)
+      formData.append('current_quantity', editFormData.current_quantity || '0')
+      formData.append('category', editFormData.category || '')
+      formData.append('vendor', editFormData.vendor || '')
+      if (editFormData.vendor_id) {
+        formData.append('vendor_id', editFormData.vendor_id)
       }
+      if (editFormData.photo) {
+        formData.append('photo', editFormData.photo)
+      }
+      formData.append('session_token', sessionToken)
 
       const response = await fetch(`/api/inventory/${editingProduct.product_id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(updateData)
+        body: formData
       })
 
       const result = await response.json()
@@ -256,6 +669,11 @@ function Inventory() {
     const file = e.target.files[0]
     if (file) {
       setCreateProductData({ ...createProductData, photo: file })
+      setShowPhotoPreview(false)
+      setIsCroppingPhoto(false)
+      setCropBox({ x: 0, y: 0, width: 0, height: 0 })
+      setPhotoDisplaySize({ width: 0, height: 0 })
+      setFixedContainerSize({ width: 0, height: 0 })
       // Create preview
       const reader = new FileReader()
       reader.onloadend = () => {
@@ -265,7 +683,237 @@ function Inventory() {
     } else {
       setCreateProductData({ ...createProductData, photo: null })
       setPhotoPreview(null)
+      setShowPhotoPreview(false)
+      setIsCroppingPhoto(false)
+      setCropBox({ x: 0, y: 0, width: 0, height: 0 })
+      setPhotoDisplaySize({ width: 0, height: 0 })
+      setFixedContainerSize({ width: 0, height: 0 })
     }
+  }
+
+  useEffect(() => {
+    if (!photoPreview) {
+      setPhotoDimensions({ width: 0, height: 0 })
+      setCropBox({ x: 0, y: 0, width: 0, height: 0 })
+      setPhotoDisplaySize({ width: 0, height: 0 })
+      return
+    }
+
+    const img = new window.Image()
+    img.onload = () => {
+      const width = img.naturalWidth || 0
+      const height = img.naturalHeight || 0
+      setPhotoDimensions({ width, height })
+      setCropBox({ x: 0, y: 0, width: 0, height: 0 })
+    }
+    img.src = photoPreview
+  }, [photoPreview])
+
+  // Initialize crop box to full image when crop mode is activated
+  useEffect(() => {
+    if (isCroppingPhoto && photoDisplaySize.width > 0 && photoDisplaySize.height > 0) {
+      setCropBox({
+        x: 0,
+        y: 0,
+        width: photoDisplaySize.width,
+        height: photoDisplaySize.height
+      })
+    }
+  }, [isCroppingPhoto, photoDisplaySize])
+
+  const applyPhotoCrop = () => {
+    if (!photoPreview || !cropBox.width || !cropBox.height) return
+    const displayWidth = photoDisplaySize.width || cropImageRef.current?.getBoundingClientRect().width || 0
+    const displayHeight = photoDisplaySize.height || cropImageRef.current?.getBoundingClientRect().height || 0
+    if (!displayWidth || !displayHeight || !photoDimensions.width || !photoDimensions.height) return
+
+    const scaleX = photoDimensions.width / displayWidth
+    const scaleY = photoDimensions.height / displayHeight
+    const scaledCrop = {
+      x: Math.round(cropBox.x * scaleX),
+      y: Math.round(cropBox.y * scaleY),
+      width: Math.round(cropBox.width * scaleX),
+      height: Math.round(cropBox.height * scaleY)
+    }
+
+    const img = new window.Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = scaledCrop.width
+      canvas.height = scaledCrop.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      ctx.drawImage(
+        img,
+        scaledCrop.x,
+        scaledCrop.y,
+        scaledCrop.width,
+        scaledCrop.height,
+        0,
+        0,
+        scaledCrop.width,
+        scaledCrop.height
+      )
+
+      canvas.toBlob((blob) => {
+        if (!blob) return
+        const fileName = createProductData.photo?.name || 'cropped-image.png'
+        const croppedFile = new File([blob], fileName, { type: blob.type || 'image/png' })
+        setCreateProductData((prev) => ({ ...prev, photo: croppedFile }))
+
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPhotoPreview(reader.result)
+          setIsCroppingPhoto(false)
+        }
+        reader.readAsDataURL(blob)
+      })
+    }
+    img.src = photoPreview
+  }
+
+  const handleRemovePhoto = () => {
+    setCreateProductData((prev) => ({ ...prev, photo: null }))
+    setPhotoPreview(null)
+    setShowPhotoPreview(false)
+    setIsCroppingPhoto(false)
+    setFixedContainerSize({ width: 0, height: 0 })
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const getCropPoint = (event) => {
+    if (!cropContainerRef.current) return null
+    const rect = cropContainerRef.current.getBoundingClientRect()
+    const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width))
+    const y = Math.max(0, Math.min(event.clientY - rect.top, rect.height))
+    return { x, y, width: rect.width, height: rect.height }
+  }
+
+  const handleCropMouseDown = (event) => {
+    // Disable drag-to-draw when in crop mode - only allow resize handles
+    // The crop box is already initialized to full image size
+    if (!isCroppingPhoto) return
+    // Don't start a new draw - only resize handles should work
+  }
+
+  const handleCropMouseMove = (event) => {
+    if (!isDrawingCrop || !isCroppingPhoto) return
+    const point = getCropPoint(event)
+    if (!point) return
+    const startX = cropStart.x
+    const startY = cropStart.y
+    const currentX = point.x
+    const currentY = point.y
+    const x = Math.min(startX, currentX)
+    const y = Math.min(startY, currentY)
+    const width = Math.abs(currentX - startX)
+    const height = Math.abs(currentY - startY)
+    setCropBox({ x, y, width, height })
+  }
+
+  const handleCropMouseUp = () => {
+    if (isDrawingCrop) {
+      setIsDrawingCrop(false)
+    }
+  }
+
+  const handleResizeMouseDown = (e, handle) => {
+    e.stopPropagation()
+    setResizingHandle(handle)
+    resizeStartRef.current = {
+      cropBox: { ...cropBox },
+      clientX: e.clientX,
+      clientY: e.clientY
+    }
+  }
+
+  useEffect(() => {
+    if (!resizingHandle) return
+    const container = cropContainerRef.current
+    const getRect = () => container?.getBoundingClientRect() ?? { width: 0, height: 0, left: 0, top: 0 }
+
+    const onMouseMove = (e) => {
+      const { cropBox: start, clientX: startX, clientY: startY } = resizeStartRef.current
+      if (!start) return
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      const rect = getRect()
+      const maxW = rect.width
+      const maxH = rect.height
+      let { x, y, width, height } = start
+
+      switch (resizingHandle) {
+        case 'nw':
+          x = Math.max(0, Math.min(start.x + dx, start.x + start.width - MIN_CROP))
+          width = start.x + start.width - x
+          y = Math.max(0, Math.min(start.y + dy, start.y + start.height - MIN_CROP))
+          height = start.y + start.height - y
+          break
+        case 'n':
+          y = Math.max(0, Math.min(start.y + dy, start.y + start.height - MIN_CROP))
+          height = start.y + start.height - y
+          break
+        case 'ne':
+          width = Math.max(MIN_CROP, Math.min(start.width + dx, maxW - start.x))
+          y = Math.max(0, Math.min(start.y + dy, start.y + start.height - MIN_CROP))
+          height = start.y + start.height - y
+          break
+        case 'e':
+          width = Math.max(MIN_CROP, Math.min(start.width + dx, maxW - start.x))
+          break
+        case 'se':
+          width = Math.max(MIN_CROP, Math.min(start.width + dx, maxW - start.x))
+          height = Math.max(MIN_CROP, Math.min(start.height + dy, maxH - start.y))
+          break
+        case 's':
+          height = Math.max(MIN_CROP, Math.min(start.height + dy, maxH - start.y))
+          break
+        case 'sw':
+          x = Math.max(0, Math.min(start.x + dx, start.x + start.width - MIN_CROP))
+          width = start.x + start.width - x
+          height = Math.max(MIN_CROP, Math.min(start.height + dy, maxH - start.y))
+          break
+        case 'w':
+          x = Math.max(0, Math.min(start.x + dx, start.x + start.width - MIN_CROP))
+          width = start.x + start.width - x
+          break
+        default:
+          return
+      }
+      setCropBox({ x, y, width, height })
+    }
+
+    const onMouseUp = () => {
+      setResizingHandle(null)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [resizingHandle])
+
+  const handleEditCategory = (category) => {
+    // Close other forms
+    setShowCreateVendor(false)
+    setShowCreateProduct(false)
+    setEditingVendor(null)
+    setEditingProduct(null)
+    handleCloseBarcodePreview()
+    
+    setEditingCategory(category)
+    // Prefer category_path for editing (full path like "Food & Beverage > Produce > Vegetables")
+    // Fall back to category_name if path not available
+    const categoryPath = category.category_path || category.category_name || category.name || ''
+    setCreateCategoryData({ category_name: categoryPath })
+    setShowCreateCategory(true)
+    setCreateError(null)
+    setCreateSuccess(false)
   }
 
   const handleCreateCategory = async (e) => {
@@ -275,8 +923,13 @@ function Inventory() {
     setCreateSuccess(false)
 
     try {
-      const response = await fetch('/api/categories', {
-        method: 'POST',
+      const url = editingCategory 
+        ? `/api/categories/${editingCategory.category_id}`
+        : '/api/categories'
+      const method = editingCategory ? 'PUT' : 'POST'
+
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json'
         },
@@ -286,21 +939,44 @@ function Inventory() {
       const result = await response.json()
 
       if (!response.ok) {
-        throw new Error(result.message || 'Failed to create category')
+        throw new Error(result.message || `Failed to ${editingCategory ? 'update' : 'create'} category`)
       }
 
       setCreateSuccess(true)
       setCreateCategoryData({ category_name: '' })
+      setEditingCategory(null)
       setTimeout(() => {
         loadInventory()
+        loadCategories()
         setShowCreateCategory(false)
         setCreateSuccess(false)
       }, 1000)
     } catch (err) {
-      setCreateError(err.message || 'An error occurred while creating the category')
+      setCreateError(err.message || `An error occurred while ${editingCategory ? 'updating' : 'creating'} the category`)
     } finally {
       setCreateLoading(false)
     }
+  }
+
+  const handleEditVendor = (vendor) => {
+    // Close other forms
+    setShowCreateCategory(false)
+    setShowCreateProduct(false)
+    setEditingCategory(null)
+    setEditingProduct(null)
+    handleCloseBarcodePreview()
+    
+    setEditingVendor(vendor)
+    setCreateVendorData({
+      vendor_name: vendor.vendor_name || '',
+      contact_person: vendor.contact_person || '',
+      email: vendor.email || '',
+      phone: vendor.phone || '',
+      address: vendor.address || ''
+    })
+    setShowCreateVendor(true)
+    setCreateError(null)
+    setCreateSuccess(false)
   }
 
   const handleCreateVendor = async (e) => {
@@ -310,8 +986,13 @@ function Inventory() {
     setCreateSuccess(false)
 
     try {
-      const response = await fetch('/api/vendors', {
-        method: 'POST',
+      const url = editingVendor 
+        ? `/api/vendors/${editingVendor.vendor_id}`
+        : '/api/vendors'
+      const method = editingVendor ? 'PUT' : 'POST'
+
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json'
         },
@@ -321,7 +1002,7 @@ function Inventory() {
       const result = await response.json()
 
       if (!response.ok) {
-        throw new Error(result.message || 'Failed to create vendor')
+        throw new Error(result.message || `Failed to ${editingVendor ? 'update' : 'create'} vendor`)
       }
 
       setCreateSuccess(true)
@@ -332,23 +1013,41 @@ function Inventory() {
         phone: '',
         address: ''
       })
+      setEditingVendor(null)
       setTimeout(() => {
         loadVendors()
         setShowCreateVendor(false)
         setCreateSuccess(false)
       }, 1000)
     } catch (err) {
-      setCreateError(err.message || 'An error occurred while creating the vendor')
+      setCreateError(err.message || `An error occurred while ${editingVendor ? 'updating' : 'creating'} the vendor`)
     } finally {
       setCreateLoading(false)
     }
   }
 
+  const categoryNamesFromDb = allCategories
+    .map(category => category.category_name || category.category_path || category.name)
+    .filter(Boolean)
+
   // Get unique categories
-  const categories = [...new Set(inventory.map(item => item.category).filter(Boolean))].sort()
+  const categories = [...new Set(
+    (categoryNamesFromDb.length > 0
+      ? categoryNamesFromDb
+      : inventory.map(item => item.category).filter(Boolean)
+    )
+  )].sort()
   
   // Get all vendors from vendors table (not just vendors with products)
-  const vendors = allVendors.map(vendor => vendor.vendor_name).sort()
+  const vendors = allVendors.map(vendor => vendor.vendor_name).filter(Boolean).sort()
+
+  const resolvedCategoryColumns = categoryColumns.length > 0
+    ? categoryColumns
+    : (allCategories[0] ? Object.keys(allCategories[0]) : ['category_name'])
+
+  const resolvedVendorColumns = vendorColumns.length > 0
+    ? vendorColumns
+    : (allVendors[0] ? Object.keys(allVendors[0]) : ['vendor_name'])
 
   // Fuzzy string matching function - allows for typos
   const fuzzyMatch = (str, pattern) => {
@@ -540,86 +1239,116 @@ function Inventory() {
 
   // Render category grid
   const renderCategoryGrid = () => {
-    if (selectedCategory) {
-      const items = getItemsByCategory(selectedCategory)
-      return (
-        <div>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '12px', 
-            marginBottom: '20px' 
-          }}>
-            <button
-              onClick={() => setSelectedCategory(null)}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
-                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}
-            >
-              ← Back
-            </button>
-            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-              {selectedCategory} ({items.length} items)
-            </h2>
-          </div>
-          {items.length > 0 ? (
-            <Table 
-              columns={['photo', 'product_name', 'sku', 'barcode', 'product_price', 'current_quantity', 'vendor_name', 'vendor']} 
-              data={items}
-              onEdit={handleEditProduct}
-            />
-          ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-              No items found in this category
-            </div>
-          )}
-        </div>
-      )
-    }
-
     return (
       <div>
-        <div style={{ 
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px',
-          marginTop: '20px'
-        }}>
-          {categories.map(category => {
+        <div style={{ position: 'relative', marginTop: '8px', marginBottom: '20px' }}>
+          <div 
+            className="inventory-buttons-scroll"
+            style={{ 
+              display: 'flex',
+              flexWrap: 'nowrap',
+              gap: '8px',
+              overflowX: 'auto',
+              paddingBottom: '4px',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none'
+            }}
+          >
+          {categories.map((category, index) => {
             const itemCount = getItemsByCategory(category).length
             return (
               <button
-                key={category}
+                key={`${category}-${index}`}
                 onClick={() => handleCategoryClick(category)}
                 style={{
-                  padding: '10px 16px',
-                  backgroundColor: selectedCategory === category ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
-                  backdropFilter: 'blur(10px)',
-                  WebkitBackdropFilter: 'blur(10px)',
-                  border: selectedCategory === category ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+                  padding: '4px 16px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  whiteSpace: 'nowrap',
+                  backgroundColor: selectedCategory === category 
+                    ? `rgba(${themeColorRgb}, 0.7)` 
+                    : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                  border: selectedCategory === category 
+                    ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                    : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
                   borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: selectedCategory === category ? 600 : 500,
-                  color: '#fff',
+                  color: selectedCategory === category ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
                   cursor: 'pointer',
                   transition: 'all 0.3s ease',
-                  boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+                  boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
                 }}
               >
                 {category}
               </button>
             )
           })}
+          </div>
+          {/* Left gradient fade */}
+          <div style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: '4px',
+            width: '20px',
+            background: `linear-gradient(to right, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+            pointerEvents: 'none',
+            zIndex: 1
+          }} />
+          {/* Right gradient fade */}
+          <div style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: '4px',
+            width: '20px',
+            background: `linear-gradient(to left, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+            pointerEvents: 'none',
+            zIndex: 1
+          }} />
         </div>
-        {categories.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-            No categories found
+        {!selectedCategory && (
+          <div style={{ marginTop: '20px' }}>
+            {allCategories.length > 0 ? (
+              <Table
+                columns={[...resolvedCategoryColumns, 'actions']}
+                data={allCategories}
+                onEdit={handleEditCategory}
+                actionsAsEllipsis
+                ellipsisMenuItems={[
+                  { label: 'Edit', onClick: (r) => handleEditCategory(r) }
+                ]}
+              />
+            ) : (
+              <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+                No categories found in database
+              </div>
+            )}
+          </div>
+        )}
+        {selectedCategory && (
+          <div>
+            {(() => {
+              const items = getItemsByCategory(selectedCategory)
+              return items.length > 0 ? (
+                <Table 
+                  columns={['photo', 'product_name', 'sku', 'barcode', 'product_price', 'current_quantity', 'vendor_name', 'vendor']} 
+                  data={items}
+                  onEdit={handleEditProduct}
+                  actionsAsEllipsis
+                  ellipsisMenuItems={[
+                    { label: 'Edit', onClick: (r) => handleEditProduct(r) },
+                    { label: 'Barcode', onClick: (r) => handleGenerateBarcode(r) }
+                  ]}
+                />
+              ) : (
+                <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+                  No items found in this category
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>
@@ -628,102 +1357,116 @@ function Inventory() {
 
   // Render vendor grid
   const renderVendorGrid = () => {
-    if (selectedVendor) {
-      const items = getItemsByVendor(selectedVendor)
-      return (
-        <div>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '12px', 
-            marginBottom: '20px' 
-          }}>
-            <button
-              onClick={() => setSelectedVendor(null)}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f0f0f0',
-                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}
-            >
-              ← Back
-            </button>
-            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-              {selectedVendor} ({items.length} items)
-            </h2>
-          </div>
-          {items.length > 0 ? (
-            <Table 
-              columns={['photo', 'product_name', 'sku', 'barcode', 'product_price', 'current_quantity', 'category']} 
-              data={items}
-              onEdit={handleEditProduct}
-            />
-          ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-              No items found for this vendor
-            </div>
-          )}
-        </div>
-      )
-    }
-
     return (
       <div>
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
-          gap: '16px',
-          marginTop: '20px'
-        }}>
-          {vendors.map(vendor => {
+        <div style={{ position: 'relative', marginTop: '8px', marginBottom: '20px' }}>
+          <div 
+            className="inventory-buttons-scroll"
+            style={{ 
+              display: 'flex',
+              flexWrap: 'nowrap',
+              gap: '8px',
+              overflowX: 'auto',
+              paddingBottom: '4px',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none'
+            }}
+          >
+          {vendors.map((vendor, index) => {
             const itemCount = getItemsByVendor(vendor).length
             return (
-              <div
-                key={vendor}
+              <button
+                key={`${vendor}-${index}`}
                 onClick={() => handleVendorClick(vendor)}
                 style={{
-                  padding: '24px',
-                  backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
-                  border: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #e0e0e0',
+                  padding: '4px 16px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  whiteSpace: 'nowrap',
+                  backgroundColor: selectedVendor === vendor 
+                    ? `rgba(${themeColorRgb}, 0.7)` 
+                    : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                  border: selectedVendor === vendor 
+                    ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                    : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
                   borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: selectedVendor === vendor ? 600 : 500,
+                  color: selectedVendor === vendor ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
                   cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  textAlign: 'center'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = isDarkMode ? `rgba(${themeColorRgb}, 0.5)` : '#4a90e2'
-                  e.currentTarget.style.boxShadow = isDarkMode ? `0 4px 8px rgba(${themeColorRgb}, 0.2)` : '0 4px 8px rgba(0,0,0,0.1)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#e0e0e0'
-                  e.currentTarget.style.boxShadow = 'none'
+                  transition: 'all 0.3s ease',
+                  boxShadow: selectedVendor === vendor ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
                 }}
               >
-                <div style={{ 
-                  fontSize: '18px', 
-                  fontWeight: 600, 
-                  marginBottom: '8px',
-                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                }}>
-                  {vendor}
-                </div>
-                <div style={{ 
-                  fontSize: '14px', 
-                  color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' 
-                }}>
-                  {itemCount} {itemCount === 1 ? 'item' : 'items'}
-                </div>
-              </div>
+                {vendor}
+              </button>
             )
           })}
+          </div>
+          {/* Left gradient fade */}
+          <div style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: '4px',
+            width: '20px',
+            background: `linear-gradient(to right, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+            pointerEvents: 'none',
+            zIndex: 1
+          }} />
+          {/* Right gradient fade */}
+          <div style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: '4px',
+            width: '20px',
+            background: `linear-gradient(to left, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+            pointerEvents: 'none',
+            zIndex: 1
+          }} />
         </div>
-        {vendors.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-            No vendors found
+        {!selectedVendor && (
+          <div style={{ marginTop: '20px' }}>
+            {allVendors.length > 0 ? (
+              <Table
+                columns={[...resolvedVendorColumns, 'actions']}
+                data={allVendors}
+                onEdit={handleEditVendor}
+                actionsAsEllipsis
+                ellipsisMenuItems={[
+                  { label: 'Edit', onClick: (r) => handleEditVendor(r) }
+                ]}
+              />
+            ) : (
+              <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+                No vendors found
+              </div>
+            )}
+          </div>
+        )}
+        {selectedVendor && (
+          <div>
+            {(() => {
+              const items = getItemsByVendor(selectedVendor)
+              return items.length > 0 ? (
+                <Table 
+                  columns={['photo', 'product_name', 'sku', 'barcode', 'product_price', 'current_quantity', 'category']} 
+                  data={items}
+                  onEdit={handleEditProduct}
+                  actionsAsEllipsis
+                  ellipsisMenuItems={[
+                    { label: 'Edit', onClick: (r) => handleEditProduct(r) },
+                    { label: 'Barcode', onClick: (r) => handleGenerateBarcode(r) }
+                  ]}
+                />
+              ) : (
+                <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+                  No items found for this vendor
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>
@@ -746,6 +1489,11 @@ function Inventory() {
           columns={['photo', 'product_name', 'sku', 'barcode', 'product_price', 'current_quantity', 'category', 'vendor_name', 'vendor']} 
           data={filteredInventory}
           onEdit={handleEditProduct}
+          actionsAsEllipsis
+          ellipsisMenuItems={[
+            { label: 'Edit', onClick: (r) => handleEditProduct(r) },
+            { label: 'Barcode', onClick: (r) => handleGenerateBarcode(r) }
+          ]}
         />
       </div>
     )
@@ -768,83 +1516,15 @@ function Inventory() {
   }
 
   return (
-    <div style={{ padding: '40px', maxWidth: '1600px', margin: '0 auto' }}>
+    <div style={{ padding: '20px 40px 40px 40px', maxWidth: '1600px', margin: '0 auto', backgroundColor: 'white' }}>
       {/* Header with Create Buttons */}
       <div style={{ 
         display: 'flex', 
         gap: '12px', 
         marginBottom: '20px',
-        flexWrap: 'wrap'
+        flexWrap: 'wrap',
+        marginTop: '0'
       }}>
-        <button
-          onClick={() => setShowCreateProduct(true)}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: 500,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-          }}
-        >
-          + Create Product
-        </button>
-        <button
-          onClick={() => setShowCreateCategory(true)}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: 500,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-          }}
-        >
-          + Create Category
-        </button>
-        <button
-          onClick={() => setShowCreateVendor(true)}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: 500,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            boxShadow: `0 2px 8px rgba(${themeColorRgb}, 0.2)`
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.9)`
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-          }}
-        >
-          + Create Vendor
-        </button>
       </div>
 
       <div style={{ display: 'flex', gap: '30px', height: 'calc(100vh - 200px)' }}>
@@ -855,14 +1535,25 @@ function Inventory() {
           display: 'flex',
           flexDirection: 'column'
         }}>
-          <div style={{ marginBottom: '20px' }}>
+          <div style={{ marginBottom: '0px', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '0' }}>
             <input
               type="text"
               placeholder="Search by name, SKU, barcode..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
+                // Clear selected category/vendor when searching to show all results
+                if (e.target.value.trim() !== '') {
+                  setSelectedCategory(null)
+                  setSelectedVendor(null)
+                  // Automatically switch to 'all' view when searching
+                  if (filterView !== 'all') {
+                    setFilterView('all')
+                  }
+                }
+              }}
               style={{
-                width: '100%',
+                flex: 1,
                 padding: '8px 0',
                 border: 'none',
                 borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd',
@@ -875,57 +1566,269 @@ function Inventory() {
                 color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
               }}
             />
+            <button
+              onClick={() => setShowBarcodeScanner(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '28px',
+                height: '28px',
+                padding: '4px',
+                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                color: '#fff',
+                boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+              }}
+            >
+              <ScanBarcode size={16} />
+            </button>
           </div>
+
+          {/* Barcode Preview Container */}
+          {(barcodeLoading || barcodePreview || barcodeError) && (
+            <div style={{
+              marginTop: '20px',
+              marginBottom: '20px',
+              padding: '16px',
+              borderRadius: '8px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              boxShadow: isDarkMode ? '0 2px 8px rgba(0, 0, 0, 0.2)' : '0 2px 8px rgba(0, 0, 0, 0.1)'
+            }}>
+              {barcodeError && !barcodeLoading && (
+                <div style={{
+                  padding: '8px',
+                  backgroundColor: isDarkMode ? 'rgba(198, 40, 40, 0.2)' : '#fee',
+                  border: isDarkMode ? '1px solid rgba(198, 40, 40, 0.4)' : '1px solid #fcc',
+                  borderRadius: '4px',
+                  color: isDarkMode ? '#ef5350' : '#c33',
+                  marginBottom: '12px',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <span>{barcodeError}</span>
+                  <button
+                    type="button"
+                    onClick={handleCloseBarcodePreview}
+                    aria-label="Close"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px',
+                      border: 'none',
+                      borderRadius: '4px',
+                      backgroundColor: 'transparent',
+                      color: isDarkMode ? '#ef5350' : '#c33',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+              
+              {barcodeLoading && (
+                <div style={{
+                  padding: '12px',
+                  textAlign: 'center',
+                  color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666',
+                  fontSize: '13px'
+                }}>
+                  Generating barcode...
+                </div>
+              )}
+              
+              {barcodePreview && !barcodeLoading && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{
+                      padding: '8px',
+                      backgroundColor: isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#f8f9fa',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <img
+                        src={barcodePreview.imageDataUrl}
+                        alt="Product barcode"
+                        style={{ height: '60px', width: 'auto', objectFit: 'contain' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        marginBottom: '4px',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}>
+                        {barcodePreview.product?.product_name || 'Product'}
+                      </div>
+                      {(barcodePreview.product?.sku || barcodePreview.product?.barcode) && (
+                        <div style={{
+                          fontSize: '12px',
+                          color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}>
+                          {[barcodePreview.product?.sku, barcodePreview.product?.barcode].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    flexWrap: 'wrap',
+                    paddingTop: '8px',
+                    borderTop: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee'
+                  }}>
+                    {typeof navigator !== 'undefined' && navigator.share && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const f = new File(
+                              [barcodePreview.blob],
+                              `barcode_${(barcodePreview.product?.product_name || 'product').replace(/[^a-z0-9.-]/gi, '_')}.png`,
+                              { type: 'image/png' }
+                            )
+                            await navigator.share({
+                              files: [f],
+                              title: `${barcodePreview.product?.product_name || 'Product'} – Barcode`
+                            })
+                          } catch (e) {
+                            if (e.name !== 'AbortError') console.error(e)
+                          }
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '8px 12px',
+                          border: 'none',
+                          borderRadius: '6px',
+                          backgroundColor: `rgba(${themeColorRgb}, 0.1)`,
+                          color: `rgb(${themeColorRgb})`,
+                          fontSize: '12px',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'background-color 0.2s',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.1)`
+                        }}
+                      >
+                        <Share2 size={14} /> Share
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const a = document.createElement('a')
+                        a.href = barcodePreview.imageDataUrl
+                        a.download = `barcode_${(barcodePreview.product?.product_name || 'product').replace(/[^a-z0-9.-]/gi, '_')}_${barcodePreview.product?.product_id || ''}.png`
+                        a.click()
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '8px 12px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        backgroundColor: `rgba(${themeColorRgb}, 0.1)`,
+                        color: `rgb(${themeColorRgb})`,
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.1)`
+                      }}
+                    >
+                      <Download size={14} /> Download
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const w = window.open('', '_blank', 'width=400,height=360')
+                        if (!w) return
+                        const name = (barcodePreview.product?.product_name || 'Product').replace(/</g, '&lt;')
+                        const sku = (barcodePreview.product?.sku || '').replace(/</g, '&lt;')
+                        const bc = (barcodePreview.product?.barcode || '').replace(/</g, '&lt;')
+                        w.document.write(`
+                          <!DOCTYPE html><html><head><title>Barcode – ${name}</title></head>
+                          <body style="margin:24px;font-family:sans-serif;text-align:center">
+                            <h2 style="margin:0 0 16px">${name}</h2>
+                            <img src="${barcodePreview.imageDataUrl}" alt="Barcode" style="max-width:100%;height:auto" />
+                            <p style="margin:16px 0 0;color:#666">${sku} ${bc}</p>
+                            <p style="margin:12px 0 0"><a href="#" onclick="window.close();return false">Close</a></p>
+                          </body></html>
+                        `)
+                        w.document.close()
+                        w.focus()
+                        w.print()
+                        if (w.onafterprint !== undefined) w.onafterprint = () => w.close()
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '8px 12px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        backgroundColor: `rgba(${themeColorRgb}, 0.1)`,
+                        color: `rgb(${themeColorRgb})`,
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.2)`
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.1)`
+                      }}
+                    >
+                      <Printer size={14} /> Print
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Create Product Form */}
           {showCreateProduct && (
             <div style={{
-              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
-              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-              borderRadius: '8px',
-              padding: '16px',
+              marginTop: '20px',
               marginBottom: '20px',
               maxHeight: 'calc(100vh - 300px)',
               overflowY: 'auto'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                  Create New Product
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateProduct(false)
-                    setCreateError(null)
-                    setCreateSuccess(false)
-                    setCreateProductData({
-                      product_name: '',
-                      sku: '',
-                      barcode: '',
-                      product_price: '',
-                      product_cost: '',
-                      current_quantity: '0',
-                      category: '',
-                      vendor: '',
-                      vendor_id: null,
-                      photo: null
-                    })
-                    setPhotoPreview(null)
-                  }}
-                  style={{
-                    padding: '4px 8px',
-                    backgroundColor: 'transparent',
-                    border: 'none',
-                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    lineHeight: 1
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
               {createError && (
                 <div style={{
                   padding: '8px',
@@ -955,15 +1858,23 @@ function Inventory() {
               )}
 
               <form onSubmit={handleCreateProduct}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Product Name *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      Product Name
                     </label>
                     <input
                       type="text"
                       value={createProductData.product_name}
                       onChange={(e) => setCreateProductData({ ...createProductData, product_name: e.target.value })}
+                      placeholder="Product Name *"
                       required
                       style={{
                         width: '100%',
@@ -979,13 +1890,21 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      SKU *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      SKU
                     </label>
                     <input
                       type="text"
                       value={createProductData.sku}
                       onChange={(e) => setCreateProductData({ ...createProductData, sku: e.target.value })}
+                      placeholder="SKU *"
                       required
                       style={{
                         width: '100%',
@@ -1001,13 +1920,21 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Barcode
                     </label>
                     <input
                       type="text"
                       value={createProductData.barcode}
                       onChange={(e) => setCreateProductData({ ...createProductData, barcode: e.target.value })}
+                      placeholder="Barcode"
                       style={{
                         width: '100%',
                         padding: '6px',
@@ -1023,8 +1950,15 @@ function Inventory() {
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     <div>
-                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                        Price *
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '4px',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}>
+                        Price
                       </label>
                       <input
                         type="number"
@@ -1032,6 +1966,7 @@ function Inventory() {
                         min="0"
                         value={createProductData.product_price}
                         onChange={(e) => setCreateProductData({ ...createProductData, product_price: e.target.value })}
+                        placeholder="Price *"
                         required
                         style={{
                           width: '100%',
@@ -1047,8 +1982,15 @@ function Inventory() {
                     </div>
 
                     <div>
-                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                        Cost *
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '4px',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}>
+                        Cost
                       </label>
                       <input
                         type="number"
@@ -1056,6 +1998,7 @@ function Inventory() {
                         min="0"
                         value={createProductData.product_cost}
                         onChange={(e) => setCreateProductData({ ...createProductData, product_cost: e.target.value })}
+                        placeholder="Cost *"
                         required
                         style={{
                           width: '100%',
@@ -1072,14 +2015,22 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Quantity *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      Quantity
                     </label>
                     <input
                       type="number"
                       min="0"
                       value={createProductData.current_quantity}
                       onChange={(e) => setCreateProductData({ ...createProductData, current_quantity: e.target.value })}
+                      placeholder="Quantity *"
                       required
                       style={{
                         width: '100%',
@@ -1095,14 +2046,21 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Category
                     </label>
                     <input
                       type="text"
                       value={createProductData.category}
                       onChange={(e) => setCreateProductData({ ...createProductData, category: e.target.value })}
-                      placeholder="e.g., Electronics &gt; Phones"
+                      placeholder="Category (e.g., Electronics > Phones)"
                       style={{
                         width: '100%',
                         padding: '6px',
@@ -1117,10 +2075,7 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Vendor
-                    </label>
-                    <select
+                    <CustomDropdown
                       value={createProductData.vendor || ''}
                       onChange={(e) => {
                         const vendor = allVendors.find(v => v.vendor_name === e.target.value)
@@ -1130,59 +2085,94 @@ function Inventory() {
                           vendor_id: vendor ? vendor.vendor_id : null
                         })
                       }}
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '13px',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                        boxSizing: 'border-box'
-                      }}
-                    >
-                      <option value="">Select a vendor (optional)</option>
-                      {allVendors.map(vendor => (
-                        <option key={vendor.vendor_id} value={vendor.vendor_name}>
-                          {vendor.vendor_name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: '', label: 'Vendor (optional)' },
+                        ...allVendors.map(vendor => ({
+                          value: vendor.vendor_name,
+                          label: vendor.vendor_name
+                        }))
+                      ]}
+                      placeholder="Vendor (optional)"
+                      isDarkMode={isDarkMode}
+                      themeColorRgb={themeColorRgb}
+                      style={{ width: '100%' }}
+                    />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Product Photo
-                    </label>
+                    {!createProductData.photo ? (
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          transition: 'all 0.2s ease',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
+                          e.target.style.backgroundColor = isDarkMode 
+                            ? `rgba(${themeColorRgb}, 0.1)` 
+                            : `rgba(${themeColorRgb}, 0.05)`
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
+                          e.target.style.backgroundColor = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff'
+                        }}
+                      >
+                        <Upload size={16} />
+                        <span>Choose File</span>
+                      </button>
+                    ) : (
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCroppingPhoto(false)
+                            setShowPhotoPreview((prev) => !prev)
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '6px',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                            boxSizing: 'border-box',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            transition: 'all 0.2s ease',
+                            fontFamily: '"Product Sans", sans-serif'
+                          }}
+                        >
+                          <ImageIcon size={16} />
+                          <span>Preview</span>
+                        </button>
+                      </div>
+                    )}
                     <input
+                      ref={fileInputRef}
                       type="file"
                       accept="image/*"
                       onChange={handlePhotoChange}
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '13px',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                        boxSizing: 'border-box'
-                      }}
+                      style={{ display: 'none' }}
                     />
-                    {photoPreview && (
-                      <div style={{ marginTop: '8px' }}>
-                        <img
-                          src={photoPreview}
-                          alt="Preview"
-                          style={{
-                            maxWidth: '100%',
-                            maxHeight: '120px',
-                            borderRadius: '4px',
-                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'
-                          }}
-                        />
-                      </div>
-                    )}
                   </div>
 
                   <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
@@ -1247,38 +2237,9 @@ function Inventory() {
           {/* Create Category Form */}
           {showCreateCategory && (
             <div style={{
-              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
-              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-              borderRadius: '8px',
-              padding: '16px',
+              marginTop: '20px',
               marginBottom: '20px'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                  Create New Category
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateCategory(false)
-                    setCreateError(null)
-                    setCreateSuccess(false)
-                    setCreateCategoryData({ category_name: '' })
-                  }}
-                  style={{
-                    padding: '4px 8px',
-                    backgroundColor: 'transparent',
-                    border: 'none',
-                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    lineHeight: 1
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
               {createError && (
                 <div style={{
                   padding: '8px',
@@ -1303,21 +2264,28 @@ function Inventory() {
                   marginBottom: '12px',
                   fontSize: '12px'
                 }}>
-                  Category created successfully!
+                  Category {editingCategory ? 'updated' : 'created'} successfully!
                 </div>
               )}
 
               <form onSubmit={handleCreateCategory}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Category Name *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      {editingCategory ? 'Category Path' : 'Category Name'}
                     </label>
                     <input
                       type="text"
                       value={createCategoryData.category_name}
                       onChange={(e) => setCreateCategoryData({ category_name: e.target.value })}
-                      placeholder="e.g., Electronics &gt; Phones or just Electronics"
+                      placeholder={editingCategory ? "Category Path * (e.g., Food & Beverage > Produce > Vegetables)" : "Category Name * (e.g., Electronics > Phones or just Electronics)"}
                       required
                       style={{
                         width: '100%',
@@ -1343,6 +2311,7 @@ function Inventory() {
                         setCreateError(null)
                         setCreateSuccess(false)
                         setCreateCategoryData({ category_name: '' })
+                        setEditingCategory(null)
                       }}
                       disabled={createLoading}
                       style={{
@@ -1385,46 +2354,11 @@ function Inventory() {
           {/* Create Vendor Form */}
           {showCreateVendor && (
             <div style={{
-              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
-              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-              borderRadius: '8px',
-              padding: '16px',
+              marginTop: '20px',
               marginBottom: '20px',
               maxHeight: 'calc(100vh - 300px)',
               overflowY: 'auto'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                  Create New Vendor
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateVendor(false)
-                    setCreateError(null)
-                    setCreateSuccess(false)
-                    setCreateVendorData({
-                      vendor_name: '',
-                      contact_person: '',
-                      email: '',
-                      phone: '',
-                      address: ''
-                    })
-                  }}
-                  style={{
-                    padding: '4px 8px',
-                    backgroundColor: 'transparent',
-                    border: 'none',
-                    color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    lineHeight: 1
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
               {createError && (
                 <div style={{
                   padding: '8px',
@@ -1449,20 +2383,28 @@ function Inventory() {
                   marginBottom: '12px',
                   fontSize: '12px'
                 }}>
-                  Vendor created successfully!
+                  Vendor {editingVendor ? 'updated' : 'created'} successfully!
                 </div>
               )}
 
               <form onSubmit={handleCreateVendor}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Vendor Name *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      Vendor Name
                     </label>
                     <input
                       type="text"
                       value={createVendorData.vendor_name}
                       onChange={(e) => setCreateVendorData({ ...createVendorData, vendor_name: e.target.value })}
+                      placeholder="Vendor Name *"
                       required
                       style={{
                         width: '100%',
@@ -1478,13 +2420,21 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Contact Person
                     </label>
                     <input
                       type="text"
                       value={createVendorData.contact_person}
                       onChange={(e) => setCreateVendorData({ ...createVendorData, contact_person: e.target.value })}
+                      placeholder="Contact Person"
                       style={{
                         width: '100%',
                         padding: '6px',
@@ -1499,13 +2449,21 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Email
                     </label>
                     <input
                       type="email"
                       value={createVendorData.email}
                       onChange={(e) => setCreateVendorData({ ...createVendorData, email: e.target.value })}
+                      placeholder="Email"
                       style={{
                         width: '100%',
                         padding: '6px',
@@ -1520,13 +2478,21 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Phone
                     </label>
                     <input
                       type="tel"
                       value={createVendorData.phone}
                       onChange={(e) => setCreateVendorData({ ...createVendorData, phone: e.target.value })}
+                      placeholder="Phone"
                       style={{
                         width: '100%',
                         padding: '6px',
@@ -1541,12 +2507,20 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Address
                     </label>
                     <textarea
                       value={createVendorData.address}
                       onChange={(e) => setCreateVendorData({ ...createVendorData, address: e.target.value })}
+                      placeholder="Address"
                       rows={3}
                       style={{
                         width: '100%',
@@ -1576,6 +2550,7 @@ function Inventory() {
                           phone: '',
                           address: ''
                         })
+                        setEditingVendor(null)
                       }}
                       disabled={createLoading}
                       style={{
@@ -1607,7 +2582,7 @@ function Inventory() {
                         fontWeight: 500
                       }}
                     >
-                      {createLoading ? 'Creating...' : 'Create'}
+                      {createLoading ? (editingVendor ? 'Updating...' : 'Creating...') : (editingVendor ? 'Update' : 'Create')}
                     </button>
                   </div>
                 </div>
@@ -1618,11 +2593,10 @@ function Inventory() {
           {/* Edit Product Form */}
           {editingProduct && (
             <div style={{
-              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
-              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-              borderRadius: '8px',
-              padding: '12px',
-              marginTop: '20px'
+              marginTop: '20px',
+              marginBottom: '20px',
+              maxHeight: 'calc(100vh - 300px)',
+              overflowY: 'auto'
             }}>
               {editError && (
                 <div style={{
@@ -1655,14 +2629,22 @@ function Inventory() {
               <form onSubmit={handleSaveProduct}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Product Name *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      Product Name
                     </label>
                     <input
                       type="text"
                       name="product_name"
                       value={editFormData.product_name || ''}
                       onChange={handleEditChange}
+                      placeholder="Product Name *"
                       required
                       style={{
                         width: '100%',
@@ -1679,14 +2661,22 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      SKU *
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      SKU
                     </label>
                     <input
                       type="text"
                       name="sku"
                       value={editFormData.sku || ''}
                       onChange={handleEditChange}
+                      placeholder="SKU *"
                       required
                       style={{
                         width: '100%',
@@ -1703,7 +2693,14 @@ function Inventory() {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Barcode
                     </label>
                     <input
@@ -1711,22 +2708,129 @@ function Inventory() {
                       name="barcode"
                       value={editFormData.barcode || ''}
                       onChange={handleEditChange}
+                      placeholder="Barcode"
                       style={{
                         width: '100%',
                         padding: '6px',
                         border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
-                        boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif',
                         backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '4px',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}>
+                        Price
+                      </label>
+                      <input
+                        type="number"
+                        name="product_price"
+                        step="0.01"
+                        min="0"
+                        value={editFormData.product_price || ''}
+                        onChange={handleEditChange}
+                        placeholder="Price *"
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '4px',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                        fontFamily: '"Product Sans", sans-serif'
+                      }}>
+                        Cost
+                      </label>
+                      <input
+                        type="number"
+                        name="product_cost"
+                        step="0.01"
+                        min="0"
+                        value={editFormData.product_cost || ''}
+                        onChange={handleEditChange}
+                        placeholder="Cost *"
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
+                      Quantity
+                    </label>
+                    <input
+                      type="number"
+                      name="current_quantity"
+                      min="0"
+                      value={editFormData.current_quantity || ''}
+                      onChange={handleEditChange}
+                      placeholder="Quantity *"
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Category
                     </label>
                     <input
@@ -1734,126 +2838,132 @@ function Inventory() {
                       name="category"
                       value={editFormData.category || ''}
                       onChange={handleEditChange}
+                      placeholder="Category (e.g., Electronics > Phones)"
                       style={{
                         width: '100%',
                         padding: '6px',
                         border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '13px',
-                        boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif',
                         backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        boxSizing: 'border-box'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Product Price *
-                    </label>
-                    <input
-                      type="number"
-                      name="product_price"
-                      value={editFormData.product_price || ''}
-                      onChange={handleEditChange}
-                      required
-                      min="0"
-                      step="0.01"
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '13px',
-                        boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Product Cost *
-                    </label>
-                    <input
-                      type="number"
-                      name="product_cost"
-                      value={editFormData.product_cost || ''}
-                      onChange={handleEditChange}
-                      required
-                      min="0"
-                      step="0.01"
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '13px',
-                        boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                      Current Quantity *
-                    </label>
-                    <input
-                      type="number"
-                      name="current_quantity"
-                      value={editFormData.current_quantity || ''}
-                      onChange={handleEditChange}
-                      required
-                      min="0"
-                      step="1"
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '13px',
-                        boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', fontWeight: 500, fontFamily: '"Product Sans", sans-serif', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '4px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                      fontFamily: '"Product Sans", sans-serif'
+                    }}>
                       Vendor
                     </label>
-                    <input
-                      type="text"
-                      name="vendor"
+                    <CustomDropdown
                       value={editFormData.vendor || ''}
-                      onChange={handleEditChange}
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '4px',
-                        fontSize: '13px',
-                        boxSizing: 'border-box',
-                        fontFamily: '"Product Sans", sans-serif',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                      onChange={(e) => {
+                        const vendor = allVendors.find(v => v.vendor_name === e.target.value)
+                        setEditFormData({ 
+                          ...editFormData, 
+                          vendor: e.target.value,
+                          vendor_id: vendor ? vendor.vendor_id : null
+                        })
                       }}
+                      options={[
+                        { value: '', label: 'Vendor (optional)' },
+                        ...allVendors.map(vendor => ({
+                          value: vendor.vendor_name,
+                          label: vendor.vendor_name
+                        }))
+                      ]}
+                      placeholder="Vendor (optional)"
+                      isDarkMode={isDarkMode}
+                      themeColorRgb={themeColorRgb}
+                      style={{ width: '100%' }}
                     />
                   </div>
 
-                  <div style={{
-                    display: 'flex',
-                    gap: '8px',
-                    marginTop: '4px'
-                  }}>
+                  <div>
+                    {!editFormData.photo && !editPhotoPreview ? (
+                      <button
+                        type="button"
+                        onClick={() => editFileInputRef.current?.click()}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          transition: 'all 0.2s ease',
+                          fontFamily: '"Product Sans", sans-serif'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
+                          e.target.style.backgroundColor = isDarkMode 
+                            ? `rgba(${themeColorRgb}, 0.1)` 
+                            : `rgba(${themeColorRgb}, 0.05)`
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
+                          e.target.style.backgroundColor = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff'
+                        }}
+                      >
+                        <Upload size={16} />
+                        <span>Choose File</span>
+                      </button>
+                    ) : (
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditIsCroppingPhoto(false)
+                            setEditShowPhotoPreview((prev) => !prev)
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '6px',
+                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                            boxSizing: 'border-box',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            transition: 'all 0.2s ease',
+                            fontFamily: '"Product Sans", sans-serif'
+                          }}
+                        >
+                          <ImageIcon size={16} />
+                          <span>Preview</span>
+                        </button>
+                      </div>
+                    )}
+                    <input
+                      ref={editFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleEditPhotoChange}
+                      style={{ display: 'none' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                     <button
                       type="button"
                       onClick={handleCloseEdit}
@@ -1910,26 +3020,32 @@ function Inventory() {
           {/* Filter Buttons */}
           <div style={{ 
             display: 'flex', 
+            alignItems: 'center',
             gap: '8px', 
-            marginBottom: '20px',
-            borderBottom: isDarkMode ? '2px solid var(--border-light, #333)' : '2px solid #eee',
-            paddingBottom: '12px'
+            marginBottom: '8px',
+            marginTop: '3px'
           }}>
             <button
               onClick={() => handleFilterChange('category')}
               style={{
-                padding: '10px 16px',
-                backgroundColor: filterView === 'category' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: filterView === 'category' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+                padding: '4px 16px',
+                height: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                whiteSpace: 'nowrap',
+                backgroundColor: filterView === 'category' 
+                  ? `rgba(${themeColorRgb}, 0.7)` 
+                  : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                border: filterView === 'category' 
+                  ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                  : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: filterView === 'category' ? 600 : 500,
-                color: '#fff',
+                color: filterView === 'category' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: filterView === 'category' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+                boxShadow: filterView === 'category' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
               }}
             >
               Category
@@ -1937,18 +3053,24 @@ function Inventory() {
             <button
               onClick={() => handleFilterChange('vendor')}
               style={{
-                padding: '10px 16px',
-                backgroundColor: filterView === 'vendor' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: filterView === 'vendor' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+                padding: '4px 16px',
+                height: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                whiteSpace: 'nowrap',
+                backgroundColor: filterView === 'vendor' 
+                  ? `rgba(${themeColorRgb}, 0.7)` 
+                  : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                border: filterView === 'vendor' 
+                  ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                  : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: filterView === 'vendor' ? 600 : 500,
-                color: '#fff',
+                color: filterView === 'vendor' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: filterView === 'vendor' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+                boxShadow: filterView === 'vendor' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
               }}
             >
               Vendor
@@ -1956,22 +3078,192 @@ function Inventory() {
             <button
               onClick={() => handleFilterChange('all')}
               style={{
-                padding: '10px 16px',
-                backgroundColor: filterView === 'all' ? `rgba(${themeColorRgb}, 0.7)` : `rgba(${themeColorRgb}, 0.2)`,
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: filterView === 'all' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`,
+                padding: '4px 16px',
+                height: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                whiteSpace: 'nowrap',
+                backgroundColor: filterView === 'all' 
+                  ? `rgba(${themeColorRgb}, 0.7)` 
+                  : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                border: filterView === 'all' 
+                  ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                  : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: filterView === 'all' ? 600 : 500,
-                color: '#fff',
+                color: filterView === 'all' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: filterView === 'all' ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
+                boxShadow: filterView === 'all' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
               }}
             >
               All
             </button>
+            <div style={{ position: 'relative' }} data-create-dropdown>
+              <button
+                onClick={() => setShowCreateDropdown(!showCreateDropdown)}
+                style={{
+                  padding: '4px 16px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  backgroundColor: showCreateDropdown 
+                    ? `rgba(${themeColorRgb}, 0.7)` 
+                    : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                  border: showCreateDropdown 
+                    ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                    : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  color: showCreateDropdown ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  boxShadow: showCreateDropdown ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                }}
+              >
+                <Plus size={16} />
+                Create
+                <ChevronDown size={14} />
+              </button>
+              {showCreateDropdown && (
+                <div data-create-dropdown style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  marginTop: '4px',
+                  backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                  border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                  zIndex: 1000,
+                  minWidth: '160px',
+                  overflow: 'hidden'
+                }}>
+                  <button
+                    onClick={() => {
+                      setShowCreateProduct(true)
+                      setShowCreateCategory(false)
+                      setShowCreateVendor(false)
+                      setShowCreateDropdown(false)
+                      setEditingProduct(null)
+                      setEditingCategory(null)
+                      setEditingVendor(null)
+                      handleCloseBarcodePreview()
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 16px',
+                      textAlign: 'left',
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.2s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent'
+                    }}
+                  >
+                    <Plus size={16} />
+                    Product
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCreateCategory(true)
+                      setShowCreateProduct(false)
+                      setShowCreateVendor(false)
+                      setShowCreateDropdown(false)
+                      setEditingProduct(null)
+                      setEditingCategory(null)
+                      setEditingVendor(null)
+                      setCreateCategoryData({ category_name: '' })
+                      handleCloseBarcodePreview()
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 16px',
+                      textAlign: 'left',
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.2s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#eee'}`
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent'
+                    }}
+                  >
+                    <Plus size={16} />
+                    Category
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCreateVendor(true)
+                      setShowCreateProduct(false)
+                      setShowCreateCategory(false)
+                      setShowCreateDropdown(false)
+                      setEditingProduct(null)
+                      setEditingCategory(null)
+                      setEditingVendor(null)
+                      setCreateVendorData({
+                        vendor_name: '',
+                        contact_person: '',
+                        email: '',
+                        phone: '',
+                        address: ''
+                      })
+                      handleCloseBarcodePreview()
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 16px',
+                      textAlign: 'left',
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.2s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#eee'}`
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent'
+                    }}
+                  >
+                    <Plus size={16} />
+                    Vendor
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Content Area */}
@@ -1987,7 +3279,670 @@ function Inventory() {
         </div>
       </div>
 
+      {/* Barcode Scanner Modal */}
+      {showBarcodeScanner && (
+        <BarcodeScanner
+          onScan={handleBarcodeScan}
+          onClose={() => setShowBarcodeScanner(false)}
+          themeColor={themeColor}
+        />
+      )}
+
+      {showPhotoPreview && photoPreview && (
+        <div
+          onClick={() => {
+            setShowPhotoPreview(false)
+            setIsCroppingPhoto(false)
+            setFixedContainerSize({ width: 0, height: 0 })
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10050
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '8px',
+              padding: '16px',
+              boxShadow: isDarkMode ? '0 12px 30px rgba(0, 0, 0, 0.5)' : '0 12px 30px rgba(0, 0, 0, 0.2)',
+              maxWidth: isCroppingPhoto ? '95vw' : '90vw',
+              maxHeight: isCroppingPhoto ? '95vh' : '90vh',
+              width: isCroppingPhoto ? '95vw' : 'fit-content',
+              minWidth: isCroppingPhoto ? '800px' : '400px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: isCroppingPhoto ? '600px' : '400px',
+              overflow: 'hidden'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', gap: '12px' }}>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                Photo Preview
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={handleRemovePhoto}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                    backgroundColor: isDarkMode ? 'rgba(255, 77, 79, 0.15)' : 'rgba(255, 77, 79, 0.12)',
+                    color: isDarkMode ? '#ffb3b3' : '#d13d3d',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 600
+                  }}
+                >
+                  Remove
+                </button>
+                {isCroppingPhoto ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={applyPhotoCrop}
+                      disabled={!cropBox.width || !cropBox.height}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        border: `1px solid rgba(${themeColorRgb}, 0.5)`,
+                        backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                        color: '#fff',
+                        cursor: cropBox.width && cropBox.height ? 'pointer' : 'not-allowed',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        opacity: cropBox.width && cropBox.height ? 1 : 0.6
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCroppingPhoto(false)
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        fontWeight: 500
+                      }}
+                    >
+                      Cancel Crop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newCropMode = !isCroppingPhoto
+                      setIsCroppingPhoto(newCropMode)
+                      // Initialize crop box to full image when enabling crop mode
+                      if (newCropMode && cropImageRef.current) {
+                        const rect = cropImageRef.current.getBoundingClientRect()
+                        setPhotoDisplaySize({ width: rect.width, height: rect.height })
+                        setCropBox({
+                          x: 0,
+                          y: 0,
+                          width: rect.width,
+                          height: rect.height
+                        })
+                      }
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 500
+                    }}
+                  >
+                    Crop
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPhotoPreview(false)
+                    setIsCroppingPhoto(false)
+                  }}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 500
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div
+                ref={cropContainerRef}
+                onMouseDown={handleCropMouseDown}
+                onMouseMove={handleCropMouseMove}
+                onMouseUp={handleCropMouseUp}
+                onMouseLeave={handleCropMouseUp}
+                style={{
+                  position: 'relative',
+                  display: 'inline-block',
+                  borderRadius: '6px',
+                  userSelect: 'none',
+                  cursor: 'default',
+                  maxWidth: 'calc(90vw - 100px)',
+                  maxHeight: 'calc(90vh - 150px)',
+                  margin: '0 auto'
+                }}
+              >
+              <img
+                ref={cropImageRef}
+                src={photoPreview}
+                alt="Preview"
+                onLoad={() => {
+                  if (!cropImageRef.current) return
+                  // Use natural dimensions for scaling calculations
+                  const naturalWidth = cropImageRef.current.naturalWidth
+                  const naturalHeight = cropImageRef.current.naturalHeight
+                  const rect = cropImageRef.current.getBoundingClientRect()
+                  
+                  // Calculate scaled dimensions that fit within modal
+                  const maxW = Math.min(rect.width, window.innerWidth * 0.9 - 100)
+                  const maxH = Math.min(rect.height, window.innerHeight * 0.9 - 150)
+                  
+                  setPhotoDisplaySize({ width: rect.width, height: rect.height })
+                  
+                  // If we're in crop mode, initialize crop box to full image
+                  if (isCroppingPhoto) {
+                    setCropBox({
+                      x: 0,
+                      y: 0,
+                      width: rect.width,
+                      height: rect.height
+                    })
+                  }
+                }}
+                style={{
+                  maxWidth: 'calc(90vw - 100px)',
+                  maxHeight: 'calc(90vh - 150px)',
+                  width: 'auto',
+                  height: 'auto',
+                  borderRadius: '6px',
+                  display: 'block',
+                  border: isDarkMode ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)',
+                  boxShadow: isDarkMode ? '0 0 0 1px rgba(255, 255, 255, 0.05)' : '0 0 0 1px rgba(0, 0, 0, 0.05)',
+                  objectFit: 'contain'
+                }}
+              />
+              {isCroppingPhoto && cropBox.width > 0 && cropBox.height > 0 && (
+                <div
+                  onMouseDown={(e) => e.stopPropagation()}
+                  style={{
+                    position: 'absolute',
+                    left: cropBox.x,
+                    top: cropBox.y,
+                    width: cropBox.width,
+                    height: cropBox.height,
+                    border: `2px solid rgba(${themeColorRgb}, 0.9)`,
+                    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+                    boxSizing: 'border-box',
+                    pointerEvents: 'auto'
+                  }}
+                >
+                  {[
+                    { id: 'nw', left: 0, top: 0, cursor: 'nwse-resize' },
+                    { id: 'n', left: '50%', top: 0, transform: 'translateX(-50%)', cursor: 'ns-resize' },
+                    { id: 'ne', right: 0, top: 0, cursor: 'nesw-resize' },
+                    { id: 'e', right: 0, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' },
+                    { id: 'se', right: 0, bottom: 0, cursor: 'nwse-resize' },
+                    { id: 's', left: '50%', bottom: 0, transform: 'translateX(-50%)', cursor: 'ns-resize' },
+                    { id: 'sw', left: 0, bottom: 0, cursor: 'nesw-resize' },
+                    { id: 'w', left: 0, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' }
+                  ].map(({ id, cursor, ...pos }) => (
+                    <div
+                      key={id}
+                      onMouseDown={(e) => handleResizeMouseDown(e, id)}
+                      style={{
+                        position: 'absolute',
+                        width: 10,
+                        height: 10,
+                        backgroundColor: `rgba(${themeColorRgb}, 0.9)`,
+                        border: '1px solid #fff',
+                        borderRadius: 1,
+                        cursor,
+                        ...pos
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Photo Preview Modal */}
+      {editShowPhotoPreview && editPhotoPreview && (
+        <div
+          onClick={() => {
+            setEditShowPhotoPreview(false)
+            setEditIsCroppingPhoto(false)
+            setEditFixedContainerSize({ width: 0, height: 0 })
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10050
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '8px',
+              padding: '16px',
+              boxShadow: isDarkMode ? '0 12px 30px rgba(0, 0, 0, 0.5)' : '0 12px 30px rgba(0, 0, 0, 0.2)',
+              maxWidth: editIsCroppingPhoto ? '95vw' : '90vw',
+              maxHeight: editIsCroppingPhoto ? '95vh' : '90vh',
+              width: editIsCroppingPhoto ? '95vw' : 'fit-content',
+              minWidth: editIsCroppingPhoto ? '800px' : '400px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: editIsCroppingPhoto ? '600px' : '400px',
+              overflow: 'hidden'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', gap: '12px', width: '100%' }}>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                Photo Preview
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={handleEditRemovePhoto}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                    backgroundColor: isDarkMode ? 'rgba(255, 77, 79, 0.15)' : 'rgba(255, 77, 79, 0.12)',
+                    color: isDarkMode ? '#ffb3b3' : '#d13d3d',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 600
+                  }}
+                >
+                  Remove
+                </button>
+                {editIsCroppingPhoto ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={applyEditPhotoCrop}
+                      disabled={!editCropBox.width || !editCropBox.height}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        border: `1px solid rgba(${themeColorRgb}, 0.5)`,
+                        backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                        color: '#fff',
+                        cursor: editCropBox.width && editCropBox.height ? 'pointer' : 'not-allowed',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        opacity: editCropBox.width && editCropBox.height ? 1 : 0.6
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditIsCroppingPhoto(false)
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        fontWeight: 500
+                      }}
+                    >
+                      Cancel Crop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newCropMode = !editIsCroppingPhoto
+                      setEditIsCroppingPhoto(newCropMode)
+                      if (newCropMode && editCropImageRef.current) {
+                        const rect = editCropImageRef.current.getBoundingClientRect()
+                        setEditPhotoDisplaySize({ width: rect.width, height: rect.height })
+                        setEditCropBox({
+                          x: 0,
+                          y: 0,
+                          width: rect.width,
+                          height: rect.height
+                        })
+                      }
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 500
+                    }}
+                  >
+                    Crop
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditShowPhotoPreview(false)
+                    setEditIsCroppingPhoto(false)
+                    setEditFixedContainerSize({ width: 0, height: 0 })
+                  }}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 500
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div
+                ref={editCropContainerRef}
+                onMouseDown={handleEditCropMouseDown}
+                onMouseMove={handleEditCropMouseMove}
+                onMouseUp={handleEditCropMouseUp}
+                onMouseLeave={handleEditCropMouseUp}
+                style={{
+                  position: 'relative',
+                  display: 'inline-block',
+                  borderRadius: '6px',
+                  userSelect: 'none',
+                  cursor: 'default',
+                  maxWidth: 'calc(90vw - 100px)',
+                  maxHeight: 'calc(90vh - 150px)',
+                  margin: '0 auto'
+                }}
+              >
+                <img
+                  ref={editCropImageRef}
+                  src={editPhotoPreview}
+                  alt="Preview"
+                  onLoad={() => {
+                    if (!editCropImageRef.current) return
+                    const rect = editCropImageRef.current.getBoundingClientRect()
+                    setEditPhotoDisplaySize({ width: rect.width, height: rect.height })
+                    if (editFixedContainerSize.width === 0 && editFixedContainerSize.height === 0) {
+                      setEditFixedContainerSize({ width: rect.width, height: rect.height })
+                    }
+                    if (editIsCroppingPhoto) {
+                      setEditCropBox({
+                        x: 0,
+                        y: 0,
+                        width: rect.width,
+                        height: rect.height
+                      })
+                    }
+                  }}
+                  style={{
+                    maxWidth: 'calc(90vw - 100px)',
+                    maxHeight: 'calc(90vh - 150px)',
+                    width: 'auto',
+                    height: 'auto',
+                    borderRadius: '6px',
+                    display: 'block',
+                    border: isDarkMode ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)',
+                    boxShadow: isDarkMode ? '0 0 0 1px rgba(255, 255, 255, 0.05)' : '0 0 0 1px rgba(0, 0, 0, 0.05)',
+                    objectFit: 'contain'
+                  }}
+                />
+                {editIsCroppingPhoto && editCropBox.width > 0 && editCropBox.height > 0 && (
+                  <div
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      left: editCropBox.x,
+                      top: editCropBox.y,
+                      width: editCropBox.width,
+                      height: editCropBox.height,
+                      border: `2px solid rgba(${themeColorRgb}, 0.9)`,
+                      backgroundColor: 'rgba(0, 0, 0, 0.15)',
+                      boxSizing: 'border-box',
+                      pointerEvents: 'auto'
+                    }}
+                  >
+                    {[
+                      { id: 'nw', left: 0, top: 0, cursor: 'nwse-resize' },
+                      { id: 'n', left: '50%', top: 0, transform: 'translateX(-50%)', cursor: 'ns-resize' },
+                      { id: 'ne', right: 0, top: 0, cursor: 'nesw-resize' },
+                      { id: 'e', right: 0, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' },
+                      { id: 'se', right: 0, bottom: 0, cursor: 'nwse-resize' },
+                      { id: 's', left: '50%', bottom: 0, transform: 'translateX(-50%)', cursor: 'ns-resize' },
+                      { id: 'sw', left: 0, bottom: 0, cursor: 'nesw-resize' },
+                      { id: 'w', left: 0, top: '50%', transform: 'translateY(-50%)', cursor: 'ew-resize' }
+                    ].map(({ id, cursor, ...pos }) => (
+                      <div
+                        key={id}
+                        onMouseDown={(e) => handleEditResizeMouseDown(e, id)}
+                        style={{
+                          position: 'absolute',
+                          width: 10,
+                          height: 10,
+                          backgroundColor: `rgba(${themeColorRgb}, 0.9)`,
+                          border: '1px solid #fff',
+                          borderRadius: 1,
+                          cursor,
+                          ...pos
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+// Custom Dropdown Component
+function CustomDropdown({ value, onChange, options, placeholder, required, isDarkMode, themeColorRgb, style = {} }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const dropdownRef = useRef(null)
+  const triggerRef = useRef(null)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      const isClickInsideTrigger = triggerRef.current && triggerRef.current.contains(event.target)
+      const isClickInsideMenu = menuRef.current && menuRef.current.contains(event.target)
+      
+      if (!isClickInsideTrigger && !isClickInsideMenu) {
+        setIsOpen(false)
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isOpen])
+
+  const selectedOption = options.find(opt => opt.value === value)
+
+  // Calculate position for fixed dropdown
+  const getDropdownPosition = () => {
+    if (!triggerRef.current) return { top: 0, left: 0, width: 0 }
+    const rect = triggerRef.current.getBoundingClientRect()
+    return {
+      top: rect.bottom + window.scrollY + 4,
+      left: rect.left + window.scrollX,
+      width: rect.width
+    }
+  }
+
+  const dropdownPosition = isOpen ? getDropdownPosition() : { top: 0, left: 0, width: 0 }
+
+  return (
+    <>
+      <div ref={dropdownRef} style={{ position: 'relative', ...style }}>
+        <div
+          ref={triggerRef}
+          onClick={() => setIsOpen(!isOpen)}
+          style={{
+            width: '100%',
+            padding: '6px',
+            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+            borderRadius: '4px',
+            fontSize: '13px',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+            transition: 'all 0.2s ease',
+            outline: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxSizing: 'border-box',
+            ...(isOpen && {
+              borderColor: `rgba(${themeColorRgb}, 0.5)`,
+              boxShadow: `0 0 0 3px rgba(${themeColorRgb}, 0.1)`
+            })
+          }}
+          onMouseEnter={(e) => {
+            if (!isOpen) {
+              e.target.style.borderColor = `rgba(${themeColorRgb}, 0.3)`
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isOpen) {
+              e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
+            }
+          }}
+        >
+          <span style={{ 
+            color: selectedOption ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333') : (isDarkMode ? 'var(--text-tertiary, #999)' : '#999')
+          }}>
+            {selectedOption ? selectedOption.label : placeholder}
+          </span>
+          <ChevronDown 
+            size={16} 
+            style={{ 
+              transition: 'transform 0.2s ease',
+              transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+              color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666'
+            }} 
+          />
+        </div>
+      </div>
+      {isOpen && (
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: `${dropdownPosition.top}px`,
+            left: `${dropdownPosition.left}px`,
+            width: `${dropdownPosition.width}px`,
+            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+            borderRadius: '4px',
+            boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.3)' : '0 4px 12px rgba(0, 0, 0, 0.1)',
+            zIndex: 10000,
+            maxHeight: '200px',
+            overflowY: 'auto',
+            overflowX: 'hidden'
+          }}
+        >
+          {options.map((option) => (
+            <div
+              key={option.value}
+              onClick={() => {
+                onChange({ target: { value: option.value } })
+                setIsOpen(false)
+              }}
+              style={{
+                padding: '10px 14px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                backgroundColor: value === option.value 
+                  ? `rgba(${themeColorRgb}, 0.2)` 
+                  : 'transparent',
+                transition: 'background-color 0.15s ease',
+                borderLeft: value === option.value 
+                  ? `3px solid rgba(${themeColorRgb}, 0.7)` 
+                  : '3px solid transparent'
+              }}
+              onMouseEnter={(e) => {
+                if (value !== option.value) {
+                  e.target.style.backgroundColor = isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (value !== option.value) {
+                  e.target.style.backgroundColor = 'transparent'
+                }
+              }}
+            >
+              {option.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   )
 }
 

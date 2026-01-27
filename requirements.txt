@@ -1,5 +1,4 @@
-# No external dependencies required for basic SQLite usage
-# Python 3.6+ includes sqlite3 in the standard library
+# PostgreSQL only. SQLite has been removed.
 
 # Optional dependencies for document scraping:
 pdfplumber>=0.9.0  # For PDF scraping

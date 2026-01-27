@@ -3,7 +3,6 @@
 Receipt generation module with PDF and barcode support
 """
 
-import sqlite3
 import re
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -37,23 +36,21 @@ except ImportError:
     BARCODE_AVAILABLE = False
     print("Warning: python-barcode not installed. Barcode generation will be limited.")
 
-DB_NAME = 'inventory.db'
-
 def get_receipt_settings() -> Dict[str, Any]:
-    """Get receipt settings from database"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM receipt_settings ORDER BY id DESC LIMIT 1")
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row:
-        return dict(row)
-    else:
-        # Return default settings
-        return {
+    """Get receipt settings from database (PostgreSQL)"""
+    from database import get_connection
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("SELECT * FROM receipt_settings ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    finally:
+        conn.close()
+    # Return default settings
+    return {
             'receipt_type': 'traditional',
             'store_name': 'Store',
             'store_address': '',
@@ -67,7 +64,7 @@ def get_receipt_settings() -> Dict[str, Any]:
             'return_policy': '',
             'show_tax_breakdown': 1,
             'show_payment_method': 1,
-            'show_signature': 0
+            'show_signature': 1  # Default to enabled
         }
 
 def generate_barcode_data(order_number: str) -> bytes:
@@ -267,7 +264,7 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list) -> bytes
     try:
         order_date_str = order_data['order_date']
         if isinstance(order_date_str, str):
-            # Parse SQLite datetime format (YYYY-MM-DD HH:MM:SS) as local time
+            # Parse PostgreSQL datetime format (YYYY-MM-DD HH:MM:SS) as local time
             # Use regex to extract just the date and time parts, ignoring timezone info
             # Pattern to match YYYY-MM-DD HH:MM:SS format (with optional microseconds/timezone)
             # This will match: "2026-01-16 23:19:00" or "2026-01-16T23:19:00" or "2026-01-16 23:19:00.123" or "2026-01-16 23:19:00+05:00"
@@ -333,26 +330,26 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list) -> bytes
             story.append(Paragraph(f"Order Type: {order_type.title()}", normal_style))
         if customer_name:
             story.append(Paragraph(f"Customer: {customer_name}", normal_style))
-            # Get customer phone and address from database if available
+            # Get customer phone and address from database if available (PostgreSQL)
             try:
-                conn = sqlite3.connect(DB_NAME)
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                # Try to get customer details from order
+                from database import get_connection
+                from psycopg2.extras import RealDictCursor
                 customer_id = order_data.get('customer_id')
                 if customer_id:
-                    cursor.execute("SELECT phone, address FROM customers WHERE customer_id = ?", (customer_id,))
-                    customer_row = cursor.fetchone()
-                    if customer_row:
-                        customer_phone = customer_row.get('phone')
-                        customer_address = customer_row.get('address')
-                        if customer_phone:
-                            story.append(Paragraph(f"Phone: {customer_phone}", small_style))
-                        if customer_address and order_type == 'delivery':
-                            story.append(Paragraph(f"Delivery Address: {customer_address}", small_style))
-                
-                conn.close()
+                    conn = get_connection()
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    try:
+                        cursor.execute("SELECT phone, address FROM customers WHERE customer_id = %s", (customer_id,))
+                        customer_row = cursor.fetchone()
+                        if customer_row:
+                            customer_phone = customer_row.get('phone')
+                            customer_address = customer_row.get('address')
+                            if customer_phone:
+                                story.append(Paragraph(f"Phone: {customer_phone}", small_style))
+                            if customer_address and order_type == 'delivery':
+                                story.append(Paragraph(f"Delivery Address: {customer_address}", small_style))
+                    finally:
+                        conn.close()
             except Exception as e:
                 print(f"Note: Could not get customer details: {e}")
     
@@ -488,49 +485,50 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list) -> bytes
     story.append(Spacer(1, 0.05*inch))
     story.append(Paragraph("-" * 40, header_style))
     
-    # Signature (if enabled and available)
-    show_signature_setting = settings.get('show_signature', 0)
-    if show_signature_setting == 1 or show_signature_setting == True:
-        signature = order_data.get('signature')
-        print(f"Signature setting enabled: {show_signature_setting}, Signature available: {signature is not None}")
-        if signature:
-            try:
-                from reportlab.platypus import Image
-                import base64
-                
-                # Decode base64 signature
-                if signature.startswith('data:image'):
-                    # Remove data URL prefix if present
-                    signature = signature.split(',')[1]
-                
-                signature_bytes = base64.b64decode(signature)
-                signature_bytes_io = io.BytesIO(signature_bytes)
-                
-                # Size signature appropriately for receipt
-                signature_width = min(2.5*inch, receipt_width - 0.3*inch)
-                signature_height = 0.8*inch  # Standard signature height
-                
-                # Create Image from BytesIO
-                sig_img = Image(signature_bytes_io, width=signature_width, height=signature_height)
-                
-                # Center the signature using a table
-                signature_table = Table([[sig_img]], colWidths=[receipt_width - 0.3*inch])
-                signature_table.setStyle(TableStyle([
-                    ('ALIGN', (0, 0), (0, 0), 'CENTER'),
-                ]))
-                
-                story.append(Spacer(1, 0.1*inch))
-                story.append(Paragraph("Signature:", small_style))
-                story.append(signature_table)
-                story.append(Spacer(1, 0.05*inch))
-                story.append(Paragraph("-" * 40, header_style))
-                print(f"Successfully added signature to receipt")
-            except Exception as e:
-                print(f"Error adding signature to receipt: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print(f"Signature setting is enabled but no signature data found in order_data")
+    # Signature - always show if available (regardless of setting)
+    signature = order_data.get('signature')
+    show_signature_setting = settings.get('show_signature', 1)  # Default to enabled
+    print(f"Signature check - setting: {show_signature_setting}, signature exists: {signature is not None}, signature length: {len(signature) if signature else 0}")
+    
+    # Always show signature if it exists
+    if signature:
+        try:
+            from reportlab.platypus import Image
+            import base64
+            
+            # Decode base64 signature
+            if signature.startswith('data:image'):
+                # Remove data URL prefix if present
+                signature = signature.split(',')[1]
+            
+            signature_bytes = base64.b64decode(signature)
+            signature_bytes_io = io.BytesIO(signature_bytes)
+            
+            # Size signature appropriately for receipt
+            signature_width = min(2.5*inch, receipt_width - 0.3*inch)
+            signature_height = 0.8*inch  # Standard signature height
+            
+            # Create Image from BytesIO
+            sig_img = Image(signature_bytes_io, width=signature_width, height=signature_height)
+            
+            # Center the signature using a table
+            signature_table = Table([[sig_img]], colWidths=[receipt_width - 0.3*inch])
+            signature_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+            ]))
+            
+            story.append(Spacer(1, 0.1*inch))
+            story.append(Paragraph("Signature:", small_style))
+            story.append(signature_table)
+            story.append(Spacer(1, 0.05*inch))
+            story.append(Paragraph("-" * 40, header_style))
+            print(f"Successfully added signature to receipt")
+        except Exception as e:
+            print(f"Error adding signature to receipt: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"No signature data found in order_data")
     
     # Footer - Custom Footer Message
     story.append(Spacer(1, 0.1*inch))
@@ -592,104 +590,75 @@ def generate_receipt_with_barcode(order_id: int) -> Optional[bytes]:
     Returns:
         PDF bytes or None if error
     """
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
+    from database import get_connection
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # Get order data
         cursor.execute("""
-            SELECT o.*, 
+            SELECT o.*,
                    e.first_name || ' ' || e.last_name as employee_name,
                    c.customer_name,
                    c.customer_id
             FROM orders o
             LEFT JOIN employees e ON o.employee_id = e.employee_id
             LEFT JOIN customers c ON o.customer_id = c.customer_id
-            WHERE o.order_id = ?
+            WHERE o.order_id = %s
         """, (order_id,))
-        
         order_row = cursor.fetchone()
         if not order_row:
             return None
-        
         order_data = dict(order_row)
-        
-        # Get order items
         cursor.execute("""
             SELECT oi.*, i.product_name
             FROM order_items oi
             LEFT JOIN inventory i ON oi.product_id = i.product_id
-            WHERE oi.order_id = ?
+            WHERE oi.order_id = %s
             ORDER BY oi.order_item_id
         """, (order_id,))
-        
-        order_items = [dict(row) for row in cursor.fetchall()]
-        
-        # Get payment method and amount paid for orders
+        order_items = [dict(r) for r in cursor.fetchall()]
         amount_paid = None
         payment_method = order_data.get('payment_method', 'Unknown')
+        payment_method_type = ''
         change = 0
-        
-        # Get signature from transactions table if available
         signature = None
         try:
-            cursor.execute("""
-                SELECT signature FROM transactions WHERE order_id = ? LIMIT 1
-            """, (order_id,))
+            cursor.execute("SELECT signature FROM transactions WHERE order_id = %s LIMIT 1", (order_id,))
             sig_row = cursor.fetchone()
-            if sig_row and sig_row[0]:
-                signature = sig_row[0]
-        except Exception as e:
-            print(f"Note: Could not get signature: {e}")
-        
+            if sig_row and sig_row.get('signature'):
+                signature = sig_row['signature']
+        except Exception:
+            pass
         try:
-            # Try to get payment info from payments table if it exists
             cursor.execute("""
                 SELECT pm.method_name, pm.method_type, p.amount
                 FROM payments p
                 JOIN payment_methods pm ON p.payment_method_id = pm.payment_method_id
-                WHERE p.transaction_id IN (
-                    SELECT transaction_id FROM transactions WHERE order_id = ?
-                )
-                ORDER BY p.payment_id DESC
-                LIMIT 1
+                WHERE p.transaction_id IN (SELECT transaction_id FROM transactions WHERE order_id = %s)
+                ORDER BY p.payment_id DESC LIMIT 1
             """, (order_id,))
-            
             payment_row = cursor.fetchone()
             if payment_row:
-                payment_method = payment_row['method_name']
-                payment_method_type = payment_row.get('method_type', '')
+                payment_method = payment_row.get('method_name', payment_method)
+                payment_method_type = payment_row.get('method_type') or ''
                 amount_paid = payment_row.get('amount')
-        except Exception as e:
-            # If payments table doesn't exist or query fails, use order data
-            print(f"Note: Could not lookup payment for order: {e}")
+        except Exception:
             pass
-        
-        # Calculate change if cash payment
-        if amount_paid and (payment_method_type == 'cash' or (payment_method and 'cash' in payment_method.lower())):
-            total = order_data.get('total', 0)
-            change = float(amount_paid) - float(total)
-        
-        # Add payment info to order_data
+        if amount_paid and (payment_method_type == 'cash' or (payment_method and 'cash' in (payment_method or '').lower())):
+            change = float(amount_paid) - float(order_data.get('total', 0))
         order_data['payment_method'] = payment_method
         order_data['payment_method_type'] = payment_method_type
         order_data['amount_paid'] = amount_paid
         order_data['change'] = change if change > 0 else 0
         order_data['signature'] = signature
-        
-        conn.close()
-        
-        # Generate PDF
         return generate_receipt_pdf(order_data, order_items)
-        
     except Exception as e:
         print(f"Error generating receipt: {e}")
         import traceback
         traceback.print_exc()
-        if conn:
-            conn.close()
         return None
+    finally:
+        conn.close()
 
 def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
     """
@@ -701,20 +670,23 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
     Returns:
         PDF bytes or None if error
     """
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
+    from database import get_connection
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # Get transaction data
         cursor.execute("""
-            SELECT t.*, 
+            SELECT t.*,
                    e.first_name || ' ' || e.last_name as employee_name,
-                   c.customer_name
+                   c.customer_name,
+                   o.order_number,
+                   o.order_id,
+                   t.signature
             FROM transactions t
             LEFT JOIN employees e ON t.employee_id = e.employee_id
             LEFT JOIN customers c ON t.customer_id = c.customer_id
-            WHERE t.transaction_id = ?
+            LEFT JOIN orders o ON t.order_id = o.order_id
+            WHERE t.transaction_id = %s
         """, (transaction_id,))
         
         transaction_row = cursor.fetchone()
@@ -728,93 +700,88 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
             SELECT ti.*, i.product_name
             FROM transaction_items ti
             LEFT JOIN inventory i ON ti.product_id = i.product_id
-            WHERE ti.transaction_id = ?
-            ORDER BY ti.item_id
+            WHERE ti.transaction_id = %s
+            ORDER BY ti.transaction_item_id
         """, (transaction_id,))
+        transaction_items = [dict(r) for r in cursor.fetchall()]
         
-        transaction_items = [dict(row) for row in cursor.fetchall()]
-        
-        # Get payment method and try to find associated order number
+        # Get payment method and order number from linked order
         payment_method = 'Cash'  # Default
-        order_number = transaction['transaction_number']  # Default to transaction number
+        order_number = transaction.get('order_number')  # Get from joined query
+        order_id = transaction.get('order_id')  # Get order_id from transaction
         
-        # Try to find the order that matches this transaction
-        # Since transactions and orders are separate, try multiple matching strategies
+        # Ensure we have order_number - it should come from the JOIN, but verify
+        if not order_number:
+            if order_id:
+                # Fallback: if no order_number from join, try direct query
+                try:
+                    cursor.execute("""
+                        SELECT order_number FROM orders WHERE order_id = %s
+                    """, (order_id,))
+                    order_row = cursor.fetchone()
+                    if order_row:
+                        order_number = order_row.get('order_number') if isinstance(order_row, dict) else order_row[0]
+                        print(f"Retrieved order_number {order_number} from direct query for order_id {order_id}")
+                except Exception as e:
+                    print(f"Error querying order_number: {e}")
+            else:
+                print(f"Warning: No order_id found for transaction {transaction_id}")
+        
+        # Final fallback - should not happen if order is created properly
+        if not order_number:
+            print(f"Warning: No order_number found for transaction {transaction_id}, using fallback")
+            order_number = f"ORD-{transaction_id}"
+        
+        # Log the order number being used for receipt
+        print(f"Using order_number '{order_number}' for receipt generation (transaction_id: {transaction_id}, order_id: {order_id})")
+        
+        # Try to get payment method from payments table
         try:
-            employee_id = transaction.get('employee_id')
-            customer_id = transaction.get('customer_id')
-            transaction_date = transaction.get('created_at', '')
-            
-            if employee_id and transaction_date:
-                # Strategy 1: Match by employee and closest time (within 1 hour)
-                query = """
-                    SELECT o.order_number, o.order_id
-                    FROM orders o
-                    WHERE o.employee_id = ?
-                      AND ABS(julianday(o.order_date) - julianday(?)) < 0.042  -- Within 1 hour
-                    ORDER BY ABS(julianday(o.order_date) - julianday(?))
+            if transaction.get('order_id'):
+                cursor.execute("""
+                    SELECT pm.method_name, pm.method_type
+                    FROM payments p
+                    JOIN payment_methods pm ON p.payment_method_id = pm.payment_method_id
+                    WHERE p.transaction_id = %s
                     LIMIT 1
-                """
-                cursor.execute(query, (employee_id, transaction_date, transaction_date))
-                order_row = cursor.fetchone()
-                
-                # Strategy 2: If no match within 1 hour, try same day
-                if not order_row or not order_row['order_number']:
-                    query = """
-                        SELECT o.order_number, o.order_id
-                        FROM orders o
-                        WHERE o.employee_id = ?
-                          AND DATE(o.order_date) = DATE(?)
-                        ORDER BY ABS(julianday(o.order_date) - julianday(?))
-                        LIMIT 1
-                    """
-                    cursor.execute(query, (employee_id, transaction_date, transaction_date))
-                    order_row = cursor.fetchone()
-                
-                # Strategy 3: If still no match, get most recent order for this employee
-                if not order_row or not order_row['order_number']:
-                    query = """
-                        SELECT o.order_number, o.order_id
-                        FROM orders o
-                        WHERE o.employee_id = ?
-                        ORDER BY o.order_date DESC
-                        LIMIT 1
-                    """
-                    cursor.execute(query, (employee_id,))
-                    order_row = cursor.fetchone()
-                
-                if order_row and order_row['order_number']:
-                    order_number = order_row['order_number']
-                    print(f"Found order number {order_number} for transaction {transaction_id}")
-                else:
-                    print(f"Could not find matching order for transaction {transaction_id}, using transaction number")
+                """, (transaction_id,))
+                payment_row = cursor.fetchone()
+                if payment_row:
+                    payment_method = payment_row.get('method_name') if isinstance(payment_row, dict) else payment_row[0]
+                    if payment_method:
+                        payment_method = payment_method
         except Exception as e:
-            # If matching fails, use transaction number
-            print(f"Note: Could not find order for transaction: {e}")
-            import traceback
-            traceback.print_exc()
+            # If payment lookup fails, continue with defaults
+            pass
         
         # Get payment method and amount paid
         amount_paid = None
         payment_method_type = None
         change = 0
-        signature = transaction.get('signature')  # Get signature from transaction
+        signature = transaction.get('signature')  # Get signature from transaction (should be in SELECT)
+        
+        # Log signature retrieval for debugging
+        if signature:
+            print(f"Signature found in transaction query: {len(signature)} characters")
+        else:
+            print(f"No signature found in transaction query for transaction_id {transaction_id}")
         
         # First try to get amount_paid from transactions table (if columns exist)
         try:
             cursor.execute("""
-                SELECT amount_paid, change_amount, signature FROM transactions WHERE transaction_id = ?
+                SELECT amount_paid, change_amount, signature FROM transactions WHERE transaction_id = %s
             """, (transaction_id,))
             txn_row = cursor.fetchone()
             if txn_row:
-                if txn_row[0]:  # amount_paid exists and is not None
-                    amount_paid = txn_row[0]
-                if txn_row[1]:
-                    change = txn_row[1]
-                if txn_row[2]:
-                    signature = txn_row[2]
-        except sqlite3.OperationalError:
-            # Columns don't exist, will get from payments table
+                if txn_row.get('amount_paid') is not None:
+                    amount_paid = txn_row['amount_paid']
+                if txn_row.get('change_amount') is not None:
+                    change = txn_row['change_amount']
+                # Override signature if found in this query (should already be in transaction dict, but double-check)
+                if txn_row.get('signature') and not signature:
+                    signature = txn_row['signature']
+                    print(f"Signature retrieved from separate query: {len(signature)} characters")
+        except Exception:
             pass
         except Exception as e:
             print(f"Note: Could not get amount_paid from transactions: {e}")
@@ -825,9 +792,8 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
                 SELECT pm.method_name, pm.method_type, p.amount
                 FROM payments p
                 JOIN payment_methods pm ON p.payment_method_id = pm.payment_method_id
-                WHERE p.transaction_id = ?
-                ORDER BY p.payment_id DESC
-                LIMIT 1
+                WHERE p.transaction_id = %s
+                ORDER BY p.payment_id DESC LIMIT 1
             """, (transaction_id,))
             
             payment_row = cursor.fetchone()
@@ -851,8 +817,8 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
         
         # Convert transaction data to order-like format for receipt generation
         order_data = {
-            'order_id': transaction['transaction_id'],
-            'order_number': order_number,  # Use order number if found, otherwise transaction number
+            'order_id': transaction.get('order_id') or transaction['transaction_id'],  # Use order_id if available, fallback to transaction_id
+            'order_number': order_number,  # Always use order number (from linked order)
             'order_date': transaction['created_at'],
             'employee_name': transaction.get('employee_name', ''),
             'customer_name': transaction.get('customer_name', ''),
@@ -881,15 +847,186 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
                 'discount': item.get('discount', 0)
             })
         
-        conn.close()
-        
-        # Generate PDF using existing function
         return generate_receipt_pdf(order_data, order_items)
-        
     except Exception as e:
         print(f"Error generating transaction receipt: {e}")
         import traceback
         traceback.print_exc()
-        if conn:
-            conn.close()
         return None
+    finally:
+        conn.close()
+
+def generate_return_receipt(return_id: int) -> Optional[bytes]:
+    """Generate return receipt PDF"""
+    from database import get_connection
+    from psycopg2.extras import RealDictCursor
+    
+    if not REPORTLAB_AVAILABLE:
+        print("ReportLab not available. Cannot generate return receipt.")
+        return None
+    
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        # Get return details
+        cursor.execute("""
+            SELECT pr.*, o.order_number, o.order_date, o.payment_method,
+                   e.first_name || ' ' || e.last_name as employee_name
+            FROM pending_returns pr
+            JOIN orders o ON pr.order_id = o.order_id
+            JOIN employees e ON pr.employee_id = e.employee_id
+            WHERE pr.return_id = %s
+        """, (return_id,))
+        
+        return_data = cursor.fetchone()
+        if not return_data:
+            return None
+        
+        return_data = dict(return_data)
+        
+        # Get return items
+        cursor.execute("""
+            SELECT pri.*, i.product_name, i.sku
+            FROM pending_return_items pri
+            JOIN inventory i ON pri.product_id = i.product_id
+            WHERE pri.return_id = %s
+        """, (return_id,))
+        
+        return_items = [dict(row) for row in cursor.fetchall()]
+        
+        # Generate PDF
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, 
+                                rightMargin=0.5*inch, leftMargin=0.5*inch,
+                                topMargin=0.5*inch, bottomMargin=0.5*inch)
+        
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=20,
+            textColor=colors.HexColor('#d32f2f'),
+            spaceAfter=12,
+            alignment=TA_CENTER
+        )
+        story.append(Paragraph("RETURN RECEIPT", title_style))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Return details
+        story.append(Paragraph(f"<b>Return Number:</b> {return_data['return_number']}", styles['Normal']))
+        story.append(Paragraph(f"<b>Original Order:</b> {return_data['order_number']}", styles['Normal']))
+        story.append(Paragraph(f"<b>Date:</b> {return_data['return_date'].strftime('%Y-%m-%d %H:%M:%S') if return_data.get('return_date') else 'N/A'}", styles['Normal']))
+        story.append(Paragraph(f"<b>Processed by:</b> {return_data.get('employee_name', 'N/A')}", styles['Normal']))
+        if return_data.get('reason'):
+            story.append(Paragraph(f"<b>Reason:</b> {return_data['reason']}", styles['Normal']))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Items table
+        items_data = [['Product', 'Qty', 'Price', 'Refund']]
+        for item in return_items:
+            items_data.append([
+                item.get('product_name', item.get('sku', 'N/A')),
+                str(item['quantity']),
+                f"${float(item['unit_price']):.2f}",
+                f"${float(item['refund_amount']):.2f}"
+            ])
+        
+        items_table = Table(items_data, colWidths=[3*inch, 0.8*inch, 1*inch, 1*inch])
+        items_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        story.append(items_table)
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Total
+        total_style = ParagraphStyle(
+            'TotalStyle',
+            parent=styles['Normal'],
+            fontSize=14,
+            fontName='Helvetica-Bold',
+            alignment=TA_RIGHT
+        )
+        story.append(Paragraph(f"<b>Total Refund: ${float(return_data['total_refund_amount']):.2f}</b>", total_style))
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.read()
+        
+    except Exception as e:
+        print(f"Error generating return receipt: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        conn.close()
+
+def generate_exchange_receipt(exchange_credit_id: int, exchange_credit_number: str, credit_amount: float) -> Optional[bytes]:
+    """Generate exchange receipt (store credit) PDF with barcode"""
+    if not REPORTLAB_AVAILABLE:
+        print("ReportLab not available. Cannot generate exchange receipt.")
+        return None
+    
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, 
+                            rightMargin=0.5*inch, leftMargin=0.5*inch,
+                            topMargin=0.5*inch, bottomMargin=0.5*inch)
+    
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=colors.HexColor('#1976d2'),
+        spaceAfter=12,
+        alignment=TA_CENTER
+    )
+    story.append(Paragraph("EXCHANGE CREDIT", title_style))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Credit details
+    story.append(Paragraph(f"<b>Credit Number:</b> {exchange_credit_number}", styles['Normal']))
+    story.append(Paragraph(f"<b>Credit Amount:</b> ${credit_amount:.2f}", styles['Normal']))
+    story.append(Paragraph(f"<b>Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Barcode
+    if BARCODE_AVAILABLE and exchange_credit_number:
+        try:
+            from barcode import Code128
+            from barcode.writer import ImageWriter
+            from reportlab.platypus import Image
+            
+            barcode_obj = Code128(exchange_credit_number, writer=ImageWriter())
+            barcode_buffer = io.BytesIO()
+            barcode_obj.write(barcode_buffer)
+            barcode_buffer.seek(0)
+            
+            # Create image from barcode
+            img = Image(barcode_buffer, width=3*inch, height=0.8*inch)
+            story.append(Spacer(1, 0.2*inch))
+            story.append(img)
+            story.append(Paragraph(f"<b>Scan at checkout to use credit</b>", styles['Normal']))
+        except Exception as e:
+            print(f"Error generating barcode: {e}")
+            story.append(Paragraph(f"<b>Credit Number:</b> {exchange_credit_number} (scan this number at checkout)", styles['Normal']))
+    
+    story.append(Spacer(1, 0.2*inch))
+    story.append(Paragraph("<i>This credit can be used for future purchases. Present this receipt at checkout.</i>", styles['Normal']))
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.read()

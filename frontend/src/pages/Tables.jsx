@@ -1,7 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
-import Tabs from '../components/Tabs'
+import { 
+  Database,
+  Package,
+  ShoppingCart,
+  Truck,
+  Users,
+  Calculator,
+  Image,
+  Shield,
+  Folder,
+  PanelLeft
+} from 'lucide-react'
 
 // Define table categories
 const TABLE_CATEGORIES = {
@@ -19,7 +30,6 @@ const TABLE_CATEGORIES = {
     'payment_transactions', 
     'payment_methods',
     'employee_tips',
-    'sales', 
     'customers',
     'pending_returns',
     'pending_return_items',
@@ -33,14 +43,10 @@ const TABLE_CATEGORIES = {
   'Shipments': [
     'shipments', 
     'shipment_items', 
-    'pending_shipments', 
-    'pending_shipment_items', 
     'shipment_discrepancies',
     'shipment_issues',
     'shipment_scan_log',
-    'verification_sessions',
-    'approved_shipments',
-    'approved_shipment_items'
+    'verification_sessions'
   ],
   'Employees & Scheduling': [
     'employees',
@@ -48,7 +54,10 @@ const TABLE_CATEGORIES = {
     'scheduled_shifts_unified',
     'time_clock',
     'employee_sessions',
+    'employee_schedule',
+    'employee_availability',
     'calendar_events_unified',
+    'master_calendar',
     'Calendar_Subscriptions',
     'Event_Attendees',
     'Event_Reminders',
@@ -59,11 +68,8 @@ const TABLE_CATEGORIES = {
     'Schedule_Changes',
     'Schedule_Notifications',
     'Employee_Positions',
-    'employee_schedule',
-    'employee_availability',
     'Scheduled_Shifts',
     'Employee_Shifts',
-    'master_calendar',
     'Calendar_Events',
     'Shipment_Schedule'
   ],
@@ -80,8 +86,7 @@ const TABLE_CATEGORIES = {
     'permissions', 
     'role_permissions', 
     'employee_permission_overrides',
-    'audit_log',
-    'activity_log'
+    'audit_log'
   ]
 }
 
@@ -106,6 +111,23 @@ function Tables() {
   const [error, setError] = useState(null)
   const [selectedRowIds, setSelectedRowIds] = useState(() => new Set())
   
+  const [sidebarMinimized, setSidebarMinimized] = useState(false)
+  const [hoveringTables, setHoveringTables] = useState(false)
+  const [showTooltip, setShowTooltip] = useState(false)
+  const tablesHeaderRef = useRef(null)
+  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 })
+  const [isInitialMount, setIsInitialMount] = useState(true)
+  const sidebarRef = useRef(null)
+  const contentRef = useRef(null)
+  
+  useEffect(() => {
+    // Disable initial animation by setting flag after component is mounted
+    // Use a longer delay to ensure all styles are applied first
+    const timer = setTimeout(() => {
+      setIsInitialMount(false)
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [])
   // Determine if dark mode is active
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
@@ -136,6 +158,20 @@ function Tables() {
       loadData()
     }
   }, [activeTab])
+
+  // Hide scrollbar for table buttons
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = `
+      .table-buttons-scroll::-webkit-scrollbar {
+        display: none;
+      }
+    `
+    document.head.appendChild(style)
+    return () => {
+      document.head.removeChild(style)
+    }
+  }, [])
 
   const loadTables = async () => {
     setLoadingTables(true)
@@ -346,18 +382,46 @@ function Tables() {
 
   if (loadingTables) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-        Loading tables...
+      <div style={{ 
+        display: 'flex',
+        minHeight: '100vh',
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+          Loading tables...
+        </div>
       </div>
     )
   }
 
   if (Object.keys(categories).length === 0) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-        No tables found in database
+      <div style={{ 
+        display: 'flex',
+        minHeight: '100vh',
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
+          No tables found in database
+        </div>
       </div>
     )
+  }
+
+  // Category icons mapping
+  const categoryIcons = {
+    'Inventory & Products': Package,
+    'Orders & Sales': ShoppingCart,
+    'Shipments': Truck,
+    'Employees & Scheduling': Users,
+    'Accounting': Calculator,
+    'Image Matching': Image,
+    'Security & Permissions': Shield,
+    'Other': Folder
   }
 
   const categoryTabs = Object.keys(categories).map(categoryName => ({
@@ -368,46 +432,291 @@ function Tables() {
   const currentCategoryTables = activeCategory ? categories[activeCategory] : []
 
   return (
-    <div>
-      <div style={{ marginBottom: '20px' }}>
-        <Tabs tabs={categoryTabs} activeTab={activeCategory} onTabChange={handleCategoryChange} />
-      </div>
-      
-      {activeCategory && currentCategoryTables.length > 0 && (
-        <div style={{ marginBottom: '20px', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', paddingBottom: '10px' }}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {currentCategoryTables.map(table => {
-              const isLegacy = activeCategory && activeCategory.includes('Legacy')
-              
-              return (
-                <button
-                  key={table.id}
-                  onClick={() => setActiveTab(table.id)}
-                  style={{
-                    padding: '10px 16px',
-                    backgroundColor: activeTab === table.id ? `rgba(${themeColorRgb}, 0.7)` : (isLegacy ? 'rgba(128, 128, 128, 0.2)' : `rgba(${themeColorRgb}, 0.2)`),
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
-                    border: activeTab === table.id ? '1px solid rgba(255, 255, 255, 0.3)' : (isLegacy ? '1px solid rgba(128, 128, 128, 0.3)' : `1px solid rgba(${themeColorRgb}, 0.3)`),
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    fontWeight: activeTab === table.id ? 600 : 500,
-                    color: '#fff',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    boxShadow: activeTab === table.id ? `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`,
-                    opacity: isLegacy ? 0.7 : 1
-                  }}
-                >
-                  {table.label}
-                </button>
-              )
-            })}
+    <div style={{ 
+      display: 'flex',
+      minHeight: '100vh',
+      width: '100%'
+    }}>
+      {/* Sidebar Navigation - 1/4 of page */}
+      <div 
+        ref={sidebarRef}
+        style={{
+          width: isInitialMount ? '25%' : (sidebarMinimized ? '60px' : '25%'),
+          flexShrink: 0,
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+          padding: isInitialMount ? '32px 10px 48px 10px' : (sidebarMinimized ? '32px 10px 48px 10px' : '32px 10px 48px 10px'),
+          minHeight: '100vh',
+          position: 'sticky',
+          top: 0,
+          alignSelf: 'flex-start',
+          borderRight: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#e0e0e0'}`,
+          transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+          overflow: 'hidden'
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '4px',
+          transition: isInitialMount ? 'none' : 'gap 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+          paddingTop: '0',
+          paddingBottom: '0',
+          alignItems: 'stretch'
+        }}>
+          {/* Tables Header */}
+          <div
+            ref={tablesHeaderRef}
+            style={{ position: 'relative' }}
+            onMouseEnter={(e) => {
+              setHoveringTables(true)
+              setShowTooltip(true)
+              if (tablesHeaderRef.current) {
+                const rect = tablesHeaderRef.current.getBoundingClientRect()
+                if (sidebarMinimized) {
+                  setTooltipPosition({
+                    top: rect.top + rect.height / 2,
+                    left: rect.right + 8
+                  })
+                } else {
+                  setTooltipPosition({
+                    top: rect.bottom + 4,
+                    left: rect.left
+                  })
+                }
+              }
+            }}
+            onMouseLeave={() => {
+              setHoveringTables(false)
+              setShowTooltip(false)
+            }}
+          >
+            <button
+              onClick={() => setSidebarMinimized(!sidebarMinimized)}
+              style={{
+                width: isInitialMount ? '100%' : (sidebarMinimized ? '40px' : '100%'),
+                height: '40px',
+                padding: '0',
+                margin: '0',
+                border: 'none',
+                backgroundColor: isDarkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.08)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isInitialMount ? 'flex-start' : (sidebarMinimized ? 'center' : 'flex-start'),
+                transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), justifyContent 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+            >
+              <div style={{
+                position: 'absolute',
+                left: '0',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '40px',
+                height: '40px',
+                transition: 'none'
+              }}>
+                {sidebarMinimized ? (
+                  <PanelLeft size={20} style={{ width: '20px', height: '20px' }} />
+                ) : (
+                  hoveringTables ? (
+                    <PanelLeft size={20} style={{ width: '20px', height: '20px' }} />
+                  ) : (
+                    <Database size={20} style={{ width: '20px', height: '20px' }} />
+                  )
+                )}
+              </div>
+              {!sidebarMinimized && (
+                <span style={{
+                  marginLeft: '48px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  whiteSpace: 'nowrap',
+                  opacity: sidebarMinimized ? 0 : 1,
+                  transition: isInitialMount ? 'none' : 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  pointerEvents: 'none'
+                }}>
+                  Database Tables
+                </span>
+              )}
+            </button>
           </div>
+          {showTooltip && (
+            <div
+              style={{
+                position: 'fixed',
+                top: `${tooltipPosition.top}px`,
+                left: `${tooltipPosition.left}px`,
+                transform: sidebarMinimized ? 'translateY(-50%)' : 'none',
+                padding: '4px 8px',
+                backgroundColor: isDarkMode ? 'rgba(0, 0, 0, 0.9)' : 'rgba(0, 0, 0, 0.85)',
+                color: 'white',
+                fontSize: '12px',
+                borderRadius: '4px',
+                whiteSpace: 'nowrap',
+                zIndex: 10000,
+                pointerEvents: 'none'
+              }}
+            >
+              {sidebarMinimized ? 'Open sidebar' : 'Close sidebar'}
+            </div>
+          )}
+          {/* Category Navigation */}
+          {categoryTabs.map((category) => {
+            const Icon = categoryIcons[category.id] || Folder
+            const isActive = activeCategory === category.id
+            return (
+              <button
+                key={category.id}
+                onClick={() => handleCategoryChange(category.id)}
+                style={{
+                  width: isInitialMount ? '100%' : (sidebarMinimized ? '40px' : '100%'),
+                  height: '40px',
+                  padding: '0',
+                  margin: '0',
+                  border: 'none',
+                  backgroundColor: isActive 
+                    ? (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)')
+                    : 'transparent',
+                  borderRadius: isActive ? '6px' : '0',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: isInitialMount ? 'flex-start' : (sidebarMinimized ? 'center' : 'flex-start'),
+                  transition: isInitialMount ? 'backgroundColor 0.2s ease, borderRadius 0.2s ease' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), justifyContent 0.4s cubic-bezier(0.4, 0, 0.2, 1), backgroundColor 0.2s ease, borderRadius 0.2s ease',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  color: isActive 
+                    ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333')
+                    : (isDarkMode ? 'var(--text-secondary, #ccc)' : '#666')
+                }}
+              >
+                <div style={{
+                  position: 'absolute',
+                  left: '0',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  transition: 'none'
+                }}>
+                  <Icon size={20} style={{ width: '20px', height: '20px' }} />
+                </div>
+                {!sidebarMinimized && (
+                  <span style={{
+                    marginLeft: '48px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 600 : 'normal',
+                    whiteSpace: 'nowrap',
+                    opacity: sidebarMinimized ? 0 : 1,
+                    transition: 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    pointerEvents: 'none'
+                  }}>
+                    {category.label}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
-      )}
+      </div>
+
+      {/* Main Content Area - 3/4 of page */}
+      <div 
+        ref={contentRef}
+        style={{
+          width: isInitialMount ? '75%' : (sidebarMinimized ? 'calc(100% - 60px)' : '75%'),
+          flex: 1,
+          padding: '48px 64px 64px 64px',
+          backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
+          maxWidth: isInitialMount ? '1200px' : (sidebarMinimized ? 'none' : '1200px'),
+          transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+        }}
+      >
+        {activeCategory && currentCategoryTables.length > 0 && (
+          <div style={{ marginBottom: '24px', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', paddingBottom: '16px' }}>
+            <div style={{ position: 'relative' }}>
+              <div 
+                className="table-buttons-scroll"
+                style={{ 
+                  display: 'flex', 
+                  gap: '8px', 
+                  flexWrap: 'nowrap', 
+                  overflowX: 'auto', 
+                  paddingBottom: '4px',
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none'
+                }}
+              >
+                {currentCategoryTables.map(table => {
+                const isActive = activeTab === table.id
+                
+                return (
+                  <button
+                    key={table.id}
+                    onClick={() => setActiveTab(table.id)}
+                    style={{
+                      padding: '4px 16px',
+                      height: '28px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                      backgroundColor: isActive 
+                        ? `rgba(${themeColorRgb}, 0.7)` 
+                        : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                      border: isActive 
+                        ? `1px solid rgba(${themeColorRgb}, 0.5)` 
+                        : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: isActive ? 600 : 500,
+                      color: isActive ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: isActive ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                    }}
+                  >
+                    {table.label}
+                  </button>
+                )
+              })}
+              </div>
+              {/* Left gradient fade */}
+              <div style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: '4px',
+                width: '20px',
+                background: `linear-gradient(to right, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+                pointerEvents: 'none',
+                zIndex: 1
+              }} />
+              {/* Right gradient fade */}
+              <div style={{
+                position: 'absolute',
+                right: 0,
+                top: 0,
+                bottom: '4px',
+                width: '20px',
+                background: `linear-gradient(to left, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`,
+                pointerEvents: 'none',
+                zIndex: 1
+              }} />
+            </div>
+          </div>
+        )}
       
-      <div style={{ padding: '20px', overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto' }}>
         {loading && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Loading...</div>}
         {error && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>{error}</div>}
         {!loading && !error && data && (
@@ -457,6 +766,7 @@ function Tables() {
         {!loading && !error && data && data.columns && data.columns.length > 0 && data.data && data.data.length === 0 && (
           <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Table is empty</div>
         )}
+      </div>
       </div>
     </div>
   )

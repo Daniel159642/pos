@@ -11,9 +11,8 @@ import numpy as np
 from PIL import Image
 import pickle
 import os
-import sqlite3
 from typing import List, Dict, Optional, Any
-from database import get_connection, DB_NAME
+from database import get_connection
 
 
 class ProductImageMatcher:

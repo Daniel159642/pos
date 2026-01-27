@@ -3,14 +3,11 @@
 Clean up schedule periods that might be causing conflicts
 """
 
-import sqlite3
 from datetime import datetime
-
-DB_NAME = 'inventory.db'
+from database import get_connection
 
 def cleanup_periods():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
+    conn = get_connection()
     cursor = conn.cursor()
     
     print("Checking for schedule periods...")
@@ -28,21 +25,28 @@ def cleanup_periods():
     print()
     
     for period in periods:
-        period_dict = dict(period)
+        period_dict = dict(period) if isinstance(period, dict) else {
+            'period_id': period[0],
+            'week_start_date': period[1],
+            'status': period[2],
+            'created_at': period[3] if len(period) > 3 else None
+        }
         print(f"Period ID: {period_dict['period_id']}")
         print(f"  Week Start: {period_dict['week_start_date']}")
         print(f"  Status: {period_dict['status']}")
         print(f"  Created: {period_dict.get('created_at', 'N/A')}")
         
         # Count shifts
-        cursor.execute("SELECT COUNT(*) FROM Scheduled_Shifts WHERE period_id = ?", (period_dict['period_id'],))
-        shift_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM Scheduled_Shifts WHERE period_id = %s", (period_dict['period_id'],))
+        row = cursor.fetchone()
+        shift_count = row[0] if isinstance(row, tuple) else row['count']
         print(f"  Shifts: {shift_count}")
         print()
     
     # Ask if user wants to delete draft periods
     cursor.execute("SELECT COUNT(*) FROM Schedule_Periods WHERE status = 'draft'")
-    draft_count = cursor.fetchone()[0]
+    row = cursor.fetchone()
+    draft_count = row[0] if isinstance(row, tuple) else row['count']
     
     if draft_count > 0:
         print(f"Found {draft_count} draft period(s).")
@@ -54,11 +58,12 @@ def cleanup_periods():
             draft_periods = cursor.fetchall()
             
             for period in draft_periods:
-                period_id = period['period_id']
+                period_dict = dict(period) if isinstance(period, dict) else {'period_id': period[0]}
+                period_id = period_dict['period_id']
                 # Delete shifts
-                cursor.execute("DELETE FROM Scheduled_Shifts WHERE period_id = ?", (period_id,))
+                cursor.execute("DELETE FROM Scheduled_Shifts WHERE period_id = %s", (period_id,))
                 # Delete period
-                cursor.execute("DELETE FROM Schedule_Periods WHERE period_id = ?", (period_id,))
+                cursor.execute("DELETE FROM Schedule_Periods WHERE period_id = %s", (period_id,))
             
             conn.commit()
             print(f"✓ Deleted {len(draft_periods)} draft period(s)")
