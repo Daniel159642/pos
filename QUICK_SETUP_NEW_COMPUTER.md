@@ -43,10 +43,40 @@ EOF
 
 **Note:** Update the connection string if your PostgreSQL user/password is different.
 
-## 5. Run Schema
+## 5. Run Complete Database Setup (RECOMMENDED)
 
+**Easiest way - runs everything automatically:**
+```bash
+python3 setup_complete_database.py
+```
+
+This script will:
+- Create the database if needed
+- Run all schemas (main, accounting, returns)
+- Run all migrations
+- Create admin account
+- Initialize permissions
+
+**OR manually:**
+
+### 5a. Run Main Schema
 ```bash
 psql -U postgres -d pos_db -f schema_postgres.sql
+```
+
+### 5b. Run Accounting Schema
+```bash
+psql -U postgres -d pos_db -f accounting_schema.sql
+```
+
+### 5c. Run Returns Schema
+```bash
+psql -U postgres -d pos_db -f returns_schema.sql
+```
+
+### 5d. Run Migrations
+```bash
+for file in migrations/*.sql; do psql -U postgres -d pos_db -f "$file"; done
 ```
 
 ## 6. Create Admin Account
@@ -61,15 +91,15 @@ Enter:
 - Last Name: `User`
 - Password: `123456` (or your choice)
 
-## 6b. Initialize Admin Permissions (IMPORTANT!)
+## 7. Initialize Admin Permissions (REQUIRED!)
 
 ```bash
 python3 init_admin_permissions.py
 ```
 
-This sets up roles and permissions and assigns the Admin role to your admin account. **Without this step, admin won't have permissions to access features like payments, accounting, etc.**
+**⚠️ CRITICAL:** Without this step, admin won't have permissions to access features like payments, accounting, etc.
 
-## 7. Install Dependencies
+## 8. Install Dependencies
 
 ```bash
 # Python dependencies
@@ -81,7 +111,7 @@ npm install
 cd ..
 ```
 
-## 8. Start Application
+## 9. Start Application
 
 **Terminal 1 - Backend:**
 ```bash
@@ -94,7 +124,7 @@ cd frontend
 npm run dev
 ```
 
-## 9. Log In
+## 10. Log In
 
 1. Open: http://localhost:3000
 2. Select: **ADMIN001**
