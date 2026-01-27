@@ -143,10 +143,16 @@ function Login({ onLogin }) {
   const fetchEmployees = async () => {
     try {
       const response = await fetch('/api/employees')
+      if (!response.ok) {
+        console.error('Error fetching employees: HTTP', response.status)
+        setEmployees([])
+        return
+      }
       const data = await response.json()
       setEmployees(data.data || [])
     } catch (err) {
       console.error('Error fetching employees:', err)
+      setEmployees([])
     } finally {
       setLoadingEmployees(false)
     }

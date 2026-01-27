@@ -1998,13 +1998,29 @@ def api_employees():
         if not employees:
             return jsonify({'columns': [], 'data': []})
         
-        columns = list(employees[0].keys())
+        if len(employees) > 0:
+            columns = list(employees[0].keys())
+        else:
+            columns = []
         return jsonify({'columns': columns, 'data': employees})
     except Exception as e:
         print(f"Error in api_employees: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e), 'columns': [], 'data': []}), 500
+        # Return proper JSON error response - ensure it's always valid JSON
+        try:
+            return jsonify({
+                'error': str(e),
+                'columns': [],
+                'data': []
+            }), 500
+        except Exception as json_err:
+            # Last resort - return plain JSON string
+            return Response(
+                '{"error": "Internal server error", "columns": [], "data": []}',
+                mimetype='application/json',
+                status=500
+            )
 
 @app.route('/api/customers')
 def api_customers():
