@@ -136,11 +136,15 @@ def main():
     run_sql_file('accounting_schema.sql', 'Accounting schema')
     print()
     
-    print("Step 4: Running returns schema (returns_schema.sql)...")
+    print("Step 4: Running accounting triggers (accounting_triggers.sql)...")
+    run_sql_file('accounting_triggers.sql', 'Accounting triggers')
+    print()
+    
+    print("Step 5: Running returns schema (returns_schema.sql)...")
     run_sql_file('returns_schema.sql', 'Returns schema')
     print()
     
-    print("Step 5: Running migrations...")
+    print("Step 6: Running migrations...")
     migrations_dir = 'migrations'
     if os.path.exists(migrations_dir):
         migration_files = sorted([f for f in os.listdir(migrations_dir) if f.endswith('.sql')])
@@ -151,7 +155,7 @@ def main():
         print("  - migrations directory not found")
     print()
     
-    print("Step 6: Creating admin account...")
+    print("Step 7: Creating admin account...")
     try:
         result = subprocess.run(
             [sys.executable, 'create_admin_account.py'],
@@ -167,7 +171,7 @@ def main():
         print(f"  ⚠ Could not create admin account: {e}")
     print()
     
-    print("Step 7: Initializing permissions (REQUIRED for admin access)...")
+    print("Step 8: Initializing permissions (REQUIRED for admin access)...")
     try:
         result = subprocess.run(
             [sys.executable, 'init_admin_permissions.py'],

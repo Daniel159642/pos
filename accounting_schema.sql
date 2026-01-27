@@ -569,23 +569,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email ON users(email);
 
--- 20. Audit_Log Table
-CREATE TABLE IF NOT EXISTS audit_log (
-    id SERIAL PRIMARY KEY,
-    establishment_id INTEGER,
-    table_name VARCHAR(100) NOT NULL,
-    record_id INTEGER NOT NULL,
-    action VARCHAR(20) NOT NULL CHECK (action IN ('create', 'update', 'delete')),
-    old_values JSONB,
-    new_values JSONB,
-    user_id INTEGER REFERENCES users(id),
-    ip_address VARCHAR(45),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_audit_log_table_record ON audit_log(table_name, record_id);
-CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
-CREATE INDEX idx_audit_log_timestamp ON audit_log(timestamp);
+-- Note: audit_log table is defined in schema_postgres.sql, not here
+-- This prevents duplicate table definition conflicts
 
 -- ============================================================================
 -- FOREIGN KEY REFERENCES (for classes and locations)

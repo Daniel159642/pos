@@ -231,40 +231,63 @@ CREATE TRIGGER trigger_generate_bill_payment_number
 -- ============================================================================
 
 -- Generic audit trigger function
+-- Note: This function uses the audit_log table defined in schema_postgres.sql
+-- Column names: action_type, employee_id, action_timestamp, establishment_id
 CREATE OR REPLACE FUNCTION audit_trigger_function()
 RETURNS TRIGGER AS $$
 DECLARE
-    old_data JSONB;
-    new_data JSONB;
-    user_id_val INTEGER;
+    old_data TEXT;
+    new_data TEXT;
+    employee_id_val INTEGER;
+    establishment_id_val INTEGER;
+    action_type_val TEXT;
 BEGIN
-    -- Get user_id from current session or use NULL
+    -- Get employee_id from current session or use NULL
     -- In production, you'd get this from session context
-    user_id_val := current_setting('app.user_id', TRUE)::INTEGER;
+    BEGIN
+        employee_id_val := current_setting('app.employee_id', TRUE)::INTEGER;
+    EXCEPTION WHEN OTHERS THEN
+        employee_id_val := NULL;
+    END;
     
+    -- Get establishment_id from current session or default to 1
+    BEGIN
+        establishment_id_val := current_setting('app.establishment_id', TRUE)::INTEGER;
+    EXCEPTION WHEN OTHERS THEN
+        -- Default to establishment_id = 1 if not set
+        SELECT establishment_id INTO establishment_id_val FROM establishments LIMIT 1;
+        IF establishment_id_val IS NULL THEN
+            establishment_id_val := 1;
+        END IF;
+    END;
+    
+    -- Map TG_OP to action_type values
     IF TG_OP = 'DELETE' THEN
-        old_data := to_jsonb(OLD);
+        action_type_val := 'DELETE';
+        old_data := row_to_json(OLD)::TEXT;
         INSERT INTO audit_log (
-            table_name, record_id, action, old_values, user_id, timestamp
+            establishment_id, table_name, record_id, action_type, old_values, employee_id, action_timestamp
         ) VALUES (
-            TG_TABLE_NAME, OLD.id, 'delete', old_data, user_id_val, CURRENT_TIMESTAMP
+            establishment_id_val, TG_TABLE_NAME, OLD.id, action_type_val, old_data, employee_id_val, CURRENT_TIMESTAMP
         );
         RETURN OLD;
     ELSIF TG_OP = 'UPDATE' THEN
-        old_data := to_jsonb(OLD);
-        new_data := to_jsonb(NEW);
+        action_type_val := 'UPDATE';
+        old_data := row_to_json(OLD)::TEXT;
+        new_data := row_to_json(NEW)::TEXT;
         INSERT INTO audit_log (
-            table_name, record_id, action, old_values, new_values, user_id, timestamp
+            establishment_id, table_name, record_id, action_type, old_values, new_values, employee_id, action_timestamp
         ) VALUES (
-            TG_TABLE_NAME, NEW.id, 'update', old_data, new_data, user_id_val, CURRENT_TIMESTAMP
+            establishment_id_val, TG_TABLE_NAME, NEW.id, action_type_val, old_data, new_data, employee_id_val, CURRENT_TIMESTAMP
         );
         RETURN NEW;
     ELSIF TG_OP = 'INSERT' THEN
-        new_data := to_jsonb(NEW);
+        action_type_val := 'INSERT';
+        new_data := row_to_json(NEW)::TEXT;
         INSERT INTO audit_log (
-            table_name, record_id, action, new_values, user_id, timestamp
+            establishment_id, table_name, record_id, action_type, new_values, employee_id, action_timestamp
         ) VALUES (
-            TG_TABLE_NAME, NEW.id, 'create', new_data, user_id_val, CURRENT_TIMESTAMP
+            establishment_id_val, TG_TABLE_NAME, NEW.id, action_type_val, new_data, employee_id_val, CURRENT_TIMESTAMP
         );
         RETURN NEW;
     END IF;
