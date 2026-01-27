@@ -8,6 +8,26 @@
 - ❌ Database schema/triggers are NOT automatically updated
 - The database still has old functions/triggers until you run the SQL files
 
+## Solution: Schema Dump (Recommended)
+
+The easiest way to keep databases identical:
+
+**On your computer (after making database changes):**
+```bash
+./dump_schema.sh
+git add database_schema_dump.sql
+git commit -m "Update database schema"
+git push
+```
+
+**On other computers (after pulling):**
+```bash
+git pull
+./restore_schema.sh
+```
+
+This ensures everyone has the exact same database structure!
+
 ## Quick Fix After Pulling
 
 After pulling code that includes database changes, run:

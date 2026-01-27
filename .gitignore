@@ -36,6 +36,9 @@ ENV/
 inventory.db*
 *.backup_*
 
+# Schema dumps (uncomment to ignore, or commit to sync structure)
+# database_schema_dump.sql
+
 # IDE
 .vscode/
 .idea/
