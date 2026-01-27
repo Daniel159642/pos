@@ -233,6 +233,7 @@ CREATE TRIGGER trigger_generate_bill_payment_number
 -- Generic audit trigger function
 -- Note: This function uses the audit_log table defined in schema_postgres.sql
 -- Column names: action_type, employee_id, action_timestamp, establishment_id
+-- This function dynamically finds the primary key column for each table
 CREATE OR REPLACE FUNCTION audit_trigger_function()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -241,6 +242,9 @@ DECLARE
     employee_id_val INTEGER;
     establishment_id_val INTEGER;
     action_type_val TEXT;
+    record_id_val INTEGER;
+    pk_column_name TEXT;
+    pk_value INTEGER;
 BEGIN
     -- Get employee_id from current session or use NULL
     -- In production, you'd get this from session context
@@ -261,6 +265,50 @@ BEGIN
         END IF;
     END;
     
+    -- Dynamically find the primary key column name for this table
+    SELECT a.attname INTO pk_column_name
+    FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    WHERE i.indrelid = TG_RELID
+      AND i.indisprimary
+    LIMIT 1;
+    
+    -- If no primary key found, try common patterns
+    IF pk_column_name IS NULL THEN
+        -- Try 'id' first
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                EXECUTE format('SELECT ($1).%I', 'id') USING OLD INTO pk_value;
+            ELSE
+                EXECUTE format('SELECT ($1).%I', 'id') USING NEW INTO pk_value;
+            END IF;
+            pk_column_name := 'id';
+        EXCEPTION WHEN OTHERS THEN
+            -- Try table_name + '_id'
+            BEGIN
+                IF TG_OP = 'DELETE' THEN
+                    EXECUTE format('SELECT ($1).%I', TG_TABLE_NAME || '_id') USING OLD INTO pk_value;
+                ELSE
+                    EXECUTE format('SELECT ($1).%I', TG_TABLE_NAME || '_id') USING NEW INTO pk_value;
+                END IF;
+                pk_column_name := TG_TABLE_NAME || '_id';
+            EXCEPTION WHEN OTHERS THEN
+                -- Last resort: use 0
+                pk_value := 0;
+                pk_column_name := 'unknown';
+            END;
+        END;
+    ELSE
+        -- Get the primary key value dynamically
+        IF TG_OP = 'DELETE' THEN
+            EXECUTE format('SELECT ($1).%I', pk_column_name) USING OLD INTO pk_value;
+        ELSE
+            EXECUTE format('SELECT ($1).%I', pk_column_name) USING NEW INTO pk_value;
+        END IF;
+    END IF;
+    
+    record_id_val := COALESCE(pk_value, 0);
+    
     -- Map TG_OP to action_type values
     IF TG_OP = 'DELETE' THEN
         action_type_val := 'DELETE';
@@ -268,7 +316,7 @@ BEGIN
         INSERT INTO audit_log (
             establishment_id, table_name, record_id, action_type, old_values, employee_id, action_timestamp
         ) VALUES (
-            establishment_id_val, TG_TABLE_NAME, OLD.id, action_type_val, old_data, employee_id_val, CURRENT_TIMESTAMP
+            establishment_id_val, TG_TABLE_NAME, record_id_val, action_type_val, old_data, employee_id_val, CURRENT_TIMESTAMP
         );
         RETURN OLD;
     ELSIF TG_OP = 'UPDATE' THEN
@@ -278,7 +326,7 @@ BEGIN
         INSERT INTO audit_log (
             establishment_id, table_name, record_id, action_type, old_values, new_values, employee_id, action_timestamp
         ) VALUES (
-            establishment_id_val, TG_TABLE_NAME, NEW.id, action_type_val, old_data, new_data, employee_id_val, CURRENT_TIMESTAMP
+            establishment_id_val, TG_TABLE_NAME, record_id_val, action_type_val, old_data, new_data, employee_id_val, CURRENT_TIMESTAMP
         );
         RETURN NEW;
     ELSIF TG_OP = 'INSERT' THEN
@@ -287,7 +335,7 @@ BEGIN
         INSERT INTO audit_log (
             establishment_id, table_name, record_id, action_type, new_values, employee_id, action_timestamp
         ) VALUES (
-            establishment_id_val, TG_TABLE_NAME, NEW.id, action_type_val, new_data, employee_id_val, CURRENT_TIMESTAMP
+            establishment_id_val, TG_TABLE_NAME, record_id_val, action_type_val, new_data, employee_id_val, CURRENT_TIMESTAMP
         );
         RETURN NEW;
     END IF;
