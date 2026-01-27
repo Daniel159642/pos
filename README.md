@@ -127,12 +127,13 @@ Two database triggers automatically update inventory quantities:
 
 ## Setup
 
-1. Initialize the database:
-   ```bash
-   python3 init_database.py
-   ```
+1. Set up PostgreSQL database:
+   - Install PostgreSQL locally
+   - Create database: `CREATE DATABASE pos_db;`
+   - Run schema: `psql -U postgres -d pos_db -f schema_postgres.sql`
+   - Configure connection in `.env` file (see `.env.example`)
 
-This will create an `inventory.db` SQLite database file with the inventory table.
+The system uses PostgreSQL for all database operations.
 
 ## Usage
 
@@ -394,7 +395,7 @@ pip install pdfplumber pandas openpyxl
 - `pandas` - For Excel/CSV file processing
 - `openpyxl` - For Excel file support
 
-## Database File
+## Database
 
-The database is stored as `inventory.db` (SQLite format) in the project directory.
+The system uses PostgreSQL as the database backend. All database operations are handled through `database_postgres.py` and `database.py`.
 

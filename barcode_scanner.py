@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from typing import Optional, List, Dict, Any
-from database import get_connection, DB_NAME
+from database import get_connection
 
 try:
     from pyzbar import pyzbar
@@ -141,10 +141,11 @@ class BarcodeScanner:
         # Search by barcode field
         cursor.execute("""
             SELECT * FROM inventory
-            WHERE barcode = ?
+            WHERE barcode = %s
         """, (barcode_data,))
         
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
         
         if row:
@@ -166,10 +167,11 @@ class BarcodeScanner:
         
         cursor.execute("""
             SELECT * FROM inventory
-            WHERE sku = ?
+            WHERE sku = %s
         """, (sku,))
         
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
         
         if row:
