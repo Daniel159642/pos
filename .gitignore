@@ -39,6 +39,12 @@ inventory.db*
 # Schema dumps (uncomment to ignore, or commit to sync structure)
 # database_schema_dump.sql
 
+# Database sync tracking
+.database_synced
+
+# Git hooks (we want to commit the post-merge hook template, but not local customizations)
+# .git/hooks/* is already ignored by git, but we commit post-merge as a template
+
 # IDE
 .vscode/
 .idea/
