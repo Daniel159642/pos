@@ -18,9 +18,9 @@ BILL_PAYMENTS = "bill_payments"
 BILL_PAYMENT_APPLICATIONS = "bill_payment_applications"
 VENDORS = "accounting_vendors"
 BILLS = "bills"
-ACCOUNTS = "accounts"
-TRANSACTIONS = "transactions"
-TRANSACTION_LINES = "transaction_lines"
+ACCOUNTS = "accounting.accounts"
+TRANSACTIONS = "accounting.transactions"
+TRANSACTION_LINES = "accounting.transaction_lines"
 
 VALID_METHODS = frozenset({"check", "ach", "wire", "credit_card", "cash", "other"})
 

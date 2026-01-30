@@ -60,6 +60,12 @@ try:
     from backend.controllers.account_controller import account_controller
     from backend.controllers.transaction_controller import transaction_controller
     from backend.controllers.report_controller import report_controller
+    from backend.controllers.bill_controller import bill_controller
+    from backend.controllers.bill_payment_controller import bill_payment_controller
+    from backend.controllers.invoice_controller import invoice_controller
+    from backend.controllers.payment_controller import payment_controller
+    from backend.controllers.vendor_controller import vendor_controller
+    from backend.controllers.customer_controller import customer_controller
     from backend.middleware.error_handler import AppError, handle_error as handle_app_error
     _ACCOUNTING_BACKEND_AVAILABLE = True
 except Exception as e:
@@ -1809,6 +1815,24 @@ def api_create_order():
             points_used=int(data.get('points_used', 0) or 0)
         )
         
+        # Post to accounting (accounting.transactions) so Accounting page reflects the sale
+        if result.get('success') and result.get('order_id'):
+            employee_id = data.get('employee_id')
+            if not employee_id and request.headers.get('Authorization'):
+                session_token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+                if session_token:
+                    session_data = verify_session(session_token)
+                    if session_data and session_data.get('valid'):
+                        employee_id = session_data.get('employee_id')
+            if employee_id:
+                try:
+                    from pos_accounting_bridge import journalize_sale_to_accounting
+                    jr = journalize_sale_to_accounting(result['order_id'], employee_id)
+                    if not jr.get('success'):
+                        print(f"Accounting journalize_sale (order {result['order_id']}): {jr.get('message', 'unknown')}")
+                except Exception as je:
+                    print(f"Accounting journalize_sale error (order {result['order_id']}): {je}")
+        
         return jsonify(result)
     except Exception as e:
         print(f"Create order error: {e}")
@@ -2216,6 +2240,31 @@ def api_search_orders():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e), 'data': []}), 500
+
+@app.route('/api/orders/<int:order_id>/void', methods=['POST'])
+def api_void_order(order_id):
+    """Void an order (reverses inventory and posts accounting reversal)"""
+    try:
+        employee_id = None
+        data = request.json or {}
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '').strip() or data.get('session_token')
+        if session_token:
+            session_data = verify_session(session_token)
+            if session_data and session_data.get('valid'):
+                employee_id = session_data.get('employee_id')
+        if not employee_id:
+            employee_id = data.get('employee_id')
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'Employee ID or session required'}), 401
+        from database import void_order
+        result = void_order(order_id=order_id, employee_id=employee_id, reason=data.get('reason'))
+        if result.get('success'):
+            return jsonify(result), 200
+        return jsonify(result), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/order_items')
 def api_order_items():
@@ -4401,6 +4450,20 @@ def api_approve_return():
             approved_by=data.get('approved_by'),
             notes=data.get('notes')
         )
+        if result.get('success') and result.get('refund_amount') and result.get('return_id') is not None and result.get('order_id') is not None:
+            try:
+                from pos_accounting_bridge import journalize_return_to_accounting
+                jr = journalize_return_to_accounting(
+                    result['return_id'],
+                    result['order_id'],
+                    float(result['refund_amount']),
+                    result.get('approved_by'),
+                    None
+                )
+                if not jr.get('success'):
+                    print(f"Accounting journalize_return (approve return {result['return_id']}): {jr.get('message', 'unknown')}")
+            except Exception as je:
+                print(f"Accounting journalize_return error (approve return): {je}")
         return jsonify(result)
     except Exception as e:
         print(f"Approve return error: {e}")
@@ -4503,6 +4566,30 @@ def api_process_return():
         
         if not result.get('success'):
             return jsonify(result), 400
+        
+        # Post return to accounting (accounting.transactions)
+        employee_id = data.get('employee_id')
+        if not employee_id and request.headers.get('Authorization'):
+            session_token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+            if session_token:
+                session_data = verify_session(session_token)
+                if session_data and session_data.get('valid'):
+                    employee_id = session_data.get('employee_id')
+        if employee_id and result.get('return_total'):
+            try:
+                from pos_accounting_bridge import journalize_return_to_accounting
+                jr = journalize_return_to_accounting(
+                    result['return_id'],
+                    data.get('order_id'),
+                    float(result['return_total']),
+                    employee_id,
+                    data.get('payment_method'),
+                    data.get('return_type', 'refund')
+                )
+                if not jr.get('success'):
+                    print(f"Accounting journalize_return (return {result['return_id']}): {jr.get('message', 'unknown')}")
+            except Exception as je:
+                print(f"Accounting journalize_return error (return {result['return_id']}): {je}")
         
         # Return receipt URL (will be generated on demand via endpoint)
         result['return_receipt_url'] = f"/api/receipt/return/{result['return_id']}"
@@ -6135,6 +6222,18 @@ def process_payment():
             data.get('tip', 0)
         )
         
+        # When payment completes for an order, ensure sale is journalized to accounting (idempotent)
+        if result.get('success') and result.get('order_id'):
+            try:
+                from pos_accounting_bridge import journalize_sale_to_accounting
+                employee_id = session_data.get('employee_id') or session_data.get('user_id')
+                if employee_id:
+                    jr = journalize_sale_to_accounting(int(result['order_id']), int(employee_id))
+                    if not jr.get('success') and jr.get('message'):
+                        print(f"Accounting journalize_sale error (process_payment order {result['order_id']}): {jr.get('message')}")
+            except Exception as je:
+                print(f"Accounting journalize_sale error (process_payment): {je}")
+        
         # Emit Socket.IO events for customer display
         if SOCKETIO_AVAILABLE and socketio:
             if result.get('success'):
@@ -6338,6 +6437,14 @@ def api_add_to_inventory(shipment_id):
             """, (shipment_id,))
             conn.commit()
             conn.close()
+            # Post to accounting so Accounting page reflects inventory received
+            try:
+                from pos_accounting_bridge import journalize_shipment_received_to_accounting
+                jr = journalize_shipment_received_to_accounting(shipment_id, employee_id)
+                if not jr.get('success'):
+                    print(f"Accounting journalize_shipment (pending_shipment {shipment_id}): {jr.get('message', 'unknown')}")
+            except Exception as je:
+                print(f"Accounting journalize_shipment error (pending_shipment {shipment_id}): {je}")
         
         return jsonify(result)
     except Exception as e:
@@ -7337,6 +7444,21 @@ def api_close_register():
         )
         
         if result.get('success'):
+            # Post cash over/short to accounting when discrepancy
+            if result.get('discrepancy') is not None and abs(float(result.get('discrepancy', 0))) >= 0.01:
+                try:
+                    from pos_accounting_bridge import journalize_register_close_to_accounting
+                    jr = journalize_register_close_to_accounting(
+                        session_id,
+                        employee_id,
+                        float(result.get('expected_cash', 0)),
+                        float(result.get('ending_cash', 0)),
+                        float(result['discrepancy'])
+                    )
+                    if not jr.get('success'):
+                        print(f"Accounting register close (session {session_id}): {jr.get('message', 'unknown')}")
+                except Exception as je:
+                    print(f"Accounting register close error (session {session_id}): {je}")
             return jsonify(result), 200
         else:
             return jsonify(result), 400
@@ -7381,6 +7503,21 @@ def api_add_cash_transaction():
         )
         
         if result.get('success'):
+            # Post cash in/out to accounting
+            try:
+                from pos_accounting_bridge import journalize_cash_transaction_to_accounting
+                jr = journalize_cash_transaction_to_accounting(
+                    data.get('session_id'),
+                    employee_id,
+                    data.get('transaction_type', ''),
+                    float(data.get('amount', 0)),
+                    data.get('reason'),
+                    result.get('transaction_id')
+                )
+                if not jr.get('success'):
+                    print(f"Accounting cash transaction: {jr.get('message', 'unknown')}")
+            except Exception as je:
+                print(f"Accounting cash transaction error: {je}")
             return jsonify(result), 200
         else:
             return jsonify(result), 400
@@ -7669,6 +7806,20 @@ def api_daily_cash_count():
             )
             
             if result.get('success'):
+                # Post cash drop to accounting when count_type is drop and amount > 0
+                if count_type == 'drop' and float(total_amount or 0) > 0 and result.get('count_id'):
+                    try:
+                        from pos_accounting_bridge import journalize_cash_drop_to_accounting
+                        jr = journalize_cash_drop_to_accounting(
+                            int(result['count_id']),
+                            float(total_amount),
+                            employee_id,
+                            reason=notes
+                        )
+                        if not jr.get('success') and jr.get('message'):
+                            print(f"Accounting journalize_cash_drop error: {jr.get('message')}")
+                    except Exception as je:
+                        print(f"Accounting journalize_cash_drop error: {je}")
                 return jsonify(result), 200
             else:
                 return jsonify(result), 400
@@ -7758,6 +7909,200 @@ if _ACCOUNTING_BACKEND_AVAILABLE:
     def api_v1_transactions_void(transaction_id):
         return transaction_controller.void_transaction(transaction_id)
 
+    # ---------- /api/v1/customers (accounting customers for invoices/payments) ----------
+    @app.route('/api/v1/customers', methods=['GET'])
+    def api_v1_customers_list():
+        return customer_controller.get_all()
+
+    @app.route('/api/v1/customers', methods=['POST'])
+    def api_v1_customers_create():
+        return customer_controller.create()
+
+    @app.route('/api/v1/customers/<int:customer_id>', methods=['GET'])
+    def api_v1_customers_get(customer_id):
+        return customer_controller.get_by_id(customer_id)
+
+    @app.route('/api/v1/customers/<int:customer_id>', methods=['PUT'])
+    def api_v1_customers_update(customer_id):
+        return customer_controller.update(customer_id)
+
+    @app.route('/api/v1/customers/<int:customer_id>', methods=['DELETE'])
+    def api_v1_customers_delete(customer_id):
+        return customer_controller.delete(customer_id)
+
+    # ---------- /api/v1/vendors ----------
+    @app.route('/api/v1/vendors', methods=['GET'])
+    def api_v1_vendors_list():
+        return vendor_controller.get_all()
+
+    @app.route('/api/v1/vendors', methods=['POST'])
+    def api_v1_vendors_create():
+        return vendor_controller.create()
+
+    @app.route('/api/v1/vendors/search', methods=['GET'])
+    def api_v1_vendors_search():
+        return vendor_controller.search()
+
+    @app.route('/api/v1/vendors/<int:vendor_id>', methods=['GET'])
+    def api_v1_vendors_get(vendor_id):
+        return vendor_controller.get_by_id(vendor_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>', methods=['PUT'])
+    def api_v1_vendors_update(vendor_id):
+        return vendor_controller.update(vendor_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>', methods=['DELETE'])
+    def api_v1_vendors_delete(vendor_id):
+        return vendor_controller.delete(vendor_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>/toggle-status', methods=['PATCH'])
+    def api_v1_vendors_toggle(vendor_id):
+        return vendor_controller.toggle_status(vendor_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>/balance', methods=['GET'])
+    def api_v1_vendors_balance(vendor_id):
+        return vendor_controller.get_balance(vendor_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>/bills', methods=['GET'])
+    def api_v1_vendors_bills(vendor_id):
+        return vendor_controller.get_bills(vendor_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>/statement', methods=['GET'])
+    def api_v1_vendors_statement(vendor_id):
+        return vendor_controller.get_statement(vendor_id)
+
+    @app.route('/api/v1/vendors/1099', methods=['GET'])
+    def api_v1_vendors_1099():
+        return vendor_controller.get_1099_vendors()
+
+    # ---------- /api/v1/bills ----------
+    @app.route('/api/v1/bills', methods=['GET'])
+    def api_v1_bills_list():
+        return bill_controller.get_all()
+
+    @app.route('/api/v1/bills', methods=['POST'])
+    def api_v1_bills_create():
+        return bill_controller.create()
+
+    @app.route('/api/v1/bills/overdue', methods=['GET'])
+    def api_v1_bills_overdue():
+        return bill_controller.get_overdue()
+
+    @app.route('/api/v1/bills/<int:bill_id>', methods=['GET'])
+    def api_v1_bills_get(bill_id):
+        return bill_controller.get_by_id(bill_id)
+
+    @app.route('/api/v1/bills/<int:bill_id>', methods=['PUT'])
+    def api_v1_bills_update(bill_id):
+        return bill_controller.update(bill_id)
+
+    @app.route('/api/v1/bills/<int:bill_id>', methods=['DELETE'])
+    def api_v1_bills_delete(bill_id):
+        return bill_controller.delete(bill_id)
+
+    @app.route('/api/v1/bills/<int:bill_id>/void', methods=['POST'])
+    def api_v1_bills_void(bill_id):
+        return bill_controller.void_bill(bill_id)
+
+    # ---------- /api/v1/invoices ----------
+    @app.route('/api/v1/invoices', methods=['GET'])
+    def api_v1_invoices_list():
+        return invoice_controller.get_all()
+
+    @app.route('/api/v1/invoices', methods=['POST'])
+    def api_v1_invoices_create():
+        return invoice_controller.create()
+
+    @app.route('/api/v1/invoices/overdue', methods=['GET'])
+    def api_v1_invoices_overdue():
+        return invoice_controller.get_overdue()
+
+    @app.route('/api/v1/invoices/<int:invoice_id>', methods=['GET'])
+    def api_v1_invoices_get(invoice_id):
+        return invoice_controller.get_by_id(invoice_id)
+
+    @app.route('/api/v1/invoices/<int:invoice_id>', methods=['PUT'])
+    def api_v1_invoices_update(invoice_id):
+        return invoice_controller.update(invoice_id)
+
+    @app.route('/api/v1/invoices/<int:invoice_id>', methods=['DELETE'])
+    def api_v1_invoices_delete(invoice_id):
+        return invoice_controller.delete(invoice_id)
+
+    @app.route('/api/v1/invoices/<int:invoice_id>/mark-sent', methods=['POST'])
+    def api_v1_invoices_mark_sent(invoice_id):
+        return invoice_controller.mark_as_sent(invoice_id)
+
+    @app.route('/api/v1/invoices/<int:invoice_id>/void', methods=['POST'])
+    def api_v1_invoices_void(invoice_id):
+        return invoice_controller.void_invoice(invoice_id)
+
+    # ---------- /api/v1/payments (customer payments / receive payment) ----------
+    @app.route('/api/v1/payments', methods=['GET'])
+    def api_v1_payments_list():
+        return payment_controller.get_all()
+
+    @app.route('/api/v1/payments', methods=['POST'])
+    def api_v1_payments_create():
+        return payment_controller.create()
+
+    @app.route('/api/v1/payments/<int:payment_id>', methods=['GET'])
+    def api_v1_payments_get(payment_id):
+        return payment_controller.get_by_id(payment_id)
+
+    @app.route('/api/v1/payments/<int:payment_id>', methods=['PUT'])
+    def api_v1_payments_update(payment_id):
+        return payment_controller.update(payment_id)
+
+    @app.route('/api/v1/payments/<int:payment_id>', methods=['DELETE'])
+    def api_v1_payments_delete(payment_id):
+        return payment_controller.delete(payment_id)
+
+    @app.route('/api/v1/payments/<int:payment_id>/void', methods=['POST'])
+    def api_v1_payments_void(payment_id):
+        return payment_controller.void_payment(payment_id)
+
+    @app.route('/api/v1/customers/<int:customer_id>/outstanding-invoices', methods=['GET'])
+    def api_v1_customers_outstanding_invoices(customer_id):
+        return payment_controller.get_customer_outstanding_invoices(customer_id)
+
+    @app.route('/api/v1/payments/<int:payment_id>/receipt', methods=['GET'])
+    def api_v1_payments_receipt(payment_id):
+        return payment_controller.get_payment_receipt(payment_id)
+
+    # ---------- /api/v1/bill-payments ----------
+    @app.route('/api/v1/bill-payments', methods=['GET'])
+    def api_v1_bill_payments_list():
+        return bill_payment_controller.get_all()
+
+    @app.route('/api/v1/bill-payments', methods=['POST'])
+    def api_v1_bill_payments_create():
+        return bill_payment_controller.create()
+
+    @app.route('/api/v1/bill-payments/<int:payment_id>', methods=['GET'])
+    def api_v1_bill_payments_get(payment_id):
+        return bill_payment_controller.get_by_id(payment_id)
+
+    @app.route('/api/v1/bill-payments/<int:payment_id>', methods=['PUT'])
+    def api_v1_bill_payments_update(payment_id):
+        return bill_payment_controller.update(payment_id)
+
+    @app.route('/api/v1/bill-payments/<int:payment_id>', methods=['DELETE'])
+    def api_v1_bill_payments_delete(payment_id):
+        return bill_payment_controller.delete(payment_id)
+
+    @app.route('/api/v1/bill-payments/<int:payment_id>/void', methods=['POST'])
+    def api_v1_bill_payments_void(payment_id):
+        return bill_payment_controller.void_payment(payment_id)
+
+    @app.route('/api/v1/vendors/<int:vendor_id>/outstanding-bills', methods=['GET'])
+    def api_v1_vendors_outstanding_bills(vendor_id):
+        return bill_payment_controller.get_vendor_outstanding_bills(vendor_id)
+
+    @app.route('/api/v1/bill-payments/<int:payment_id>/check-data', methods=['GET'])
+    def api_v1_bill_payments_check_data(payment_id):
+        return bill_payment_controller.get_payment_check_data(payment_id)
+
     # ---------- /api/accounting reports (trial-balance, P&L, balance-sheet) ----------
     @app.route('/api/accounting/trial-balance', methods=['GET'])
     def api_accounting_trial_balance():
@@ -7807,19 +8152,148 @@ if _ACCOUNTING_BACKEND_AVAILABLE:
 
     @app.route('/api/accounting/invoices', methods=['GET'])
     def api_accounting_invoices():
-        return jsonify({'success': True, 'data': []}), 200
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        conn, cur = _pg_conn()
+        try:
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'orders'
+            """)
+            cols = [r[0] for r in cur.fetchall()]
+            has_customer = 'customer_id' in cols
+            q = """
+                SELECT o.order_id AS id, o.order_number AS invoice_number,
+                       o.order_date::text AS invoice_date, o.total AS total_amount,
+                       o.total AS balance_due, o.order_status AS status
+            """
+            if has_customer:
+                q = """
+                SELECT o.order_id AS id, o.order_number AS invoice_number,
+                       o.order_date::text AS invoice_date, o.total AS total_amount,
+                       o.total AS balance_due, o.order_status AS status,
+                       c.customer_name AS customer_name
+                FROM orders o
+                LEFT JOIN customers c ON o.customer_id = c.customer_id
+                WHERE 1=1
+                """
+            else:
+                q = """
+                SELECT o.order_id AS id, o.order_number AS invoice_number,
+                       o.order_date::text AS invoice_date, o.total AS total_amount,
+                       o.total AS balance_due, o.order_status AS status,
+                       NULL AS customer_name
+                FROM orders o
+                WHERE 1=1
+                """
+            params = []
+            if start_date:
+                q += " AND o.order_date::date >= %s"
+                params.append(start_date)
+            if end_date:
+                q += " AND o.order_date::date <= %s"
+                params.append(end_date)
+            q += " ORDER BY o.order_date DESC LIMIT 500"
+            cur.execute(q, params)
+            rows = cur.fetchall()
+            data = [dict(zip([c[0] for c in cur.description], r)) for r in rows] if cur.description else []
+        except Exception as e:
+            data = []
+            print(f"Accounting invoices error: {e}")
+        finally:
+            conn.close()
+        return jsonify({'success': True, 'data': data}), 200
 
     @app.route('/api/accounting/bills', methods=['GET'])
     def api_accounting_bills():
-        return jsonify({'success': True, 'data': []}), 200
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        conn, cur = _pg_conn()
+        try:
+            cur.execute("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'approved_shipments'")
+            if cur.fetchone():
+                q = """
+                    SELECT a.shipment_id AS id, ('BILL-' || a.shipment_id) AS bill_number,
+                           a.received_date::text AS bill_date, a.total_cost AS total_amount,
+                           a.total_cost AS balance_due, 'open' AS status,
+                           v.vendor_name
+                    FROM approved_shipments a
+                    LEFT JOIN vendors v ON a.vendor_id = v.vendor_id
+                    WHERE a.total_cost IS NOT NULL AND a.total_cost > 0
+                """
+                params = []
+                if start_date:
+                    q += " AND a.received_date::date >= %s"
+                    params.append(start_date)
+                if end_date:
+                    q += " AND a.received_date::date <= %s"
+                    params.append(end_date)
+                q += " ORDER BY a.received_date DESC LIMIT 500"
+                cur.execute(q, params)
+            else:
+                q2 = """
+                    SELECT s.shipment_id AS id, ('BILL-' || s.shipment_id) AS bill_number,
+                           s.shipment_date::text AS bill_date,
+                           COALESCE(SUM(si.quantity_received * si.unit_cost), 0) AS total_amount,
+                           COALESCE(SUM(si.quantity_received * si.unit_cost), 0) AS balance_due,
+                           'open' AS status, v.vendor_name
+                    FROM shipments s
+                    LEFT JOIN shipment_items si ON s.shipment_id = si.shipment_id
+                    LEFT JOIN vendors v ON s.vendor_id = v.vendor_id
+                    WHERE 1=1
+                """
+                params2 = []
+                if start_date:
+                    q2 += " AND s.shipment_date::date >= %s"
+                    params2.append(start_date)
+                if end_date:
+                    q2 += " AND s.shipment_date::date <= %s"
+                    params2.append(end_date)
+                q2 += " GROUP BY s.shipment_id, s.shipment_date, v.vendor_name ORDER BY s.shipment_date DESC LIMIT 500"
+                cur.execute(q2, params2)
+            rows = cur.fetchall()
+            data = [dict(zip([c[0] for c in cur.description], r)) for r in rows] if cur.description else []
+        except Exception as e:
+            data = []
+            print(f"Accounting bills error: {e}")
+        finally:
+            conn.close()
+        return jsonify({'success': True, 'data': data}), 200
 
     @app.route('/api/accounting/customers', methods=['GET'])
     def api_accounting_customers():
-        return jsonify({'success': True, 'data': []}), 200
+        conn, cur = _pg_conn()
+        try:
+            cur.execute("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'customers'")
+            if cur.fetchone():
+                cur.execute("""
+                    SELECT customer_id AS id, customer_id AS customer_number, customer_name AS name,
+                           customer_name AS display_name, email, phone, COALESCE(address, '') AS address,
+                           0 AS account_balance
+                    FROM customers ORDER BY customer_name LIMIT 1000
+                """)
+                rows = cur.fetchall()
+                data = [dict(zip([c[0] for c in cur.description], r)) for r in rows] if cur.description else []
+            else:
+                data = []
+        except Exception as e:
+            data = []
+            print(f"Accounting customers error: {e}")
+        finally:
+            conn.close()
+        return jsonify({'success': True, 'data': data}), 200
 
     @app.route('/api/accounting/vendors', methods=['GET'])
     def api_accounting_vendors():
-        return jsonify({'success': True, 'data': []}), 200
+        try:
+            vendors = list_vendors()
+            data = [{'id': v.get('vendor_id'), 'vendor_number': v.get('vendor_id'), 'vendor_name': v.get('vendor_name'),
+                     'contact_person': v.get('contact_person'), 'email': v.get('email'), 'phone': v.get('phone'),
+                     'address': v.get('address') or '', 'account_balance': 0} for v in (vendors or [])]
+        except Exception as e:
+            data = []
+            print(f"Accounting vendors error: {e}")
+        return jsonify({'success': True, 'data': data}), 200
 
 @app.route('/api/accounting/dashboard', methods=['GET'])
 def api_accounting_dashboard():

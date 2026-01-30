@@ -4479,6 +4479,13 @@ def void_order(order_id: int, employee_id: int, reason: Optional[str] = None) ->
         
         conn.commit()
         conn.close()
+
+        # Post void reversal to accounting
+        try:
+            from pos_accounting_bridge import journalize_void_sale_to_accounting
+            journalize_void_sale_to_accounting(order_id, employee_id)
+        except Exception as e:
+            print(f"Accounting journalize_void_sale error (order {order_id}): {e}")
         
         return {'success': True, 'message': 'Order voided successfully'}
         
@@ -4867,7 +4874,9 @@ def approve_pending_return(return_id: int, approved_by: int, notes: Optional[str
         return {
             'success': True,
             'message': 'Return approved and processed successfully',
-            'refund_amount': total_refund
+            'refund_amount': total_refund,
+            'return_id': return_id,
+            'order_id': order_id
         }
         
     except Exception as e:
@@ -5258,11 +5267,11 @@ def get_daily_sales_by_employee(start_date: Optional[str] = None, end_date: Opti
     params = []
     
     if start_date:
-        query += " AND DATE(o.order_date) >= ?"
+        query += " AND DATE(o.order_date) >= %s"
         params.append(start_date)
     
     if end_date:
-        query += " AND DATE(o.order_date) <= ?"
+        query += " AND DATE(o.order_date) <= %s"
         params.append(end_date)
     
     query += " GROUP BY DATE(o.order_date), e.employee_id ORDER BY sale_date DESC, total_sales DESC"
@@ -5293,14 +5302,14 @@ def get_top_selling_products(limit: int = 10, start_date: Optional[str] = None, 
     params = []
     
     if start_date:
-        query += " AND DATE(o.order_date) >= ?"
+        query += " AND DATE(o.order_date) >= %s"
         params.append(start_date)
     
     if end_date:
-        query += " AND DATE(o.order_date) <= ?"
+        query += " AND DATE(o.order_date) <= %s"
         params.append(end_date)
     
-    query += " GROUP BY oi.product_id ORDER BY total_sold DESC LIMIT ?"
+    query += " GROUP BY oi.product_id ORDER BY total_sold DESC LIMIT %s"
     params.append(limit)
     
     cursor.execute(query, params)
@@ -5325,11 +5334,11 @@ def get_payment_method_breakdown(start_date: Optional[str] = None, end_date: Opt
     params = []
     
     if start_date:
-        query += " AND DATE(order_date) >= ?"
+        query += " AND DATE(order_date) >= %s"
         params.append(start_date)
     
     if end_date:
-        query += " AND DATE(order_date) <= ?"
+        query += " AND DATE(order_date) <= %s"
         params.append(end_date)
     
     query += " GROUP BY payment_method ORDER BY total_amount DESC"
@@ -5455,11 +5464,11 @@ def get_tips_by_employee(
             params.append(employee_id)
         
         if start_date:
-            query += " AND DATE(et.tip_date) >= ?"
+            query += " AND DATE(et.tip_date) >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND DATE(et.tip_date) <= ?"
+            query += " AND DATE(et.tip_date) <= %s"
             params.append(end_date)
         
         query += " GROUP BY et.employee_id, DATE(et.tip_date) ORDER BY tip_date DESC, total_tips DESC"
@@ -5481,15 +5490,15 @@ def get_tips_by_employee(
         params = []
         
         if employee_id:
-            query += " AND COALESCE(pt.employee_id, o.employee_id) = ?"
+            query += " AND COALESCE(pt.employee_id, o.employee_id) = %s"
             params.append(employee_id)
         
         if start_date:
-            query += " AND DATE(pt.transaction_date) >= ?"
+            query += " AND DATE(pt.transaction_date) >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND DATE(pt.transaction_date) <= ?"
+            query += " AND DATE(pt.transaction_date) <= %s"
             params.append(end_date)
         
         query += " GROUP BY pt.employee_id, DATE(pt.transaction_date) ORDER BY tip_date DESC, total_tips DESC"
@@ -5530,11 +5539,11 @@ def get_employee_tip_summary(
         params = [employee_id]
         
         if start_date:
-            query += " AND DATE(et.tip_date) >= ?"
+            query += " AND DATE(et.tip_date) >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND DATE(et.tip_date) <= ?"
+            query += " AND DATE(et.tip_date) <= %s"
             params.append(end_date)
     else:
         # Fallback to payment_transactions
@@ -5553,11 +5562,11 @@ def get_employee_tip_summary(
         params = [employee_id]
         
         if start_date:
-            query += " AND DATE(pt.transaction_date) >= ?"
+            query += " AND DATE(pt.transaction_date) >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND DATE(pt.transaction_date) <= ?"
+            query += " AND DATE(pt.transaction_date) <= %s"
             params.append(end_date)
     
     cursor.execute(query, params)
@@ -5603,11 +5612,11 @@ def get_employee_tips(
         params = [employee_id]
         
         if start_date:
-            query += " AND DATE(et.tip_date) >= ?"
+            query += " AND DATE(et.tip_date) >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND DATE(et.tip_date) <= ?"
+            query += " AND DATE(et.tip_date) <= %s"
             params.append(end_date)
         
         query += " ORDER BY et.tip_date DESC"
@@ -5633,11 +5642,11 @@ def get_employee_tips(
         params = [employee_id]
         
         if start_date:
-            query += " AND DATE(pt.transaction_date) >= ?"
+            query += " AND DATE(pt.transaction_date) >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND DATE(pt.transaction_date) <= ?"
+            query += " AND DATE(pt.transaction_date) <= %s"
             params.append(end_date)
         
         query += " ORDER BY pt.transaction_date DESC"
@@ -5835,11 +5844,11 @@ def get_schedule(
         params.append(employee_id)
     
     if start_date:
-        query += " AND es.schedule_date >= ?"
+        query += " AND es.schedule_date >= %s"
         params.append(start_date)
     
     if end_date:
-        query += " AND es.schedule_date <= ?"
+        query += " AND es.schedule_date <= %s"
         params.append(end_date)
     
     query += " ORDER BY es.schedule_date DESC, es.start_time"
@@ -6694,14 +6703,14 @@ def get_audit_trail(
         params.append(employee_id)
     
     if start_date:
-        query += " AND DATE(al.action_timestamp) >= ?"
+        query += " AND DATE(al.action_timestamp) >= %s"
         params.append(start_date)
     
     if end_date:
-        query += " AND DATE(al.action_timestamp) <= ?"
+        query += " AND DATE(al.action_timestamp) <= %s"
         params.append(end_date)
     
-    query += " ORDER BY al.action_timestamp DESC LIMIT ?"
+    query += " ORDER BY al.action_timestamp DESC LIMIT %s"
     params.append(limit)
     
     cursor.execute(query, params)
@@ -7320,6 +7329,27 @@ def resolve_discrepancy(
                 discrepancy['financial_impact'],
                 employee_id
             )
+            try:
+                from pos_accounting_bridge import journalize_damaged_goods_to_accounting
+                journalize_damaged_goods_to_accounting(
+                    discrepancy_id,
+                    float(discrepancy.get('financial_impact', 0)),
+                    employee_id
+                )
+            except Exception as e:
+                print(f"Accounting journalize_damaged_goods error: {e}")
+
+    # Create journal entry if vendor credit issued
+    if journalize and resolution_status == 'credit_issued':
+        try:
+            from pos_accounting_bridge import journalize_vendor_credit_to_accounting
+            journalize_vendor_credit_to_accounting(
+                discrepancy_id,
+                float(discrepancy.get('financial_impact', 0)),
+                employee_id
+            )
+        except Exception as e:
+            print(f"Accounting journalize_vendor_credit error: {e}")
     
     # Log audit action
     log_audit_action(
@@ -7354,11 +7384,11 @@ def get_discrepancy_summary(
     params = []
     
     if start_date:
-        query += " AND DATE(reported_date) >= ?"
+        query += " AND DATE(reported_date) >= %s"
         params.append(start_date)
     
     if end_date:
-        query += " AND DATE(reported_date) <= ?"
+        query += " AND DATE(reported_date) <= %s"
         params.append(end_date)
     
     query += " GROUP BY discrepancy_type, resolution_status"
@@ -7444,7 +7474,7 @@ def generate_balance_sheet(as_of_date: Optional[str] = None) -> Dict[str, Any]:
         LEFT JOIN journal_entry_lines jel ON coa.account_id = jel.account_id
         LEFT JOIN journal_entries je ON jel.journal_entry_id = je.journal_entry_id
         WHERE (je.posted = 1 OR je.posted IS NULL)
-          AND (je.entry_date <= ? OR je.entry_date IS NULL)
+          AND (je.entry_date <= %s OR je.entry_date IS NULL)
           AND coa.account_type IN ('asset', 'contra_asset', 'liability', 'equity')
         GROUP BY coa.account_id
         ORDER BY 
@@ -7518,7 +7548,7 @@ def generate_income_statement(start_date: str, end_date: str) -> Dict[str, Any]:
         LEFT JOIN journal_entry_lines jel ON coa.account_id = jel.account_id
         LEFT JOIN journal_entries je ON jel.journal_entry_id = je.journal_entry_id
         WHERE je.posted = 1
-          AND je.entry_date BETWEEN ? AND %s
+          AND je.entry_date BETWEEN %s AND %s
           AND coa.account_type IN ('revenue', 'contra_revenue', 'expense')
         GROUP BY coa.account_id
         ORDER BY 
@@ -7598,7 +7628,7 @@ def generate_trial_balance(as_of_date: Optional[str] = None) -> List[Dict[str, A
         LEFT JOIN journal_entry_lines jel ON coa.account_id = jel.account_id
         LEFT JOIN journal_entries je ON jel.journal_entry_id = je.journal_entry_id
         WHERE je.posted = 1
-          AND (je.entry_date <= ? OR je.entry_date IS NULL)
+          AND (je.entry_date <= %s OR je.entry_date IS NULL)
         GROUP BY coa.account_id
         HAVING total_debits > 0 OR total_credits > 0
         ORDER BY coa.account_number

@@ -3,7 +3,7 @@ import Input from '../common/Input'
 import Select from '../common/Select'
 import Button from '../common/Button'
 
-function GeneralLedgerFilters({ filters, accounts, onFilterChange, onClearFilters, onExport, loading = false }) {
+function GeneralLedgerFilters({ filters, accounts, onFilterChange, onClearFilters, onExport, onExportExcel, loading = false }) {
   const isDarkMode = document.documentElement.classList.contains('dark-theme')
 
   const handleChange = (e) => {
@@ -100,6 +100,16 @@ function GeneralLedgerFilters({ filters, accounts, onFilterChange, onClearFilter
             disabled={loading}
           >
             📊 Export to CSV
+          </Button>
+        )}
+        {onExportExcel && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onExportExcel}
+            disabled={loading}
+          >
+            📗 Export to Excel
           </Button>
         )}
         <Button

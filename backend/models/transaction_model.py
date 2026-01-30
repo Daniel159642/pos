@@ -270,6 +270,36 @@ class TransactionRepository:
             }
         finally:
             cursor.close()
+
+    @staticmethod
+    def find_by_source_document(source_document_type: str, source_document_id: int) -> Optional[Dict[str, Any]]:
+        """Find a posted transaction by source document (e.g. order, order_void, return). Used for idempotency."""
+        cursor = get_cursor()
+        try:
+            cursor.execute("""
+                SELECT * FROM accounting.transactions
+                WHERE source_document_type = %s AND source_document_id = %s AND is_posted = true AND (is_void IS NOT TRUE OR is_void = false)
+                ORDER BY id DESC LIMIT 1
+            """, (source_document_type, source_document_id))
+            txn_row = cursor.fetchone()
+            if not txn_row:
+                return None
+            txn = Transaction(dict(txn_row))
+            cursor.execute("""
+                SELECT tl.*, a.account_name, a.account_number
+                FROM accounting.transaction_lines tl
+                JOIN accounting.accounts a ON tl.account_id = a.id
+                WHERE tl.transaction_id = %s
+                ORDER BY tl.line_number
+            """, (txn.id,))
+            line_rows = cursor.fetchall()
+            lines = [TransactionLine(dict(row)) for row in line_rows]
+            return {
+                'transaction': txn.to_dict(),
+                'lines': [line.to_dict() for line in lines]
+            }
+        finally:
+            cursor.close()
     
     @staticmethod
     def create(data: Dict[str, Any], user_id: int) -> Dict[str, Any]:
@@ -286,12 +316,13 @@ class TransactionRepository:
             # Generate transaction number (database trigger will handle if empty)
             transaction_number = data.get('transaction_number') or ''
             
-            # Insert transaction
+            # Insert transaction (optionally link to POS order/shipment via source_document_*)
             cursor.execute("""
                 INSERT INTO accounting.transactions (
                     transaction_number, transaction_date, transaction_type,
-                    reference_number, description, is_posted, created_by, updated_by
-                ) VALUES (%s, %s, %s, %s, %s, false, %s, %s)
+                    reference_number, description, source_document_id, source_document_type,
+                    is_posted, created_by, updated_by
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, false, %s, %s)
                 RETURNING *
             """, (
                 transaction_number,
@@ -299,6 +330,8 @@ class TransactionRepository:
                 data['transaction_type'],
                 data.get('reference_number'),
                 data['description'],
+                data.get('source_document_id'),
+                data.get('source_document_type'),
                 user_id,
                 user_id
             ))

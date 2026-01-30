@@ -29,6 +29,15 @@ import Button from '../components/common/Button'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import Alert from '../components/common/Alert'
 
+/** Download an array-of-arrays as Excel (.xlsx) using SheetJS */
+async function downloadExcel(rows, filename) {
+  const XLSX = await import('xlsx')
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
+  XLSX.writeFile(wb, filename)
+}
+
 function Accounting() {
   const { themeMode, themeColor } = useTheme()
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -214,12 +223,14 @@ function DashboardTab({ dateRange, formatCurrency, getAuthHeaders }) {
     try {
       setLoading(true)
       // Call new accounting API endpoints
-      const [trialBalance, pnl] = await Promise.all([
+      const [trialBalanceRes, pnlRes] = await Promise.all([
         fetch(`/api/accounting/trial-balance?as_of_date=${dateRange.end_date}`, { headers: getAuthHeaders() }).then(r => r.ok ? r.json() : null),
         fetch(`/api/accounting/profit-loss?start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`, { headers: getAuthHeaders() }).then(r => r.ok ? r.json() : null)
       ])
-      
-      setData({ trialBalance, pnl })
+      // Normalize: trial-balance returns { data: { accounts: [...] } }; profit-loss returns { data: { revenue, expenses, net_income, ... } }
+      const trialBalanceRows = Array.isArray(trialBalanceRes?.data?.accounts) ? trialBalanceRes.data.accounts : []
+      const pnlData = pnlRes?.data || {}
+      setData({ trialBalance: trialBalanceRows, pnl: pnlData })
     } catch (err) {
       console.error('Error loading dashboard:', err)
     } finally {
@@ -231,12 +242,11 @@ function DashboardTab({ dateRange, formatCurrency, getAuthHeaders }) {
     return <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>Loading dashboard...</div>
   }
 
-  const totalDebits = data?.trialBalance?.reduce((sum, row) => sum + (parseFloat(row.debit_balance) || 0), 0) || 0
-  const totalCredits = data?.trialBalance?.reduce((sum, row) => sum + (parseFloat(row.credit_balance) || 0), 0) || 0
-  const netIncome = data?.pnl?.reduce((sum, row) => {
-    const amount = parseFloat(row.amount) || 0
-    return sum + (row.account_type === 'Revenue' || row.account_type === 'Other Income' ? amount : -amount)
-  }, 0) || 0
+  // Trial balance rows use total_debits / total_credits (from API)
+  const totalDebits = Array.isArray(data?.trialBalance) ? data.trialBalance.reduce((sum, row) => sum + (parseFloat(row.total_debits) || 0), 0) : 0
+  const totalCredits = Array.isArray(data?.trialBalance) ? data.trialBalance.reduce((sum, row) => sum + (parseFloat(row.total_credits) || 0), 0) : 0
+  // P&L API returns net_income directly
+  const netIncome = typeof data?.pnl?.net_income === 'number' ? data.pnl.net_income : (parseFloat(data?.pnl?.net_income) || 0)
 
   return (
     <div>
@@ -1040,7 +1050,7 @@ function InvoicesTab({ dateRange, formatCurrency, getAuthHeaders }) {
       )
       if (response.ok) {
         const data = await response.json()
-        setInvoices(Array.isArray(data) ? data : [])
+        setInvoices(Array.isArray(data) ? data : (data?.data ?? []))
       }
     } catch (err) {
       console.error('Error loading invoices:', err)
@@ -1171,13 +1181,7 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders }) {
     }
   }
 
-  const handleExport = () => {
-    if (entries.length === 0) {
-      showAlert('error', 'No data to export')
-      return
-    }
-
-    // Create CSV content
+  const buildGeneralLedgerRows = () => {
     const headers = ['Date', 'Transaction #', 'Account', 'Description', 'Debit', 'Credit']
     const rows = entries.map(entry => [
       new Date(entry.transaction_date).toLocaleDateString(),
@@ -1187,18 +1191,19 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders }) {
       entry.debit_amount > 0 ? entry.debit_amount.toFixed(2) : '',
       entry.credit_amount > 0 ? entry.credit_amount.toFixed(2) : '',
     ])
-
-    // Add totals row
     const totalDebits = entries.reduce((sum, e) => sum + (e.debit_amount || 0), 0)
     const totalCredits = entries.reduce((sum, e) => sum + (e.credit_amount || 0), 0)
     rows.push(['', '', '', 'TOTALS', totalDebits.toFixed(2), totalCredits.toFixed(2)])
+    return [headers, ...rows]
+  }
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n')
-
-    // Download CSV
+  const handleExport = () => {
+    if (entries.length === 0) {
+      showAlert('error', 'No data to export')
+      return
+    }
+    const allRows = buildGeneralLedgerRows()
+    const csvContent = allRows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1206,8 +1211,20 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders }) {
     a.download = `general-ledger-${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     window.URL.revokeObjectURL(url)
-
     showAlert('success', 'Ledger exported to CSV')
+  }
+
+  const handleExportExcel = async () => {
+    if (entries.length === 0) {
+      showAlert('error', 'No data to export')
+      return
+    }
+    try {
+      await downloadExcel(buildGeneralLedgerRows(), `general-ledger-${new Date().toISOString().split('T')[0]}.xlsx`)
+      showAlert('success', 'Ledger exported to Excel')
+    } catch (e) {
+      showAlert('error', 'Excel export failed')
+    }
   }
 
   const showAlert = (type, message) => {
@@ -1256,6 +1273,7 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders }) {
         onFilterChange={setFilters}
         onClearFilters={handleClearFilters}
         onExport={handleExport}
+        onExportExcel={handleExportExcel}
         loading={loading}
       />
 
@@ -1463,12 +1481,7 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
     }
   }
 
-  const handleExport = () => {
-    if (!ledgerData || ledgerData.entries.length === 0) {
-      showAlert('error', 'No data to export')
-      return
-    }
-
+  const buildAccountLedgerRows = () => {
     const headers = ['Date', 'Transaction #', 'Description', 'Debit', 'Credit', 'Balance']
     const rows = ledgerData.entries.map(entry => [
       new Date(entry.transaction_date).toLocaleDateString(),
@@ -1478,15 +1491,22 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
       entry.credit_amount > 0 ? entry.credit_amount.toFixed(2) : '',
       entry.running_balance?.toFixed(2) || '',
     ])
-
-    const csvContent = [
+    return [
       [`Account: ${ledgerData.account.account_number || ''} ${ledgerData.account.account_name}`],
       [`Ending Balance: $${ledgerData.ending_balance.toFixed(2)}`],
       [],
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n')
+      headers,
+      ...rows
+    ]
+  }
 
+  const handleExport = () => {
+    if (!ledgerData || ledgerData.entries.length === 0) {
+      showAlert('error', 'No data to export')
+      return
+    }
+    const allRows = buildAccountLedgerRows()
+    const csvContent = allRows.map(row => (Array.isArray(row) ? row : [row]).map(cell => `"${cell}"`).join(',')).join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1494,8 +1514,20 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
     a.download = `account-ledger-${accountId}-${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     window.URL.revokeObjectURL(url)
-
     showAlert('success', 'Account ledger exported to CSV')
+  }
+
+  const handleExportExcel = async () => {
+    if (!ledgerData || ledgerData.entries.length === 0) {
+      showAlert('error', 'No data to export')
+      return
+    }
+    try {
+      await downloadExcel(buildAccountLedgerRows(), `account-ledger-${accountId}-${new Date().toISOString().split('T')[0]}.xlsx`)
+      showAlert('success', 'Account ledger exported to Excel')
+    } catch (e) {
+      showAlert('error', 'Excel export failed')
+    }
   }
 
   const showAlert = (type, message) => {
@@ -1624,7 +1656,15 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
               onClick={handleExport}
               style={{ flex: 1 }}
             >
-              📊 Export
+              📊 Export to CSV
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleExportExcel}
+              style={{ flex: 1 }}
+            >
+              📗 Export to Excel
             </Button>
           </div>
         </div>
@@ -1838,6 +1878,48 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
     showAlert('success', 'Report exported to CSV')
   }
 
+  const handleExportExcel = async () => {
+    if (!reportData) {
+      showAlert('error', 'No report data to export')
+      return
+    }
+    const rows = [
+      ['Profit & Loss Statement'],
+      [`Period: ${new Date(reportData.start_date).toLocaleDateString()} - ${new Date(reportData.end_date).toLocaleDateString()}`],
+      [],
+      ['Account', 'Amount', '% of Revenue'],
+      [],
+      ['REVENUE'],
+    ]
+    reportData.revenue.forEach(account => {
+      rows.push([`  ${account.account_number || ''} ${account.account_name}`, account.balance.toFixed(2), (account.percentage_of_revenue || 0).toFixed(1) + '%'])
+    })
+    rows.push(['Total Revenue', reportData.total_revenue.toFixed(2), '100.0%'])
+    rows.push([])
+    if (reportData.cost_of_goods_sold?.length > 0) {
+      rows.push(['COST OF GOODS SOLD'])
+      reportData.cost_of_goods_sold.forEach(account => {
+        rows.push([`  ${account.account_number || ''} ${account.account_name}`, account.balance.toFixed(2), (account.percentage_of_revenue || 0).toFixed(1) + '%'])
+      })
+      rows.push(['Total Cost of Goods Sold', reportData.total_cogs.toFixed(2), ((reportData.total_cogs / reportData.total_revenue) * 100).toFixed(1) + '%'])
+      rows.push(['GROSS PROFIT', reportData.gross_profit.toFixed(2), ((reportData.gross_profit / reportData.total_revenue) * 100).toFixed(1) + '%'])
+      rows.push([])
+    }
+    rows.push(['EXPENSES'])
+    reportData.expenses.forEach(account => {
+      rows.push([`  ${account.account_number || ''} ${account.account_name}`, account.balance.toFixed(2), (account.percentage_of_revenue || 0).toFixed(1) + '%'])
+    })
+    rows.push(['Total Expenses', reportData.total_expenses.toFixed(2), ((reportData.total_expenses / reportData.total_revenue) * 100).toFixed(1) + '%'])
+    rows.push([])
+    rows.push(['NET INCOME', reportData.net_income.toFixed(2), ((reportData.net_income / reportData.total_revenue) * 100).toFixed(1) + '%'])
+    try {
+      await downloadExcel(rows, `profit-loss-${filters.start_date}-to-${filters.end_date}.xlsx`)
+      showAlert('success', 'Report exported to Excel')
+    } catch (e) {
+      showAlert('error', 'Excel export failed')
+    }
+  }
+
   const handleAccountClick = (accountId) => {
     sessionStorage.setItem('selectedAccountId', accountId)
     setActiveTab('account-ledger')
@@ -1906,6 +1988,9 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
             <div style={{ display: 'flex', gap: '12px' }}>
               <Button variant="secondary" onClick={handleExport}>
                 📊 Export to CSV
+              </Button>
+              <Button variant="secondary" onClick={handleExportExcel}>
+                📗 Export to Excel
               </Button>
               <Button variant="secondary" onClick={() => window.print()}>
                 🖨️ Print
@@ -2079,6 +2164,61 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
     showAlert('success', 'Report exported to CSV')
   }
 
+  const handleExportExcel = async () => {
+    if (!reportData) {
+      showAlert('error', 'No report data to export')
+      return
+    }
+    const rows = [
+      ['Balance Sheet'],
+      [`As of: ${new Date(reportData.as_of_date).toLocaleDateString()}`],
+      [],
+      ['ASSETS']
+    ]
+    if (reportData.assets.current_assets?.length > 0) {
+      rows.push(['Current Assets'])
+      reportData.assets.current_assets.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, a.balance.toFixed(2)]))
+      rows.push(['Total Current Assets', reportData.assets.total_current_assets.toFixed(2)])
+    }
+    if (reportData.assets.fixed_assets?.length > 0) {
+      rows.push(['Fixed Assets'])
+      reportData.assets.fixed_assets.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, a.balance.toFixed(2)]))
+      rows.push(['Total Fixed Assets', reportData.assets.total_fixed_assets.toFixed(2)])
+    }
+    if (reportData.assets.other_assets?.length > 0) {
+      rows.push(['Other Assets'])
+      reportData.assets.other_assets.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, a.balance.toFixed(2)]))
+      rows.push(['Total Other Assets', reportData.assets.total_other_assets.toFixed(2)])
+    }
+    rows.push(['TOTAL ASSETS', reportData.assets.total_assets.toFixed(2)])
+    rows.push([])
+    rows.push(['LIABILITIES'])
+    if (reportData.liabilities.current_liabilities?.length > 0) {
+      rows.push(['Current Liabilities'])
+      reportData.liabilities.current_liabilities.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, a.balance.toFixed(2)]))
+      rows.push(['Total Current Liabilities', reportData.liabilities.total_current_liabilities.toFixed(2)])
+    }
+    if (reportData.liabilities.long_term_liabilities?.length > 0) {
+      rows.push(['Long-term Liabilities'])
+      reportData.liabilities.long_term_liabilities.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, a.balance.toFixed(2)]))
+      rows.push(['Total Long-term Liabilities', reportData.liabilities.total_long_term_liabilities.toFixed(2)])
+    }
+    rows.push(['TOTAL LIABILITIES', reportData.liabilities.total_liabilities.toFixed(2)])
+    rows.push([])
+    rows.push(['EQUITY'])
+    reportData.equity.equity_accounts?.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, a.balance.toFixed(2)]))
+    rows.push(['Current Year Earnings', reportData.equity.current_year_earnings.toFixed(2)])
+    rows.push(['TOTAL EQUITY', reportData.equity.total_equity.toFixed(2)])
+    rows.push([])
+    rows.push(['TOTAL LIABILITIES AND EQUITY', (reportData.liabilities.total_liabilities + reportData.equity.total_equity).toFixed(2)])
+    try {
+      await downloadExcel(rows, `balance-sheet-${filters.as_of_date}.xlsx`)
+      showAlert('success', 'Report exported to Excel')
+    } catch (e) {
+      showAlert('error', 'Excel export failed')
+    }
+  }
+
   const handleAccountClick = (accountId) => {
     sessionStorage.setItem('selectedAccountId', accountId)
     setActiveTab('account-ledger')
@@ -2121,6 +2261,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
               <Button variant="secondary" onClick={handleExport}>📊 Export to CSV</Button>
+              <Button variant="secondary" onClick={handleExportExcel}>📗 Export to Excel</Button>
               <Button variant="secondary" onClick={() => window.print()}>🖨️ Print</Button>
             </div>
           </div>
@@ -2248,6 +2389,46 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }
     showAlert('success', 'Report exported to CSV')
   }
 
+  const handleExportExcel = async () => {
+    if (!reportData) {
+      showAlert('error', 'No report data to export')
+      return
+    }
+    const op = reportData.operating_activities || {}
+    const inv = reportData.investing_activities || {}
+    const fin = reportData.financing_activities || {}
+    const rows = [
+      ['Cash Flow Statement'],
+      [`Period: ${new Date(reportData.start_date).toLocaleDateString()} - ${new Date(reportData.end_date).toLocaleDateString()}`],
+      [],
+      ['OPERATING ACTIVITIES'],
+      ['Net Income', (op.net_income ?? 0).toFixed(2)]
+    ]
+    ;(op.adjustments || []).forEach((item) => rows.push([`  ${item.description}`, item.amount.toFixed(2)]))
+    ;(op.working_capital_changes || []).forEach((item) => rows.push([`  ${item.description}`, item.amount.toFixed(2)]))
+    rows.push(['Net Cash from Operating Activities', (op.net_cash_from_operations ?? 0).toFixed(2)])
+    rows.push([])
+    rows.push(['INVESTING ACTIVITIES'])
+    if ((inv.items || []).length === 0) rows.push(['  No investing activities'])
+    else (inv.items || []).forEach((item) => rows.push([`  ${item.description}`, item.amount.toFixed(2)]))
+    rows.push(['Net Cash from Investing Activities', (inv.net_cash_from_investing ?? 0).toFixed(2)])
+    rows.push([])
+    rows.push(['FINANCING ACTIVITIES'])
+    if ((fin.items || []).length === 0) rows.push(['  No financing activities'])
+    else (fin.items || []).forEach((item) => rows.push([`  ${item.description}`, item.amount.toFixed(2)]))
+    rows.push(['Net Cash from Financing Activities', (fin.net_cash_from_financing ?? 0).toFixed(2)])
+    rows.push([])
+    rows.push(['NET CHANGE IN CASH', (reportData.net_change_in_cash ?? 0).toFixed(2)])
+    rows.push(['Beginning Cash', (reportData.beginning_cash ?? 0).toFixed(2)])
+    rows.push(['ENDING CASH', (reportData.ending_cash ?? 0).toFixed(2)])
+    try {
+      await downloadExcel(rows, `cash-flow-${filters.start_date}-to-${filters.end_date}.xlsx`)
+      showAlert('success', 'Report exported to Excel')
+    } catch (e) {
+      showAlert('error', 'Excel export failed')
+    }
+  }
+
   const handleAccountClick = (accountId) => {
     sessionStorage.setItem('selectedAccountId', accountId)
     setActiveTab('account-ledger')
@@ -2285,6 +2466,7 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
               <Button variant="secondary" onClick={handleExport}>📊 Export to CSV</Button>
+              <Button variant="secondary" onClick={handleExportExcel}>📗 Export to Excel</Button>
               <Button variant="secondary" onClick={() => window.print()}>🖨️ Print</Button>
             </div>
           </div>
@@ -2340,7 +2522,7 @@ function BillsTab({ dateRange, formatCurrency, getAuthHeaders }) {
       )
       if (response.ok) {
         const data = await response.json()
-        setBills(Array.isArray(data) ? data : [])
+        setBills(Array.isArray(data) ? data : (data?.data ?? []))
       }
     } catch (err) {
       console.error('Error loading bills:', err)
@@ -2420,7 +2602,7 @@ function CustomersTab({ formatCurrency, getAuthHeaders }) {
       const response = await fetch('/api/accounting/customers', { headers: getAuthHeaders() })
       if (response.ok) {
         const data = await response.json()
-        setCustomers(Array.isArray(data) ? data : [])
+        setCustomers(Array.isArray(data) ? data : (data?.data ?? []))
       }
     } catch (err) {
       console.error('Error loading customers:', err)
@@ -2486,7 +2668,7 @@ function VendorsTab({ formatCurrency, getAuthHeaders }) {
       const response = await fetch('/api/accounting/vendors', { headers: getAuthHeaders() })
       if (response.ok) {
         const data = await response.json()
-        setVendors(Array.isArray(data) ? data : [])
+        setVendors(Array.isArray(data) ? data : (data?.data ?? []))
       }
     } catch (err) {
       console.error('Error loading vendors:', err)

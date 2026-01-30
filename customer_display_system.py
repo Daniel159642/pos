@@ -426,13 +426,16 @@ class CustomerDisplaySystem:
             
             conn.commit()
             
-            return {
+            out = {
                 'success': True,
                 'payment_id': payment_id,
                 'payment_status': transaction_payment_status,
                 'transaction_status': transaction_status,
                 'change': max(0, change)
             }
+            if order_id and order_payment_status == 'completed':
+                out['order_id'] = order_id
+            return out
         except Exception as e:
             try:
                 conn.rollback()

@@ -47,10 +47,10 @@ def _scalar(row, *keys):
 class BillRepository:
     BILLS = "bills"
     BILL_LINES = "bill_lines"
-    TRANSACTIONS = "transactions"
-    TRANSACTION_LINES = "transaction_lines"
+    TRANSACTIONS = "accounting.transactions"
+    TRANSACTION_LINES = "accounting.transaction_lines"
     VENDORS = "accounting_vendors"
-    ACCOUNTS = "accounts"
+    ACCOUNTS = "accounting.accounts"
     TAX_RATES = "tax_rates"
 
     @staticmethod
