@@ -90,6 +90,10 @@ function POS({ employeeId, employeeName }) {
   const [customerRewardsDetail, setCustomerRewardsDetail] = useState(null)
   const [pointsToUse, setPointsToUse] = useState('')
   const [rewardsDetailLoading, setRewardsDetailLoading] = useState(false)
+  // POS intelligent search: space-separated tokens become filter chips (size, topping, etc.) – configurable for any product type
+  const [searchFilterChips, setSearchFilterChips] = useState([])
+  const [posSearchFilters, setPosSearchFilters] = useState(null)
+  const [pendingQuantityForChip, setPendingQuantityForChip] = useState(null) // e.g. "½" when user typed "1/2 " before next word
   
   // Check if user can process sales
   const canProcessSale = hasPermission('process_sale')
@@ -142,12 +146,17 @@ function POS({ employeeId, employeeName }) {
   useEffect(() => {
     fetchAllProducts()
     loadRewardsSettings()
-    
+    // Load configurable POS search filters (size/topping/modifier abbrevs for pizza, drinks, bouquets, etc.)
+    fetch('/api/pos-search-filters')
+      .then(res => res.json())
+      .then(data => { if (data.success && data.data) setPosSearchFilters(data.data) })
+      .catch(() => {})
+
     // Refresh products when window gains focus (user switches back to POS tab)
     const handleFocus = () => {
       fetchAllProducts()
     }
-    
+
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
   }, [])
@@ -189,7 +198,37 @@ function POS({ employeeId, employeeName }) {
     }
   }
 
-  // Search products
+  // Resolve a word (and optional pending quantity) to a filter chip using posSearchFilters. Returns { type, label, value, variant_name } or null.
+  const resolveFilterWord = (word, pendingQty) => {
+    if (!word || typeof word !== 'string') return null
+    const w = word.toLowerCase().trim()
+    if (!w) return null
+    const config = posSearchFilters?.filter_groups || []
+    for (const group of config) {
+      for (const opt of group.options || []) {
+        const abbrevs = (opt.abbrevs || []).map(a => (a || '').toLowerCase())
+        const quantityAbbrevs = opt.quantity_abbrevs || {}
+        if (pendingQty) {
+          const qKey = Object.keys(quantityAbbrevs).find(k => k.toLowerCase() === pendingQty.word?.toLowerCase())
+          const qLabel = qKey ? quantityAbbrevs[qKey] : pendingQty.label
+          if (abbrevs.includes(w)) {
+            return { type: group.id, typeLabel: group.label, value: opt.value, variant_name: opt.variant_name, label: qLabel ? `${qLabel} ${opt.value}` : opt.value }
+          }
+        } else {
+          if (abbrevs.includes(w)) {
+            return { type: group.id, typeLabel: group.label, value: opt.value, variant_name: opt.variant_name, label: opt.value }
+          }
+          const qKey = Object.keys(quantityAbbrevs).find(k => k.toLowerCase() === w)
+          if (qKey) {
+            return { isQuantityPrefix: true, label: quantityAbbrevs[qKey], word: w }
+          }
+        }
+      }
+    }
+    return null
+  }
+
+  // Search products (use searchTerm; filter chips are separate and applied when adding to cart)
   useEffect(() => {
     if (searchTerm.length >= 2) {
       searchProducts(searchTerm)
@@ -200,11 +239,19 @@ function POS({ employeeId, employeeName }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm])
 
+  // Match product to category: exact or under that path (e.g. "Food & Beverage" shows "Food & Beverage > Produce > Fruits")
+  const productMatchesCategory = (product, category) => {
+    const cat = product.category || ''
+    if (cat === category) return true
+    if (category && cat.startsWith(category + ' >')) return true
+    return false
+  }
+
   // Update category products when category is selected
   useEffect(() => {
     if (selectedCategory && searchTerm.length < 2) {
-      const filtered = allProducts.filter(product => 
-        product.category === selectedCategory
+      const filtered = allProducts.filter(product =>
+        productMatchesCategory(product, selectedCategory)
       )
       setCategoryProducts(filtered)
     } else {
@@ -220,12 +267,18 @@ function POS({ employeeId, employeeName }) {
       
       if (data.data) {
         setAllProducts(data.data)
-        // Extract unique categories (filter out null/empty)
-        const uniqueCategories = [...new Set(
-          data.data
-            .map(product => product.category)
-            .filter(cat => cat && cat.trim() !== '')
-        )].sort()
+        // Build category list with every path prefix so item appears under master and all subcategories
+        const rawPaths = data.data
+          .map(product => product.category)
+          .filter(cat => cat && cat.trim() !== '')
+        const pathPrefixes = (path) => {
+          if (!path || typeof path !== 'string') return []
+          const parts = path.split(' > ').map(p => p.trim()).filter(Boolean)
+          const out = []
+          for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join(' > '))
+          return out
+        }
+        const uniqueCategories = [...new Set(rawPaths.flatMap(pathPrefixes))].sort()
         setCategories(uniqueCategories)
       }
     } catch (err) {
@@ -411,21 +464,38 @@ function POS({ employeeId, employeeName }) {
   const [showVariantModal, setShowVariantModal] = useState(false)
   const [productForVariant, setProductForVariant] = useState(null)
 
-  const addToCart = (product, variant = null) => {
+  const addToCart = (product, variant = null, notes = null) => {
+    // If product has variants and we didn't pick one, try to resolve from search filter chips (size) or show variant modal
     if (product.variants && product.variants.length > 0 && !variant) {
+      const sizeChip = searchFilterChips.find(c => c.variant_name != null)
+      const matchedVariant = sizeChip && product.variants
+        ? product.variants.find(v => (v.variant_name || '').toLowerCase() === (sizeChip.variant_name || '').toLowerCase())
+        : null
+      if (matchedVariant) {
+        const noteChips = searchFilterChips.filter(c => c.variant_name == null)
+        const notesStr = noteChips.length ? noteChips.map(c => c.label).join(', ') : null
+        addToCart(product, matchedVariant, notesStr)
+        return
+      }
       setProductForVariant(product)
       setShowVariantModal(true)
       return
     }
     const unitPrice = variant ? parseFloat(variant.price) : (parseFloat(product.product_price) || 0)
-    const displayName = variant ? `${product.product_name} (${variant.variant_name})` : product.product_name
+    const baseName = variant ? `${product.product_name} (${variant.variant_name})` : product.product_name
+    const displayName = notes ? `${baseName} — ${notes}` : baseName
+    const notesStr = notes && notes.trim() ? notes.trim() : null
     setCart(prevCart => {
       const existingItem = prevCart.find(item =>
-        item.product_id === product.product_id && (item.variant_id || null) === (variant?.variant_id || null)
+        item.product_id === product.product_id &&
+        (item.variant_id || null) === (variant?.variant_id || null) &&
+        (item.notes || '') === (notesStr || '')
       )
       if (existingItem) {
         return prevCart.map(item =>
-          item.product_id === product.product_id && (item.variant_id || null) === (variant?.variant_id || null)
+          item.product_id === product.product_id &&
+          (item.variant_id || null) === (variant?.variant_id || null) &&
+          (item.notes || '') === (notesStr || '')
             ? { ...item, quantity: item.quantity + 1 }
             : item
         )
@@ -438,11 +508,14 @@ function POS({ employeeId, employeeName }) {
         quantity: 1,
         available_quantity: product.current_quantity || 0,
         variant_id: variant?.variant_id || null,
-        variant_name: variant?.variant_name || null
+        variant_name: variant?.variant_name || null,
+        notes: notesStr
       }]
     })
     setSearchTerm('')
     setSearchResults([])
+    setSearchFilterChips([])
+    setPendingQuantityForChip(null)
     setShowVariantModal(false)
     setProductForVariant(null)
   }
@@ -469,12 +542,18 @@ function POS({ employeeId, employeeName }) {
       // Update cached products list
       if (data.data) {
         setAllProducts(data.data)
-        // Extract unique categories (filter out null/empty)
-        const uniqueCategories = [...new Set(
-          data.data
-            .map(product => product.category)
-            .filter(cat => cat && cat.trim() !== '')
-        )].sort()
+        // Build category list with every path prefix (master + subcategories)
+        const rawPaths = data.data
+          .map(product => product.category)
+          .filter(cat => cat && cat.trim() !== '')
+        const pathPrefixes = (path) => {
+          if (!path || typeof path !== 'string') return []
+          const parts = path.split(' > ').map(p => p.trim()).filter(Boolean)
+          const out = []
+          for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join(' > '))
+          return out
+        }
+        const uniqueCategories = [...new Set(rawPaths.flatMap(pathPrefixes))].sort()
         setCategories(uniqueCategories)
         
         // Normalize scanned barcode - remove all whitespace and convert to string
@@ -650,20 +729,26 @@ function POS({ employeeId, employeeName }) {
     }
   }
 
-  const updateQuantity = (productId, newQuantity, variantId = null) => {
+  const updateQuantity = (productId, newQuantity, variantId = null, notes = null) => {
     if (newQuantity <= 0) {
-      removeFromCart(productId, variantId)
+      removeFromCart(productId, variantId, notes)
       return
     }
     setCart(cart.map(item =>
-      item.product_id === productId && (item.variant_id || null) === (variantId ?? null)
+      item.product_id === productId &&
+      (item.variant_id || null) === (variantId ?? null) &&
+      (item.notes || '') === (notes ?? '')
         ? { ...item, quantity: newQuantity }
         : item
     ))
   }
 
-  const removeFromCart = (productId, variantId = null) => {
-    setCart(cart.filter(item => !(item.product_id === productId && (item.variant_id || null) === (variantId ?? null))))
+  const removeFromCart = (productId, variantId = null, notes = null) => {
+    setCart(cart.filter(item => !(
+      item.product_id === productId &&
+      (item.variant_id || null) === (variantId ?? null) &&
+      (item.notes || '') === (notes ?? '')
+    )))
   }
 
   const calculateSubtotal = () => {
@@ -1044,7 +1129,8 @@ function POS({ employeeId, employeeName }) {
           unit_price: parseFloat(item.unit_price) || 0,
           discount: parseFloat(item.discount) || 0,
           tax_rate: parseFloat(item.tax_rate) || taxRate || 0.08,
-          ...(item.variant_id ? { variant_id: item.variant_id } : {})
+          ...(item.variant_id ? { variant_id: item.variant_id } : {}),
+          ...(item.notes ? { notes: item.notes } : {})
         }))
       
       // Log items being sent for debugging
@@ -1409,7 +1495,11 @@ function POS({ employeeId, employeeName }) {
                 <button
                   key={v.variant_id}
                   type="button"
-                  onClick={() => addToCart(productForVariant, v)}
+                  onClick={() => {
+                    const noteChips = searchFilterChips.filter(c => c.variant_name == null)
+                    const notesStr = noteChips.length ? noteChips.map(c => c.label).join(', ') : null
+                    addToCart(productForVariant, v, notesStr)
+                  }}
                   style={{
                     padding: '12px 16px',
                     border: `2px solid rgba(${themeColorRgb}, 0.5)`,
@@ -1809,7 +1899,7 @@ function POS({ employeeId, employeeName }) {
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                           <button
-                            onClick={() => updateQuantity(item.product_id, item.quantity - 1, item.variant_id)}
+                            onClick={() => updateQuantity(item.product_id, item.quantity - 1, item.variant_id, item.notes)}
                             disabled={showPaymentForm}
                             style={{
                               width: '28px',
@@ -1828,7 +1918,7 @@ function POS({ employeeId, employeeName }) {
                             {item.quantity}
                           </span>
                           <button
-                            onClick={() => updateQuantity(item.product_id, item.quantity + 1, item.variant_id)}
+                            onClick={() => updateQuantity(item.product_id, item.quantity + 1, item.variant_id, item.notes)}
                             disabled={showPaymentForm || item.quantity >= item.available_quantity}
                             style={{
                               width: '28px',
@@ -1851,7 +1941,7 @@ function POS({ employeeId, employeeName }) {
                     </td>
                     <td style={{ padding: '12px' }}>
                       <button
-                        onClick={() => removeFromCart(item.product_id, item.variant_id)}
+                        onClick={() => removeFromCart(item.product_id, item.variant_id, item.notes)}
                         disabled={showPaymentForm}
                         style={{
                           border: 'none',
@@ -2620,14 +2710,35 @@ function POS({ employeeId, employeeName }) {
         ) : (
           <>
             {/* Search Bar with Scan Button */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
-              <input
-                type="text"
-                placeholder="Search by name, SKU, or scan barcode..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                disabled={showPaymentForm}
-                style={{
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <input
+                  type="text"
+                  placeholder="Search by name, SKU… Type e.g. sm roni 1/2 pep then space to add filters"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === ' ' && posSearchFilters && searchTerm.length > 0) {
+                      const trimmed = searchTerm.trim()
+                      const segments = trimmed.split(/\s+/)
+                      const word = segments[segments.length - 1]
+                      if (!word) return
+                      const resolved = resolveFilterWord(word, pendingQuantityForChip)
+                      if (resolved) {
+                        e.preventDefault()
+                        if (resolved.isQuantityPrefix) {
+                          setPendingQuantityForChip({ label: resolved.label, word: word })
+                          setSearchTerm(prev => prev.replace(new RegExp('\\s*' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$'), '').trim())
+                          return
+                        }
+                        setSearchFilterChips(prev => [...prev, resolved])
+                        setPendingQuantityForChip(null)
+                        setSearchTerm(prev => prev.replace(new RegExp('\\s*' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$'), '').trim())
+                      }
+                    }
+                  }}
+                  disabled={showPaymentForm}
+                  style={{
                   flex: 1,
                   padding: '8px 0',
                   border: 'none',
@@ -2681,6 +2792,48 @@ function POS({ employeeId, employeeName }) {
               >
                 <ScanBarcode size={24} />
               </button>
+              </div>
+              {/* Filter chips: size, topping, etc. (space turns typed abbrevs into chips) */}
+              {searchFilterChips.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px', alignItems: 'center' }}>
+                  {searchFilterChips.map((chip, idx) => (
+                    <span
+                      key={idx}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        backgroundColor: `rgba(${themeColorRgb}, 0.15)`,
+                        border: `1px solid rgba(${themeColorRgb}, 0.4)`,
+                        color: isDarkMode ? '#fff' : '#333'
+                      }}
+                    >
+                      {chip.label}
+                      <button
+                        type="button"
+                        onClick={() => setSearchFilterChips(prev => prev.filter((_, i) => i !== idx))}
+                        style={{
+                          padding: 0,
+                          marginLeft: '2px',
+                          border: 'none',
+                          background: 'none',
+                          cursor: 'pointer',
+                          fontSize: '16px',
+                          lineHeight: 1,
+                          color: 'inherit',
+                          opacity: 0.8
+                        }}
+                        aria-label="Remove filter"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Category Navigation */}
@@ -2698,11 +2851,14 @@ function POS({ employeeId, employeeName }) {
                     msOverflowStyle: 'none'
                   }}
                 >
-                  {categories.map(category => (
+                  {categories.map(category => {
+                    const label = category.includes(' > ') ? category.split(' > ').pop().trim() : category
+                    return (
                     <button
                       key={category}
                       onClick={() => handleCategorySelect(category)}
                       disabled={showPaymentForm}
+                      title={category}
                       style={{
                         padding: '4px 16px',
                         height: '28px',
@@ -2725,9 +2881,9 @@ function POS({ employeeId, employeeName }) {
                         opacity: showPaymentForm ? 0.3 : 1
                       }}
                     >
-                      {category}
+                      {label}
                     </button>
-                  ))}
+                  )})}
                 </div>
                 {/* Left gradient fade */}
                 <div style={{

@@ -189,7 +189,29 @@ class CustomerDisplaySystem:
                 if first_item_tax is not None:
                     tax_rate = float(first_item_tax)
             
+            # Sum quantity per product (same product in multiple lines = one inventory decrement)
+            product_totals = {}
+            for item in items:
+                pid = item['product_id']
+                qty = int(item['quantity'])
+                product_totals[pid] = product_totals.get(pid, 0) + qty
+            # Check availability for current establishment (one check per product)
+            for product_id, total_qty in product_totals.items():
+                cursor.execute(
+                    "SELECT current_quantity FROM inventory WHERE product_id = %s AND establishment_id = %s",
+                    (product_id, establishment_id)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise Exception(f'Product ID {product_id} does not exist in inventory')
+                available = row['current_quantity'] if isinstance(row, dict) else row[0]
+                if available < total_qty:
+                    raise Exception(f'Insufficient inventory for product_id {product_id}. Available: {available}, Requested: {total_qty}')
             # Create order_items for the order (required for returns and order history)
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'order_items'")
+            oi_cols = [row['column_name'] if isinstance(row, dict) else row[0] for row in cursor.fetchall()]
+            has_oi_variant = 'variant_id' in oi_cols
+            has_oi_notes = 'notes' in oi_cols
             print(f"Creating order_items for order_id {order_id}, {len(items)} items")
             for idx, item in enumerate(items):
                 product_id = item['product_id']
@@ -199,39 +221,68 @@ class CustomerDisplaySystem:
                 item_tax_rate = float(item.get('tax_rate', tax_rate))
                 item_subtotal = (quantity * unit_price) - item_discount
                 item_tax = item_subtotal * item_tax_rate
-                
-                # Verify product exists
-                cursor.execute("SELECT product_id FROM inventory WHERE product_id = %s", (product_id,))
-                product_check = cursor.fetchone()
-                if not product_check:
+                variant_id = item.get('variant_id')
+                item_notes = (item.get('notes') or '').strip() or None
+
+                cursor.execute("SELECT product_id FROM inventory WHERE product_id = %s AND establishment_id = %s", (product_id, establishment_id))
+                if not cursor.fetchone():
                     raise Exception(f'Product ID {product_id} does not exist in inventory')
-                
+
                 try:
-                    # Insert order_item
-                    cursor.execute("""
-                        INSERT INTO order_items (
-                            establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
-                            tax_rate, tax_amount
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
-                          item_tax_rate, item_tax))
-                    
+                    if has_oi_variant and has_oi_notes:
+                        cursor.execute("""
+                            INSERT INTO order_items (
+                                establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                                tax_rate, tax_amount, variant_id, notes
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                              item_tax_rate, item_tax, variant_id, item_notes))
+                    elif has_oi_variant:
+                        cursor.execute("""
+                            INSERT INTO order_items (
+                                establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                                tax_rate, tax_amount, variant_id
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                              item_tax_rate, item_tax, variant_id))
+                    elif has_oi_notes:
+                        cursor.execute("""
+                            INSERT INTO order_items (
+                                establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                                tax_rate, tax_amount, notes
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                              item_tax_rate, item_tax, item_notes))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO order_items (
+                                establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                                tax_rate, tax_amount
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                              item_tax_rate, item_tax))
                     print(f"Successfully inserted order_item: order_id={order_id}, product_id={product_id}, quantity={quantity}")
-                    
-                    # Update inventory quantity
-                    cursor.execute("""
-                        UPDATE inventory
-                        SET current_quantity = current_quantity - %s,
-                            updated_at = NOW()
-                        WHERE product_id = %s AND establishment_id = %s
-                    """, (quantity, product_id, establishment_id))
-                    
                 except Exception as item_error:
                     import traceback
                     print(f"Error inserting order_item for product_id {product_id}: {str(item_error)}")
                     traceback.print_exc()
                     raise Exception(f'Error inserting order item for product_id {product_id}: {str(item_error)}')
-            
+            # Update inventory once per product (total quantity) so same product in multiple lines doesn't go negative
+            for product_id, total_qty in product_totals.items():
+                cursor.execute("""
+                    UPDATE inventory
+                    SET current_quantity = current_quantity - %s,
+                        updated_at = NOW()
+                    WHERE product_id = %s AND establishment_id = %s
+                """, (total_qty, product_id, establishment_id))
+            # Award loyalty points when order has a customer (same as create_order / process_payment)
+            if customer_id:
+                try:
+                    from database import award_rewards_for_purchase
+                    amount_for_rewards = subtotal + total_tax
+                    award_rewards_for_purchase(cursor, customer_id, amount_for_rewards, points_used=0)
+                except Exception as rew_err:
+                    print(f"Warning: Could not award rewards in start_transaction: {rew_err}")
             # Create transaction_items (for customer display)
             for item in items:
                 item_subtotal = item['quantity'] * item['unit_price']

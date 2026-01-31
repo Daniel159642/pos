@@ -945,17 +945,23 @@ function ShipmentVerificationDetail({ shipmentId }) {
       // Calculate new verified quantity
       const newQuantityVerified = currentVerified + quantityToCheckIn
 
-      // Use the direct update endpoint instead of simulating scans
+      // Include current price so it's stored on pending item and used when adding to inventory
+      const currentPrice = productPrices[itemId]
+      const body = {
+        quantity_verified: newQuantityVerified,
+        session_token: sessionToken
+      }
+      if (currentPrice !== undefined && currentPrice !== null && currentPrice !== '') {
+        const p = parseFloat(currentPrice)
+        if (!isNaN(p) && p >= 0) body.product_price = p
+      }
       const response = await fetch(`/api/pending_items/${itemId}/update`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${sessionToken}`
         },
-        body: JSON.stringify({
-          quantity_verified: newQuantityVerified,
-          session_token: sessionToken
-        })
+        body: JSON.stringify(body)
       })
 
       if (!response.ok) {
@@ -1197,12 +1203,6 @@ function ShipmentVerificationDetail({ shipmentId }) {
   const saveProductPrice = async (item) => {
     const itemId = item.pending_item_id
     const productId = item.product_id
-    
-    if (!productId) {
-      alert('Product not yet created in inventory. Price will be set when item is checked in.')
-      return
-    }
-
     const newPrice = parseFloat(productPrices[itemId])
     if (isNaN(newPrice) || newPrice < 0) {
       alert('Please enter a valid price')
@@ -1213,28 +1213,44 @@ function ShipmentVerificationDetail({ shipmentId }) {
 
     try {
       const sessionToken = localStorage.getItem('sessionToken')
-      const response = await fetch(`/api/inventory/${productId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({
-          product_price: newPrice,
-          session_token: sessionToken
+      if (productId) {
+        // Product exists: update inventory price
+        const response = await fetch(`/api/inventory/${productId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${sessionToken}`
+          },
+          body: JSON.stringify({
+            product_price: newPrice,
+            session_token: sessionToken
+          })
         })
-      })
-
-      const result = await response.json()
-
-      if (response.ok && result.success) {
-        // Show success message
-        const successMsg = `Price updated to $${newPrice.toFixed(2)}`
-        console.log(successMsg)
-        // Reload progress to get updated data
-        await loadProgress()
+        const result = await response.json()
+        if (response.ok && result.success) {
+          await loadProgress()
+        } else {
+          alert(result.message || 'Failed to update price')
+        }
       } else {
-        alert(result.message || 'Failed to update price')
+        // Product not created yet: save price on pending item so it's used when adding to inventory
+        const response = await fetch(`/api/pending_items/${itemId}/update`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${sessionToken}`
+          },
+          body: JSON.stringify({
+            product_price: newPrice,
+            session_token: sessionToken
+          })
+        })
+        const result = await response.json()
+        if (response.ok && result.success) {
+          await loadProgress()
+        } else {
+          alert(result.message || 'Failed to save price')
+        }
       }
     } catch (error) {
       console.error('Error saving price:', error)

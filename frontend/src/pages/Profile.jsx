@@ -6,7 +6,6 @@ import {
   User, 
   Settings as SettingsIcon, 
   Shield,
-  Users,
   Clock,
   Pencil,
   Trash2,
@@ -604,7 +603,6 @@ function Profile({ employeeId, employeeName }) {
     { id: 'profile', label: 'My Hours', icon: Clock },
     { id: 'settings', label: 'App Settings', icon: SettingsIcon },
     ...(hasAdminAccess ? [
-      { id: 'employees', label: 'Employees', icon: Users },
       { id: 'admin', label: 'Admin', icon: Shield }
     ] : [])
   ]
@@ -2318,19 +2316,14 @@ function Profile({ employeeId, employeeName }) {
         </div>
       )}
 
-      {activeTab === 'employees' && hasAdminAccess && (
-        <div>
+      {activeTab === 'admin' && hasAdminAccess && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <EmployeeList 
             employees={employees}
             loading={employeesLoading}
             error={employeesError}
             onRefresh={loadEmployees}
           />
-        </div>
-      )}
-
-      {activeTab === 'admin' && hasAdminAccess && (
-        <div>
           <AdminDashboard />
         </div>
       )}

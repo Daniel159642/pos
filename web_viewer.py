@@ -1079,6 +1079,12 @@ def api_update_item_verification(item_id):
             return jsonify({'success': False, 'message': 'Employee ID required'}), 401
         
         quantity_verified = data.get('quantity_verified')
+        product_price = data.get('product_price')
+        if product_price is not None:
+            try:
+                product_price = float(product_price)
+            except (TypeError, ValueError):
+                product_price = None
         
         # Handle photo upload if provided
         verification_photo = None
@@ -1114,15 +1120,16 @@ def api_update_item_verification(item_id):
                 except Exception as e:
                     print(f"Warning: Could not update product photo: {e}")
         
-        # If no quantity_verified but photo is provided, still update
-        if quantity_verified is None and verification_photo is None:
-            return jsonify({'success': False, 'message': 'quantity_verified or photo is required'}), 400
+        # Require at least one updatable field (quantity, photo, or price)
+        if quantity_verified is None and verification_photo is None and product_price is None:
+            return jsonify({'success': False, 'message': 'quantity_verified, photo, or product_price is required'}), 400
         
         success = update_pending_item_verification(
             pending_item_id=item_id,
             quantity_verified=quantity_verified,
             employee_id=employee_id,
-            verification_photo=verification_photo
+            verification_photo=verification_photo,
+            unit_price=product_price,
         )
         
         if success:
@@ -1130,6 +1137,7 @@ def api_update_item_verification(item_id):
                 'success': True,
                 'quantity_verified': quantity_verified,
                 'verification_photo': verification_photo,
+                'product_price': product_price,
                 'timestamp': datetime.now().isoformat()
             })
         else:
@@ -2092,6 +2100,86 @@ def api_update_pos_settings():
             return jsonify({'success': True, 'message': 'POS settings updated successfully'})
         finally:
             conn.close()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/pos-search-filters', methods=['GET'])
+def api_get_pos_search_filters():
+    """Get configurable POS search filter definitions (size/topping/modifier abbrevs for pizza, drinks, bouquets, etc.)."""
+    try:
+        settings = get_establishment_settings(None)
+        filters = settings.get('pos_search_filters')
+        return jsonify({'success': True, 'data': filters if filters is not None else _default_pos_search_filters()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+def _default_pos_search_filters():
+    """Default filter groups for pizza/drinks (configurable per store)."""
+    return {
+        'filter_groups': [
+            {
+                'id': 'size',
+                'label': 'Size',
+                'applies_to_categories': ['Pizza', 'Drinks', 'Beverages'],
+                'options': [
+                    {'abbrevs': ['sm', 's'], 'value': 'Small', 'variant_name': 'Small'},
+                    {'abbrevs': ['md', 'm', 'med'], 'value': 'Medium', 'variant_name': 'Medium'},
+                    {'abbrevs': ['lg', 'l'], 'value': 'Large', 'variant_name': 'Large'},
+                    {'abbrevs': ['slice', 'sl'], 'value': 'Slice', 'variant_name': 'Slice'},
+                    {'abbrevs': ['10', '10in'], 'value': '10"', 'variant_name': '10"'},
+                    {'abbrevs': ['12', '12in'], 'value': '12"', 'variant_name': '12"'},
+                    {'abbrevs': ['14', '14in'], 'value': '14"', 'variant_name': '14"'},
+                ],
+            },
+            {
+                'id': 'topping',
+                'label': 'Topping',
+                'applies_to_categories': ['Pizza'],
+                'options': [
+                    {'abbrevs': ['roni', 'pep'], 'value': 'Pepperoni'},
+                    {'abbrevs': ['pep'], 'value': 'Peppers', 'quantity_abbrevs': {'1/2': '½', 'half': '½', 'full': 'Full'}},
+                    {'abbrevs': ['mush'], 'value': 'Mushrooms'},
+                    {'abbrevs': ['olive'], 'value': 'Olives'},
+                    {'abbrevs': ['saus'], 'value': 'Sausage'},
+                    {'abbrevs': ['ham'], 'value': 'Ham'},
+                    {'abbrevs': ['bacon'], 'value': 'Bacon'},
+                    {'abbrevs': ['pine', 'pineapple'], 'value': 'Pineapple'},
+                    {'abbrevs': ['onion'], 'value': 'Onion'},
+                    {'abbrevs': ['jal'], 'value': 'Jalapeño'},
+                ],
+            },
+            {
+                'id': 'drink_addin',
+                'label': 'Add-in',
+                'applies_to_categories': ['Drinks', 'Beverages'],
+                'options': [
+                    {'abbrevs': ['esp', 'shot'], 'value': 'Extra shot'},
+                    {'abbrevs': ['oat'], 'value': 'Oat milk'},
+                    {'abbrevs': ['almond'], 'value': 'Almond milk'},
+                    {'abbrevs': ['ice'], 'value': 'Iced'},
+                    {'abbrevs': ['decaf'], 'value': 'Decaf'},
+                ],
+            },
+        ],
+    }
+
+@app.route('/api/pos-search-filters', methods=['POST'])
+def api_update_pos_search_filters():
+    """Update POS search filter definitions (for any product type: pizza, drinks, bouquets, etc.)."""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'Content-Type must be application/json'}), 400
+        data = request.get_json()
+        if data is None:
+            return jsonify({'success': False, 'message': 'Invalid JSON'}), 400
+        filters = data.get('filter_groups') is not None and {'filter_groups': data.get('filter_groups')} or data
+        from database import update_establishment_settings
+        ok = update_establishment_settings(None, {'pos_search_filters': filters})
+        if not ok:
+            return jsonify({'success': False, 'message': 'Failed to update settings'}), 500
+        return jsonify({'success': True, 'message': 'POS search filters updated', 'data': filters})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500

@@ -1305,7 +1305,8 @@ def get_establishment_settings(establishment_id: Optional[int] = None) -> Dict[s
             'transaction_fee_rates': s.get('transaction_fee_rates') or {
                 'credit_card': 0.029, 'debit_card': 0.015, 'mobile_payment': 0.026,
                 'cash': 0.0, 'check': 0.0, 'store_credit': 0.0
-            }
+            },
+            'pos_search_filters': s.get('pos_search_filters'),
         }
     except Exception:
         try:
@@ -1349,6 +1350,8 @@ def update_establishment_settings(establishment_id: Optional[int], settings: Dic
             current['default_sales_tax_pct'] = float(settings['default_sales_tax_pct'])
         if 'transaction_fee_rates' in settings:
             current['transaction_fee_rates'] = dict(settings['transaction_fee_rates'])
+        if 'pos_search_filters' in settings:
+            current['pos_search_filters'] = settings['pos_search_filters']
         import json
         cursor.execute(
             "UPDATE establishments SET settings = %s::jsonb WHERE establishment_id = %s",
@@ -2776,12 +2779,18 @@ def add_item_to_inventory_immediately(
                 product_id = existing['product_id']
             else:
                 # Create new product (no vendor column; use vendor_id only)
+                # Use user-edited sale price (unit_price) if set, else cost as price
+                sale_price = item.get('unit_price') if item.get('unit_price') is not None else unit_cost
+                try:
+                    sale_price = float(sale_price)
+                except (TypeError, ValueError):
+                    sale_price = unit_cost
                 cursor.execute("""
                     INSERT INTO inventory 
                     (establishment_id, product_name, sku, barcode, product_price, product_cost, vendor_id, current_quantity, category)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL)
                     RETURNING product_id
-                """, (establishment_id, product_name, sku, barcode, unit_cost, unit_cost, vendor_id))
+                """, (establishment_id, product_name, sku, barcode, sale_price, unit_cost, vendor_id))
                 product_row = cursor.fetchone()
                 product_id = product_row[0] if product_row else None
                 created_new_product = True
@@ -2947,7 +2956,8 @@ def update_pending_item_verification(
     product_id: Optional[int] = None,
     discrepancy_notes: Optional[str] = None,
     employee_id: Optional[int] = None,
-    verification_photo: Optional[str] = None
+    verification_photo: Optional[str] = None,
+    unit_price: Optional[float] = None,
 ) -> bool:
     """Update verified quantity and product match for a pending item"""
     import time
@@ -3012,6 +3022,10 @@ def update_pending_item_verification(
             if verification_photo is not None:
                 updates.append("verification_photo = %s")
                 values.append(verification_photo)
+            
+            if unit_price is not None:
+                updates.append("unit_price = %s")
+                values.append(unit_price)
             
             if not updates:
                 conn.close()
@@ -4058,7 +4072,11 @@ def award_rewards_for_purchase(cursor, customer_id: int, amount_for_rewards: flo
         return rewards_info
     try:
         rewards_settings = get_customer_rewards_settings()
-        if not rewards_settings.get('enabled'):
+        # Award points if enabled, or if points type is on with points_per_dollar > 0 (Settings "1 point per dollar" turned on)
+        enabled = rewards_settings.get('enabled') in (1, True)
+        points_on = (rewards_settings.get('reward_type') == 'points' and
+                     float(rewards_settings.get('points_per_dollar') or 0) > 0)
+        if not enabled and not points_on:
             return rewards_info
         rewards_info = calculate_rewards(amount_for_rewards, rewards_settings)
         if rewards_info['reward_type'] == 'points' and rewards_info['points_earned'] > 0:
@@ -4178,18 +4196,22 @@ def create_order(
         if establishment_id is None:
             establishment_id = _get_or_create_default_establishment(conn)
         
-        # Validate inventory availability first
-        # Check products by product_id only (products may have different establishment_id)
+        # Validate inventory availability first (use current establishment so we get correct row)
         product_establishment_map = {}  # Track each product's establishment_id
-        
+        product_quantity_requested = {}  # Sum quantity per product (same product can appear in multiple lines)
+
         for item in items:
             product_id = item['product_id']
             quantity = int(item['quantity'])
-            
-            # Check if product exists (by product_id only, not filtering by establishment_id)
-            cursor.execute("SELECT current_quantity, establishment_id FROM inventory WHERE product_id = %s", (product_id,))
+            product_quantity_requested[product_id] = product_quantity_requested.get(product_id, 0) + quantity
+
+        for product_id, total_quantity in product_quantity_requested.items():
+            cursor.execute(
+                "SELECT current_quantity, establishment_id FROM inventory WHERE product_id = %s AND establishment_id = %s",
+                (product_id, establishment_id)
+            )
             row = cursor.fetchone()
-            
+
             if not row:
                 conn.rollback()
                 conn.close()
@@ -4198,27 +4220,26 @@ def create_order(
                     'message': f'Product ID {product_id} not found',
                     'order_id': None
                 }
-            
-            # Handle both dict and tuple row formats
+
             if isinstance(row, dict):
                 available_qty = row.get('current_quantity', 0)
                 product_establishment_id = row.get('establishment_id')
             else:
                 available_qty = row[0] if row else 0
                 product_establishment_id = row[1] if len(row) > 1 else None
-            
-            # Store product's establishment_id for later use in order_items
+
             product_establishment_map[product_id] = product_establishment_id or establishment_id
-                
-            if available_qty < quantity:
+
+            if available_qty < total_quantity:
                 conn.rollback()
                 conn.close()
                 return {
                     'success': False,
-                    'message': f'Insufficient inventory for product_id {product_id}. Available: {available_qty}, Requested: {quantity}',
+                    'message': f'Insufficient inventory for product_id {product_id}. Available: {available_qty}, Requested: {total_quantity}',
                     'order_id': None
-                }        # Handle customer info if provided (for pickup/delivery orders or rewards program)
-        if customer_info and customer_info.get('name'):
+                }
+        # Handle customer info only when no customer_id was passed (don't overwrite selected customer)
+        if not customer_id and customer_info and customer_info.get('name'):
             # Create or get customer
             customer_name = customer_info.get('name', '')
             customer_phone = customer_info.get('phone', '')
@@ -4387,10 +4408,11 @@ def create_order(
             order_id = result[0] if result else None
         
         # Add order items (triggers will update inventory)
-        # Check if order_items has variant_id column (optional; added by product_variants migration)
+        # Check if order_items has variant_id and notes columns (optional migrations)
         cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'order_items'")
         oi_columns = [row[0] if isinstance(row, tuple) else row.get('column_name') for row in cursor.fetchall()]
         has_order_items_variant_id = 'variant_id' in oi_columns
+        has_order_items_notes = 'notes' in oi_columns
 
         print(f"Creating order_items for order_id {order_id}, {len(items)} items")
         for idx, item in enumerate(items):
@@ -4402,10 +4424,11 @@ def create_order(
             item_tax_rate = float(item.get('tax_rate', tax_rate))
             item_subtotal = (quantity * unit_price) - item_discount
             item_tax = item_subtotal * item_tax_rate
-            
+            item_notes = (item.get('notes') or '').strip() or None
+
             # Use the product's establishment_id for the order_item
             item_establishment_id = product_establishment_map.get(product_id, establishment_id)
-            
+
             # Verify product exists before inserting
             cursor.execute("SELECT product_id FROM inventory WHERE product_id = %s", (product_id,))
             product_check = cursor.fetchone()
@@ -4417,10 +4440,18 @@ def create_order(
                     'message': f'Product ID {product_id} does not exist in inventory',
                     'order_id': None
                 }
-            
+
             try:
                 variant_id = item.get('variant_id')
-                if has_order_items_variant_id:
+                if has_order_items_variant_id and has_order_items_notes:
+                    cursor.execute("""
+                        INSERT INTO order_items (
+                            establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                            tax_rate, tax_amount, variant_id, notes
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (item_establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                          item_tax_rate, item_tax, variant_id, item_notes))
+                elif has_order_items_variant_id:
                     cursor.execute("""
                         INSERT INTO order_items (
                             establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
@@ -4428,6 +4459,14 @@ def create_order(
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (item_establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
                           item_tax_rate, item_tax, variant_id))
+                elif has_order_items_notes:
+                    cursor.execute("""
+                        INSERT INTO order_items (
+                            establishment_id, order_id, product_id, quantity, unit_price, discount, subtotal,
+                            tax_rate, tax_amount, notes
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (item_establishment_id, order_id, product_id, quantity, unit_price, item_discount, item_subtotal,
+                          item_tax_rate, item_tax, item_notes))
                 else:
                     cursor.execute("""
                         INSERT INTO order_items (
@@ -4442,18 +4481,7 @@ def create_order(
                     raise Exception(f"Failed to insert order_item for product_id {product_id}")
                 
                 print(f"Successfully inserted order_item: order_id={order_id}, product_id={product_id}, quantity={quantity}")
-                
-                # Update inventory quantity (decrease by quantity sold)
-                # Use the product's establishment_id for the update
-                cursor.execute("""
-                    UPDATE inventory
-                    SET current_quantity = current_quantity - %s,
-                        updated_at = NOW()
-                    WHERE product_id = %s AND establishment_id = %s
-                """, (quantity, product_id, item_establishment_id))
-                
-                if cursor.rowcount == 0:
-                    print(f"Warning: Inventory update affected 0 rows for product_id {product_id}, establishment_id {item_establishment_id}")
+                # Inventory update is done once per product below (after all order_items inserted)
                     
             except Exception as item_error:
                 # If order_item insertion fails, rollback the entire transaction
@@ -4467,6 +4495,18 @@ def create_order(
                     'message': f'Error inserting order item for product_id {product_id}: {str(item_error)}',
                     'order_id': None
                 }
+
+        # Update inventory once per product (total quantity) to avoid multiple decrements for same product
+        for product_id, total_qty in product_quantity_requested.items():
+            item_establishment_id = product_establishment_map.get(product_id, establishment_id)
+            cursor.execute("""
+                UPDATE inventory
+                SET current_quantity = current_quantity - %s,
+                    updated_at = NOW()
+                WHERE product_id = %s AND establishment_id = %s
+            """, (total_qty, product_id, item_establishment_id))
+            if cursor.rowcount == 0:
+                print(f"Warning: Inventory update affected 0 rows for product_id {product_id}, establishment_id {item_establishment_id}")
         
         # Record payment transaction with fee details and tip
         # Check if tip and employee_id columns exist
@@ -4519,18 +4559,25 @@ def create_order(
             try:
                 # Get rewards settings
                 rewards_settings = get_customer_rewards_settings()
-                
-                if rewards_settings.get('enabled'):
+                # Award points if enabled, or if points type is on with points_per_dollar > 0
+                enabled = rewards_settings.get('enabled') in (1, True)
+                points_on = (rewards_settings.get('reward_type') == 'points' and
+                            float(rewards_settings.get('points_per_dollar') or 0) > 0)
+                if enabled or points_on:
                     # Calculate rewards based on total (subtotal + tax, before discount and fees)
                     amount_for_rewards = subtotal + total_tax
                     rewards_info = calculate_rewards(amount_for_rewards, rewards_settings)
                     
-                    # Update customer total_spent
-                    cursor.execute("""
-                        UPDATE customers 
-                        SET total_spent = COALESCE(total_spent, 0) + %s
-                        WHERE customer_id = %s
-                    """, (amount_for_rewards, customer_id))
+                    # Update customer total_spent (column may not exist; savepoint so failure doesn't abort transaction)
+                    try:
+                        cursor.execute("SAVEPOINT before_total_spent")
+                        cursor.execute("""
+                            UPDATE customers 
+                            SET total_spent = COALESCE(total_spent, 0) + %s
+                            WHERE customer_id = %s
+                        """, (amount_for_rewards, customer_id))
+                    except Exception:
+                        cursor.execute("ROLLBACK TO SAVEPOINT before_total_spent")
                     
                     # Award rewards based on type
                     if rewards_info['reward_type'] == 'points' and rewards_info['points_earned'] > 0:
@@ -9272,9 +9319,8 @@ def get_customer_rewards_settings() -> Optional[Dict[str, Any]]:
     """)
     
     row = cursor.fetchone()
-    conn.close()
-    
     if not row:
+        conn.close()
         # Return defaults if no settings exist
         return {
             'enabled': 0,
@@ -9291,8 +9337,10 @@ def get_customer_rewards_settings() -> Optional[Dict[str, Any]]:
             'fixed_discount': 0.0,
             'minimum_spend': 0.0
         }
-    
-    d = dict(row)
+    # Cursor returns tuple; build dict from column names
+    colnames = [desc[0] for desc in cursor.description]
+    d = dict(zip(colnames, row))
+    conn.close()
     if d.get('points_redemption_value') is None:
         d['points_redemption_value'] = 0.01
     # Backward compat: derive enabled flags from reward_type if columns missing
@@ -9447,7 +9495,11 @@ def calculate_rewards(amount_spent: float, settings: Optional[Dict[str, Any]] = 
     if settings is None:
         settings = get_customer_rewards_settings()
     
-    if not settings.get('enabled'):
+    # Award when rewards are enabled OR when points type is on with points_per_dollar > 0 (same as callers)
+    enabled = settings.get('enabled') in (1, True)
+    points_on = (settings.get('reward_type') == 'points' and
+                 float(settings.get('points_per_dollar') or 0) > 0)
+    if not enabled and not points_on:
         return {'points_earned': 0, 'discount_amount': 0.0, 'reward_type': settings.get('reward_type', 'points')}
     
     minimum_spend = settings.get('minimum_spend', 0.0)

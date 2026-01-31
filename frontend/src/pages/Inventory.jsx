@@ -1187,16 +1187,22 @@ function Inventory() {
   }
 
   const categoryNamesFromDb = allCategories
-    .map(category => category.category_name || category.category_path || category.name)
+    .map(category => category.category_path || category.category_name || category.name)
     .filter(Boolean)
 
-  // Get unique categories
-  const categories = [...new Set(
-    (categoryNamesFromDb.length > 0
-      ? categoryNamesFromDb
-      : inventory.map(item => item.category).filter(Boolean)
-    )
-  )].sort()
+  // Build category list including every path prefix so items appear under master and all subcategories
+  // e.g. "Food & Beverage > Produce > Fruits" adds: "Food & Beverage", "Food & Beverage > Produce", "Food & Beverage > Produce > Fruits"
+  const rawPaths = categoryNamesFromDb.length > 0
+    ? categoryNamesFromDb
+    : inventory.map(item => item.category).filter(Boolean)
+  const pathPrefixes = (path) => {
+    if (!path || typeof path !== 'string') return []
+    const parts = path.split(' > ').map(p => p.trim()).filter(Boolean)
+    const out = []
+    for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join(' > '))
+    return out
+  }
+  const categories = [...new Set(rawPaths.flatMap(pathPrefixes))].sort()
   
   // Get all vendors from vendors table (not just vendors with products)
   const vendors = allVendors.map(vendor => vendor.vendor_name).filter(Boolean).sort()
@@ -1421,10 +1427,12 @@ function Inventory() {
           >
           {categories.map((category, index) => {
             const itemCount = getItemsByCategory(category).length
+            const label = category.includes(' > ') ? category.split(' > ').pop().trim() : category
             return (
               <button
                 key={`${category}-${index}`}
                 onClick={() => handleCategoryClick(category)}
+                title={category}
                 style={{
                   padding: '4px 16px',
                   height: '28px',
@@ -1446,7 +1454,7 @@ function Inventory() {
                   boxShadow: selectedCategory === category ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
                 }}
               >
-                {category}
+                {label}
               </button>
             )
           })}
