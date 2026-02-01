@@ -79,3 +79,8 @@ else
     echo "  - You're on $CURRENT_BRANCH branch"
     echo "  - Create a feature branch: git checkout -b feature/your-feature"
 fi
+echo ""
+echo "📋 If you pulled new migrations/schema changes, update the database:"
+echo "  cd pos && python3 setup_complete_database.py"
+echo "  (or: ./restore_schema.sh if you use schema dumps)"
+echo ""

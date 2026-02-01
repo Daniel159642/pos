@@ -33,7 +33,7 @@ function ProfitLossTable({ data, showPercentages = true, onAccountClick }) {
         onMouseLeave={(e) => {
           e.target.closest('tr').style.backgroundColor = 'transparent'
         }}
-        onClick={() => onAccountClick && onAccountClick(account.account_id)}
+        onClick={() => onAccountClick && onAccountClick(account.account_id ?? account.id)}
       >
         <td style={{
           padding: '8px 24px',

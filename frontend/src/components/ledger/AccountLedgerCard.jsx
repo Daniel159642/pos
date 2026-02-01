@@ -3,20 +3,31 @@ import React from 'react'
 function AccountLedgerCard({ ledgerData, dateRange }) {
   const isDarkMode = document.documentElement.classList.contains('dark-theme')
 
+  const entries = Array.isArray(ledgerData?.entries) ? ledgerData.entries : []
+  const account = ledgerData?.account || {}
+  const endingBalance = Number(ledgerData?.ending_balance) || 0
+
+  const toNum = (v) => (typeof v === 'number' && !Number.isNaN(v) ? v : Number(v) || 0)
+
   const calculatePeriodActivity = () => {
-    const periodDebits = ledgerData.entries.reduce((sum, entry) => sum + (entry.debit_amount || 0), 0)
-    const periodCredits = ledgerData.entries.reduce((sum, entry) => sum + (entry.credit_amount || 0), 0)
+    const periodDebits = entries.reduce((sum, entry) => sum + toNum(entry.debit_amount), 0)
+    const periodCredits = entries.reduce((sum, entry) => sum + toNum(entry.credit_amount), 0)
     
     let netChange = 0
-    if (ledgerData.account.balance_type === 'debit') {
+    if (account.balance_type === 'debit') {
       netChange = periodDebits - periodCredits
     } else {
       netChange = periodCredits - periodDebits
     }
 
-    const beginningBalance = ledgerData.ending_balance - netChange
+    const beginningBalance = endingBalance - netChange
 
-    return { periodDebits, periodCredits, netChange, beginningBalance }
+    return {
+      periodDebits: toNum(periodDebits),
+      periodCredits: toNum(periodCredits),
+      netChange: toNum(netChange),
+      beginningBalance: toNum(beginningBalance)
+    }
   }
 
   const { periodDebits, periodCredits, netChange, beginningBalance } = calculatePeriodActivity()
@@ -57,25 +68,25 @@ function AccountLedgerCard({ ledgerData, dateRange }) {
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>Account Number:</span>
               <span style={{ fontWeight: '500', color: textColor }}>
-                {ledgerData.account.account_number || 'N/A'}
+                {account.account_number || 'N/A'}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>Account Name:</span>
               <span style={{ fontWeight: '500', color: textColor }}>
-                {ledgerData.account.account_name}
+                {account.account_name ?? '—'}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>Account Type:</span>
               <span style={{ fontWeight: '500', color: textColor }}>
-                {ledgerData.account.account_type}
+                {account.account_type ?? '—'}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>Balance Type:</span>
               <span style={{ fontWeight: '500', color: textColor, textTransform: 'capitalize' }}>
-                {ledgerData.account.balance_type}
+                {account.balance_type ?? '—'}
               </span>
             </div>
           </div>
@@ -110,7 +121,7 @@ function AccountLedgerCard({ ledgerData, dateRange }) {
             }}>
               <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>Beginning Balance:</span>
               <span style={{ fontWeight: '600', color: textColor }}>
-                ${beginningBalance.toFixed(2)}
+                ${toNum(beginningBalance).toFixed(2)}
               </span>
             </div>
             
@@ -122,13 +133,13 @@ function AccountLedgerCard({ ledgerData, dateRange }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                 <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280', fontSize: '14px' }}>Period Debits:</span>
                 <span style={{ fontWeight: '500', fontSize: '14px', color: textColor }}>
-                  +${periodDebits.toFixed(2)}
+                  +${toNum(periodDebits).toFixed(2)}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280', fontSize: '14px' }}>Period Credits:</span>
                 <span style={{ fontWeight: '500', fontSize: '14px', color: textColor }}>
-                  -${periodCredits.toFixed(2)}
+                  -${toNum(periodCredits).toFixed(2)}
                 </span>
               </div>
             </div>
@@ -139,7 +150,7 @@ function AccountLedgerCard({ ledgerData, dateRange }) {
                 fontWeight: '600',
                 color: netChange >= 0 ? '#10b981' : '#ef4444'
               }}>
-                {netChange >= 0 ? '+' : ''}${netChange.toFixed(2)}
+                {netChange >= 0 ? '+' : ''}${toNum(netChange).toFixed(2)}
               </span>
             </div>
 
@@ -151,7 +162,7 @@ function AccountLedgerCard({ ledgerData, dateRange }) {
             }}>
               <span style={{ color: textColor, fontWeight: '600' }}>Ending Balance:</span>
               <span style={{ fontSize: '20px', fontWeight: '700', color: '#6366f1' }}>
-                ${ledgerData.ending_balance.toFixed(2)}
+                ${toNum(endingBalance).toFixed(2)}
               </span>
             </div>
           </div>
@@ -169,7 +180,7 @@ function AccountLedgerCard({ ledgerData, dateRange }) {
       }}>
         <span style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>Total Transactions:</span>
         <span style={{ fontWeight: '600', fontSize: '18px', color: textColor }}>
-          {ledgerData.entries.length}
+          {entries.length}
         </span>
       </div>
     </div>

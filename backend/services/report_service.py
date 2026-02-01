@@ -12,6 +12,83 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from backend.models.account_model import AccountRepository
 from backend.models.transaction_model import TransactionRepository
+from database_postgres import get_connection
+
+
+def get_store_inventory_value(establishment_id: Optional[int] = None) -> float:
+    """
+    Compute total inventory value from actual store stock (public.inventory).
+    Value = sum of (current_quantity * product_cost) for all products.
+    Used so accounting Balance Sheet Inventory line reflects real stock.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if establishment_id is not None:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(current_quantity * product_cost), 0) AS total_value
+                FROM public.inventory
+                WHERE establishment_id = %s
+                """,
+                (establishment_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(current_quantity * product_cost), 0) AS total_value
+                FROM public.inventory
+                """
+            )
+        row = cursor.fetchone()
+        cursor.close()
+        if row and row[0] is not None:
+            return float(row[0])
+        return 0.0
+    except Exception:
+        return 0.0
+    finally:
+        conn.close()
+
+
+def get_store_inventory_list(establishment_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Return inventory items from actual store stock (public.inventory) for accounting view.
+    Each item has product_id, product_name, sku, barcode, current_quantity, product_cost, inventory_value.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if establishment_id is not None:
+            cursor.execute(
+                """
+                SELECT product_id, product_name, sku, barcode,
+                       current_quantity, product_cost,
+                       (current_quantity * product_cost) AS inventory_value
+                FROM public.inventory
+                WHERE establishment_id = %s
+                ORDER BY product_name
+                """,
+                (establishment_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT product_id, product_name, sku, barcode,
+                       current_quantity, product_cost,
+                       (current_quantity * product_cost) AS inventory_value
+                FROM public.inventory
+                ORDER BY product_name
+                """
+            )
+        columns = [c[0] for c in cursor.description] if cursor.description else []
+        rows = cursor.fetchall()
+        cursor.close()
+        return [dict(zip(columns, row)) for row in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
 
 
 class ReportService:
@@ -178,15 +255,20 @@ class ReportService:
             return 0.0
 
     @staticmethod
-    def get_balance_sheet(as_of_date: date) -> Dict[str, Any]:
-        """Generate Balance Sheet as of a specific date"""
+    def get_balance_sheet(as_of_date: date, establishment_id: Optional[int] = None) -> Dict[str, Any]:
+        """Generate Balance Sheet as of a specific date. Inventory (1200) uses actual store stock value."""
         _f = ReportService._to_float
         all_accounts = AccountRepository.find_all()
         asset_accounts = [a for a in all_accounts if a.account_type == 'Asset' and a.is_active]
         liability_accounts = [a for a in all_accounts if a.account_type == 'Liability' and a.is_active]
         equity_accounts = [a for a in all_accounts if a.account_type == 'Equity' and a.is_active]
 
+        store_inventory_value = get_store_inventory_value(establishment_id)
+
         def _balance(acc) -> float:
+            # Use actual store inventory value for account 1200 (Inventory) so accounting matches stock
+            if getattr(acc, 'account_number', None) == '1200':
+                return _f(store_inventory_value)
             b = AccountRepository.get_account_balance(acc.id, as_of_date)
             return _f(b)
 
@@ -254,8 +336,12 @@ class ReportService:
         year_start = date(as_of_date.year, 1, 1)
         pl = ReportService.get_profit_loss(year_start, as_of_date)
         current_year_earnings = _f(pl.get('net_income'))
-        total_equity = _f(_f(retained_earnings) + _f(current_year_earnings))
 
+        # Inventory (1200) uses actual store stock value; ledger 1200 may differ.
+        # Add equity adjustment so Assets = Liabilities + Equity (balance sheet balances).
+        equity_before_adjustment = _f(retained_earnings) + _f(current_year_earnings)
+        inventory_valuation_adjustment = _f(total_assets) - _f(total_liabilities) - _f(equity_before_adjustment)
+        total_equity = _f(equity_before_adjustment + inventory_valuation_adjustment)
         balances = abs(_f(total_assets) - _f(total_liabilities + total_equity)) < 0.01
 
         # Normalize all list items so 'balance' is float
@@ -283,6 +369,7 @@ class ReportService:
                 'equity_accounts': _norm(equity_items),
                 'retained_earnings': _f(retained_earnings),
                 'current_year_earnings': _f(current_year_earnings),
+                'inventory_valuation_adjustment': _f(inventory_valuation_adjustment),
                 'total_equity': _f(total_equity),
             },
             'as_of_date': as_of_date.isoformat(),

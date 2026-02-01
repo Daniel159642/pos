@@ -10,6 +10,7 @@ import pytz
 import uuid
 import hashlib
 from typing import Optional, Dict, Any, List
+from psycopg2.extras import RealDictCursor
 from database import get_connection
 
 class CalendarIntegrationSystem:
@@ -30,22 +31,42 @@ class CalendarIntegrationSystem:
         conn = get_connection()
         cursor = conn.cursor()
         
+        # Ensure table exists (lowercase name so unquoted Calendar_Subscriptions in any code resolves to it)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                subscription_id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                subscription_token VARCHAR(255) NOT NULL,
+                include_shifts SMALLINT DEFAULT 1,
+                include_shipments SMALLINT DEFAULT 1,
+                include_meetings SMALLINT DEFAULT 1,
+                include_deadlines SMALLINT DEFAULT 1,
+                calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
+                is_active SMALLINT DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        
         # Generate unique token
         token = hashlib.sha256(
             f"{employee_id}{datetime.now().isoformat()}{uuid.uuid4()}".encode()
         ).hexdigest()
         
-        # Default preferences
-        prefs = preferences or {
-            'include_shifts': True,
-            'include_shipments': True,
-            'include_meetings': True,
-            'include_deadlines': True,
-            'calendar_name': 'My Work Schedule'
-        }
+        # Default preferences (ensure dict)
+        if preferences is None or not isinstance(preferences, dict):
+            prefs = {
+                'include_shifts': True,
+                'include_shipments': True,
+                'include_meetings': True,
+                'include_deadlines': True,
+                'calendar_name': 'My Work Schedule'
+            }
+        else:
+            prefs = preferences
         
         cursor.execute("""
-            INSERT INTO Calendar_Subscriptions
+            INSERT INTO calendar_subscriptions
             (employee_id, subscription_token, include_shifts, include_shipments,
              include_meetings, include_deadlines, calendar_name)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -83,12 +104,12 @@ class CalendarIntegrationSystem:
         """Generate iCal feed for a subscription token"""
         
         conn = get_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         # Get subscription preferences
         cursor.execute("""
             SELECT cs.*, e.first_name, e.last_name
-            FROM Calendar_Subscriptions cs
+            FROM calendar_subscriptions cs
             JOIN employees e ON cs.employee_id = e.employee_id
             WHERE cs.subscription_token = %s AND cs.is_active = 1
         """, (token,))
@@ -100,7 +121,8 @@ class CalendarIntegrationSystem:
             conn.close()
             return None
         
-        employee_id = subscription['employee_id']
+        subscription_dict = dict(subscription)
+        employee_id = subscription_dict['employee_id']
         
         # Create calendar
         cal = Calendar()
@@ -108,82 +130,84 @@ class CalendarIntegrationSystem:
         cal.add('version', '2.0')
         cal.add('calscale', 'GREGORIAN')
         cal.add('method', 'PUBLISH')
-        cal.add('x-wr-calname', subscription['calendar_name'] or 'My Work Schedule')
+        cal.add('x-wr-calname', subscription_dict.get('calendar_name') or 'My Work Schedule')
         cal.add('x-wr-timezone', 'America/New_York')
         
-        # Get events based on preferences
+        # Get events based on preferences (wrap in try so missing event tables don't break feed)
         events = []
-        subscription_dict = dict(subscription) if isinstance(subscription, dict) else subscription
+        try:
+            # Get shifts if enabled
+            if subscription_dict.get('include_shifts') == 1:
+                cursor.execute("""
+                    SELECT ce.*, es.shift_type, es.break_duration
+                    FROM Calendar_Events ce
+                    JOIN Employee_Shifts es ON ce.event_id = es.event_id
+                    WHERE es.employee_id = %s
+                    AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                    AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
+                    AND es.status != 'cancelled'
+                """, (employee_id,))
+                events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
+            # Get shipments if enabled
+            if subscription_dict.get('include_shipments') == 1:
+                cursor.execute("""
+                    SELECT ce.*, ss.vendor_id, v.vendor_name,
+                           ss.estimated_delivery_window, ss.tracking_number
+                    FROM Calendar_Events ce
+                    JOIN Shipment_Schedule ss ON ce.event_id = ss.event_id
+                    LEFT JOIN vendors v ON ss.vendor_id = v.vendor_id
+                    WHERE ss.assigned_receiver = %s
+                    AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                    AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
+                    AND ss.status != 'cancelled'
+                """, (employee_id,))
+                events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
+            # Get meetings if enabled
+            if subscription_dict.get('include_meetings') == 1:
+                cursor.execute("""
+                    SELECT ce.*
+                    FROM Calendar_Events ce
+                    JOIN Event_Attendees ea ON ce.event_id = ea.event_id
+                    WHERE ea.employee_id = %s
+                    AND ce.event_type = 'meeting'
+                    AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                    AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
+                """, (employee_id,))
+                events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
+            # Get deadlines if enabled
+            if subscription_dict.get('include_deadlines') == 1:
+                cursor.execute("""
+                    SELECT ce.*
+                    FROM Calendar_Events ce
+                    WHERE ce.event_type IN ('deadline', 'holiday')
+                    AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                    AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
+                """)
+                events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
+        except Exception:
+            pass  # events stays empty if Calendar_Events etc. don't exist
         
-        # Get shifts if enabled
-        if subscription_dict.get('include_shifts') == 1:
-            cursor.execute("""
-                SELECT ce.*, es.shift_type, es.break_duration
-                FROM Calendar_Events ce
-                JOIN Employee_Shifts es ON ce.event_id = es.event_id
-                WHERE es.employee_id = %s
-                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
-                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
-                AND es.status != 'cancelled'
-            """, (employee_id,))
-            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
-        
-        # Get shipments if enabled
-        if subscription_dict.get('include_shipments') == 1:
-            cursor.execute("""
-                SELECT ce.*, ss.vendor_id, v.vendor_name, 
-                       ss.estimated_delivery_window, ss.tracking_number
-                FROM Calendar_Events ce
-                JOIN Shipment_Schedule ss ON ce.event_id = ss.event_id
-                LEFT JOIN vendors v ON ss.vendor_id = v.vendor_id
-                WHERE ss.assigned_receiver = %s
-                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
-                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
-                AND ss.status != 'cancelled'
-            """, (employee_id,))
-            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
-        
-        # Get meetings if enabled
-        if subscription_dict.get('include_meetings') == 1:
-            cursor.execute("""
-                SELECT ce.*
-                FROM Calendar_Events ce
-                JOIN Event_Attendees ea ON ce.event_id = ea.event_id
-                WHERE ea.employee_id = %s
-                AND ce.event_type = 'meeting'
-                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
-                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
-            """, (employee_id,))
-            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
-        
-        # Get deadlines if enabled
-        if subscription_dict.get('include_deadlines') == 1:
-            cursor.execute("""
-                SELECT ce.*
-                FROM Calendar_Events ce
-                WHERE ce.event_type IN ('deadline', 'holiday')
-                AND ce.start_datetime >= CURRENT_TIMESTAMP - INTERVAL '1 month'
-                AND ce.start_datetime <= CURRENT_TIMESTAMP + INTERVAL '3 months'
-            """)
-            events.extend([dict(row) if isinstance(row, dict) else row for row in cursor.fetchall()])
-        
-        # Add events to calendar
+        # Add events to calendar (skip malformed events so feed still returns)
         for event_data in events:
+            try:
+                event_row = dict(event_data) if not isinstance(event_data, dict) else event_data
+            except Exception:
+                continue
+            if not event_row.get('event_id') or not event_row.get('start_datetime') or not event_row.get('end_datetime'):
+                continue
             event = Event()
-            
-            # Generate unique ID
-            event.add('uid', f"{event_data['event_id']}@pos-system.local")
-            event.add('summary', event_data['title'])
-            event.add('description', event_data['description'] or '')
-            
-            if event_data.get('location'):
-                event.add('location', event_data['location'])
-            
-            # Handle datetime
-            start_dt_str = event_data['start_datetime']
-            end_dt_str = event_data['end_datetime']
-            
-            # Parse datetime strings (SQLite stores as TEXT)
+            try:
+                event.add('uid', f"{event_row.get('event_id')}@pos-system.local")
+                event.add('summary', event_row.get('title') or 'Event')
+                event.add('description', (event_row.get('description') or ''))
+                
+                if event_row.get('location'):
+                    event.add('location', event_row['location'])
+                
+                start_dt_str = event_row['start_datetime']
+                end_dt_str = event_row['end_datetime']
+                
+                # Parse datetime strings (SQLite stores as TEXT)
             try:
                 if 'T' in start_dt_str:
                     start_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
@@ -199,82 +223,76 @@ class CalendarIntegrationSystem:
                 start_dt = datetime.strptime(start_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
                 end_dt = datetime.strptime(end_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
             
-            if event_data.get('all_day'):
-                event.add('dtstart', start_dt.date())
-                event.add('dtend', (end_dt + timedelta(days=1)).date())  # All-day events need next day
-            else:
-                # Localize to timezone
-                if start_dt.tzinfo is None:
-                    start_dt = self.timezone.localize(start_dt)
-                if end_dt.tzinfo is None:
-                    end_dt = self.timezone.localize(end_dt)
-                event.add('dtstart', start_dt)
-                event.add('dtend', end_dt)
-            
-            event.add('dtstamp', datetime.now(self.timezone))
-            
-            if event_data.get('created_at'):
-                try:
-                    created_dt = datetime.fromisoformat(event_data['created_at'].replace('Z', '+00:00'))
-                    if created_dt.tzinfo is None:
-                        created_dt = self.timezone.localize(created_dt)
-                    event.add('created', created_dt)
-                except:
-                    pass
-            
-            if event_data.get('updated_at'):
-                try:
-                    updated_dt = datetime.fromisoformat(event_data['updated_at'].replace('Z', '+00:00'))
-                    if updated_dt.tzinfo is None:
-                        updated_dt = self.timezone.localize(updated_dt)
-                    event.add('last-modified', updated_dt)
-                except:
-                    pass
-            
-            # Add color if specified
-            if event_data.get('color'):
-                event.add('color', event_data['color'])
-            
-            # Add category based on event type
-            event.add('categories', [event_data['event_type'].upper()])
-            
-            # Add alarm/reminder (15 minutes before)
-            alarm = Alarm()
-            alarm.add('action', 'DISPLAY')
-            alarm.add('description', f"Reminder: {event_data['title']}")
-            alarm.add('trigger', timedelta(minutes=-15))
-            event.add_component(alarm)
-            
-            # Add event-specific details to description
-            enhanced_description = event_data.get('description') or ''
-            
-            if event_data.get('shift_type'):
-                enhanced_description += f"\n\nShift Type: {event_data['shift_type']}"
-                enhanced_description += f"\nBreak: {event_data.get('break_duration', 30)} minutes"
-            
-            if event_data.get('vendor_name'):
-                enhanced_description += f"\n\nVendor: {event_data['vendor_name']}"
-                if event_data.get('estimated_delivery_window'):
-                    enhanced_description += f"\nDelivery Window: {event_data['estimated_delivery_window']}"
-                if event_data.get('tracking_number'):
-                    enhanced_description += f"\nTracking: {event_data['tracking_number']}"
-            
-            if enhanced_description:
-                event['description'] = enhanced_description
-            
-            cal.add_component(event)
+                if event_row.get('all_day'):
+                    event.add('dtstart', start_dt.date())
+                    event.add('dtend', (end_dt + timedelta(days=1)).date())
+                else:
+                    if start_dt.tzinfo is None:
+                        start_dt = self.timezone.localize(start_dt)
+                    if end_dt.tzinfo is None:
+                        end_dt = self.timezone.localize(end_dt)
+                    event.add('dtstart', start_dt)
+                    event.add('dtend', end_dt)
+                
+                event.add('dtstamp', datetime.now(self.timezone))
+                
+                if event_row.get('created_at'):
+                    try:
+                        created_dt = datetime.fromisoformat(str(event_row.get('created_at')).replace('Z', '+00:00'))
+                        if created_dt.tzinfo is None:
+                            created_dt = self.timezone.localize(created_dt)
+                        event.add('created', created_dt)
+                    except Exception:
+                        pass
+                
+                if event_row.get('updated_at'):
+                    try:
+                        updated_dt = datetime.fromisoformat(str(event_row.get('updated_at')).replace('Z', '+00:00'))
+                        if updated_dt.tzinfo is None:
+                            updated_dt = self.timezone.localize(updated_dt)
+                        event.add('last-modified', updated_dt)
+                    except Exception:
+                        pass
+                
+                if event_row.get('color'):
+                    event.add('color', event_row['color'])
+                if event_row.get('event_type'):
+                    event.add('categories', [str(event_row.get('event_type')).upper()])
+                alarm = Alarm()
+                alarm.add('action', 'DISPLAY')
+                alarm.add('description', f"Reminder: {event_row.get('title') or 'Event'}")
+                alarm.add('trigger', timedelta(minutes=-15))
+                event.add_component(alarm)
+                
+                enhanced_description = event_row.get('description') or ''
+                if event_row.get('shift_type'):
+                    enhanced_description += f"\n\nShift Type: {event_row['shift_type']}"
+                    enhanced_description += f"\nBreak: {event_row.get('break_duration', 30)} minutes"
+                if event_row.get('vendor_name'):
+                    enhanced_description += f"\n\nVendor: {event_row['vendor_name']}"
+                if event_row.get('estimated_delivery_window'):
+                    enhanced_description += f"\nDelivery Window: {event_row['estimated_delivery_window']}"
+                if event_row.get('tracking_number'):
+                    enhanced_description += f"\nTracking: {event_row['tracking_number']}"
+                
+                if enhanced_description:
+                    event.add('description', enhanced_description)
+                
+                cal.add_component(event)
+            except Exception:
+                continue
         
-        # Update last synced time
-        cursor.execute("""
-            UPDATE Calendar_Subscriptions
-            SET last_synced = CURRENT_TIMESTAMP
-            WHERE subscription_token = %s
-        """, (token,))
-        conn.commit()
-        
+        try:
+            cursor.execute("""
+                UPDATE calendar_subscriptions
+                SET last_synced = CURRENT_TIMESTAMP
+                WHERE subscription_token = %s
+            """, (token,))
+            conn.commit()
+        except Exception:
+            pass  # column may not exist
         cursor.close()
         conn.close()
-        
         return cal.to_ical()
     
     def create_shift_event(self, employee_id: int, start_time: datetime, end_time: datetime,
@@ -484,7 +502,23 @@ class CalendarIntegrationSystem:
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT subscription_token FROM Calendar_Subscriptions
+            CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                subscription_id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                subscription_token VARCHAR(255) NOT NULL,
+                include_shifts SMALLINT DEFAULT 1,
+                include_shipments SMALLINT DEFAULT 1,
+                include_meetings SMALLINT DEFAULT 1,
+                include_deadlines SMALLINT DEFAULT 1,
+                calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
+                is_active SMALLINT DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        
+        cursor.execute("""
+            SELECT subscription_token FROM calendar_subscriptions
             WHERE employee_id = %s AND is_active = 1
             ORDER BY created_at DESC
             LIMIT 1
@@ -496,7 +530,7 @@ class CalendarIntegrationSystem:
         conn.close()
         
         if result:
-            token = result['subscription_token']
+            token = result[0] if isinstance(result, (tuple, list)) else result.get('subscription_token')
             ical_url = f"{self.base_url}/calendar/subscribe/{token}.ics"
             return {
                 'ical_url': ical_url,

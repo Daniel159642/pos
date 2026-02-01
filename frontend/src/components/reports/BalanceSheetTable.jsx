@@ -15,7 +15,7 @@ function BalanceSheetTable({ data, onAccountClick }) {
     return (
       <tr
         style={rowStyle}
-        onClick={() => onAccountClick && onAccountClick(account.account_id)}
+        onClick={() => onAccountClick && onAccountClick(account.account_id ?? account.id)}
         onMouseEnter={(e) => {
           if (onAccountClick) e.currentTarget.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f3f4f6'
         }}
@@ -142,7 +142,7 @@ function BalanceSheetTable({ data, onAccountClick }) {
                 <tr style={{ backgroundColor: isDarkMode ? '#1a1a3a' : '#bfdbfe' }}>
                   <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontWeight: '600' }}>Current Assets</td>
                 </tr>
-                {data.assets.current_assets.map((a) => <AccountRow key={a.account_id} account={a} indent />)}
+                {data.assets.current_assets.map((a) => <AccountRow key={a.account_id ?? a.id} account={a} indent />)}
                 <SubtotalRow label="Total Current Assets" amount={data.assets.total_current_assets} className="blue" />
               </>
             )}
@@ -152,7 +152,7 @@ function BalanceSheetTable({ data, onAccountClick }) {
                 <tr style={{ backgroundColor: isDarkMode ? '#1a1a3a' : '#bfdbfe' }}>
                   <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontWeight: '600' }}>Fixed Assets</td>
                 </tr>
-                {data.assets.fixed_assets.map((a) => <AccountRow key={a.account_id} account={a} indent />)}
+                {data.assets.fixed_assets.map((a) => <AccountRow key={a.account_id ?? a.id} account={a} indent />)}
                 <SubtotalRow label="Total Fixed Assets" amount={data.assets.total_fixed_assets} className="blue" />
               </>
             )}
@@ -162,7 +162,7 @@ function BalanceSheetTable({ data, onAccountClick }) {
                 <tr style={{ backgroundColor: isDarkMode ? '#1a1a3a' : '#bfdbfe' }}>
                   <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontWeight: '600' }}>Other Assets</td>
                 </tr>
-                {data.assets.other_assets.map((a) => <AccountRow key={a.account_id} account={a} indent />)}
+                {data.assets.other_assets.map((a) => <AccountRow key={a.account_id ?? a.id} account={a} indent />)}
                 <SubtotalRow label="Total Other Assets" amount={data.assets.total_other_assets} className="blue" />
               </>
             )}
@@ -178,7 +178,7 @@ function BalanceSheetTable({ data, onAccountClick }) {
                 <tr style={{ backgroundColor: isDarkMode ? '#3a1a1a' : '#fecaca' }}>
                   <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontWeight: '600' }}>Current Liabilities</td>
                 </tr>
-                {data.liabilities.current_liabilities.map((a) => <AccountRow key={a.account_id} account={a} indent />)}
+                {data.liabilities.current_liabilities.map((a) => <AccountRow key={a.account_id ?? a.id} account={a} indent />)}
                 <SubtotalRow label="Total Current Liabilities" amount={data.liabilities.total_current_liabilities} className="red" />
               </>
             )}
@@ -188,7 +188,7 @@ function BalanceSheetTable({ data, onAccountClick }) {
                 <tr style={{ backgroundColor: isDarkMode ? '#3a1a1a' : '#fecaca' }}>
                   <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontWeight: '600' }}>Long-term Liabilities</td>
                 </tr>
-                {data.liabilities.long_term_liabilities.map((a) => <AccountRow key={a.account_id} account={a} indent />)}
+                {data.liabilities.long_term_liabilities.map((a) => <AccountRow key={a.account_id ?? a.id} account={a} indent />)}
                 <SubtotalRow label="Total Long-term Liabilities" amount={data.liabilities.total_long_term_liabilities} className="red" />
               </>
             )}
@@ -199,7 +199,18 @@ function BalanceSheetTable({ data, onAccountClick }) {
               <td colSpan={2} style={sectionStyle}>EQUITY</td>
             </tr>
 
-            {data.equity.equity_accounts?.map((a) => <AccountRow key={a.account_id} account={a} indent />)}
+            {data.equity.equity_accounts?.map((a) => <AccountRow key={a.account_id ?? a.id} account={a} indent />)}
+
+            {typeof data.equity.inventory_valuation_adjustment === 'number' && Math.abs(data.equity.inventory_valuation_adjustment) >= 0.005 && (
+              <tr style={{ cursor: 'default' }}>
+                <td style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#9ca3af' : '#6b7280', paddingLeft: '48px' }}>
+                  Inventory valuation adjustment
+                </td>
+                <td style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#d1d5db' : '#1a1a1a', textAlign: 'right', fontWeight: '500' }}>
+                  {formatCurrency(data.equity.inventory_valuation_adjustment)}
+                </td>
+              </tr>
+            )}
 
             <tr style={{ cursor: 'default' }}>
               <td style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#d1d5db' : '#1a1a1a', paddingLeft: '48px' }}>

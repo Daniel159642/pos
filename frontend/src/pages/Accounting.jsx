@@ -42,8 +42,19 @@ import CashFlowChart from '../components/reports/CashFlowChart'
 import reportService from '../services/reportService'
 import Modal from '../components/common/Modal'
 import Button from '../components/common/Button'
+import Input from '../components/common/Input'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import { useToast } from '../contexts/ToastContext'
+import {
+  formTitleStyle,
+  formLabelStyle,
+  inputBaseStyle,
+  formFieldContainerStyle,
+  FormTitle,
+  FormLabel,
+  FormField,
+  getInputFocusHandlers
+} from '../components/FormStyles'
 
 /** Download an array-of-arrays as Excel (.xlsx) using SheetJS */
 async function downloadExcel(rows, filename) {
@@ -117,9 +128,7 @@ function Accounting() {
     { id: 'chart-of-accounts', label: 'Chart of Accounts', icon: BookOpen },
     { id: 'transactions', label: 'Transactions', icon: ArrowLeftRight },
     { id: 'general-ledger', label: 'General Ledger', icon: Library },
-    { id: 'profit-loss', label: 'Profit & Loss', icon: TrendingUp },
-    { id: 'balance-sheet', label: 'Balance Sheet', icon: Wallet },
-    { id: 'cash-flow', label: 'Cash Flow', icon: Workflow },
+    { id: 'financial-statements', label: 'Financial Statements', icon: FileBarChart },
     { id: 'invoices', label: 'Invoices', icon: FileText },
     { id: 'bills', label: 'Bills', icon: Receipt },
     { id: 'customers', label: 'Customers', icon: Users },
@@ -258,45 +267,60 @@ function Accounting() {
         maxWidth: sidebarMinimized ? 'none' : '1200px',
         transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
       }}>
-        <h1 style={{ margin: '0 0 24px 0', fontSize: '28px', fontWeight: 600, color: textColor, fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
+        <FormTitle isDarkMode={isDarkMode} style={{ margin: '0 0 24px 0', fontSize: '28px' }}>
           Accounting System
-        </h1>
+        </FormTitle>
 
         {/* Date Range Selector */}
-        <div style={{ marginBottom: '24px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <label style={{ color: textColor, fontWeight: 500 }}>Date Range:</label>
+        <div style={{ ...formFieldContainerStyle, display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: 0, marginRight: '4px' }}>Date Range:</FormLabel>
           <input
             type="date"
             value={dateRange.start_date}
             onChange={(e) => setDateRange({ ...dateRange, start_date: e.target.value })}
-            style={{ padding: '8px 12px', border: `1px solid ${borderColor}`, borderRadius: '6px', backgroundColor: isDarkMode ? '#1a1a1a' : 'white', color: textColor, fontSize: '14px' }}
+            {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+            style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: 'auto', minWidth: '140px' }}
           />
           <span style={{ color: textColor }}>to</span>
           <input
             type="date"
             value={dateRange.end_date}
             onChange={(e) => setDateRange({ ...dateRange, end_date: e.target.value })}
-            style={{ padding: '8px 12px', border: `1px solid ${borderColor}`, borderRadius: '6px', backgroundColor: isDarkMode ? '#1a1a1a' : 'white', color: textColor, fontSize: '14px' }}
+            {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+            style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: 'auto', minWidth: '140px' }}
           />
         </div>
 
         {/* Error Display */}
         {error && (
-          <div style={{ padding: '16px', marginBottom: '20px', backgroundColor: isDarkMode ? '#4a1a1a' : '#fee', border: `1px solid ${isDarkMode ? '#6a2a2a' : '#fcc'}`, borderRadius: '8px', color: isDarkMode ? '#ff6b6b' : '#c33' }}>
+          <div style={{ padding: '16px', marginBottom: '20px', backgroundColor: isDarkMode ? '#4a1a1a' : '#fee', border: `1px solid ${isDarkMode ? '#6a2a2a' : '#fcc'}`, borderRadius: '8px', color: isDarkMode ? '#ff6b6b' : '#c33', ...formFieldContainerStyle }}>
             Error: {error}
           </div>
         )}
 
         {/* Tab Content */}
         {activeTab === 'dashboard' && <DashboardTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
-        {activeTab === 'settings' && <SettingsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
+        {activeTab === 'settings' && <SettingsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
         {activeTab === 'chart-of-accounts' && <ChartOfAccountsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
         {activeTab === 'transactions' && <TransactionsTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
         {activeTab === 'general-ledger' && <GeneralLedgerTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
-        {activeTab === 'account-ledger' && <AccountLedgerTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} />}
-        {activeTab === 'profit-loss' && <ProfitLossTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} />}
-        {activeTab === 'balance-sheet' && <BalanceSheetTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} />}
-        {activeTab === 'cash-flow' && <CashFlowTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} />}
+        {activeTab === 'account-ledger' && (
+          <AccountLedgerTab
+            key={`account-ledger-${sessionStorage.getItem('selectedAccountId') || ''}`}
+            dateRange={dateRange}
+            formatCurrency={formatCurrency}
+            getAuthHeaders={getAuthHeaders}
+            setActiveTab={setActiveTab}
+          />
+        )}
+        {activeTab === 'financial-statements' && (
+          <FinancialStatementsTab
+            dateRange={dateRange}
+            formatCurrency={formatCurrency}
+            getAuthHeaders={getAuthHeaders}
+            setActiveTab={setActiveTab}
+          />
+        )}
         {activeTab === 'invoices' && <InvoicesTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
         {activeTab === 'bills' && <BillsTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
         {activeTab === 'customers' && <CustomersTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
@@ -451,7 +475,7 @@ function DashboardTab({ dateRange, formatCurrency, getAuthHeaders }) {
         borderRadius: '8px',
         marginTop: '24px'
       }}>
-        <h3 style={{ color: textColor, marginBottom: '16px' }}>Quick Links</h3>
+        <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>Quick Links</h3>
         <p style={{ color: textColor, opacity: 0.8, fontSize: '14px', lineHeight: '1.8' }}>
           Welcome to the Accounting System! This system uses double-entry bookkeeping principles.
           <br /><br />
@@ -469,13 +493,13 @@ function DashboardTab({ dateRange, formatCurrency, getAuthHeaders }) {
 }
 
 // Settings tab: sales tax %, transaction fee rates, note about hourly wages
-function SettingsTab({ formatCurrency, getAuthHeaders }) {
+function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 255', isDarkMode: isDarkModeProp }) {
   const { show: showToast } = useToast()
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [edit, setEdit] = useState({ default_sales_tax_pct: '', transaction_fee_rates: {} })
-  const isDarkMode = document.documentElement.classList.contains('dark-theme')
+  const isDarkMode = isDarkModeProp ?? document.documentElement.classList.contains('dark-theme')
   const textColor = isDarkMode ? '#ffffff' : '#1a1a1a'
   const cardBg = isDarkMode ? '#1f1f1f' : '#f9f9f9'
   const borderColor = isDarkMode ? '#3a3a3a' : '#e0e0e0'
@@ -544,9 +568,9 @@ function SettingsTab({ formatCurrency, getAuthHeaders }) {
   return (
     <div>
       <div style={{ padding: '20px', backgroundColor: cardBg, border: `1px solid ${borderColor}`, borderRadius: '8px', maxWidth: '560px' }}>
-        <h3 style={{ color: textColor, marginBottom: '16px' }}>Store accounting settings</h3>
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', color: textColor, marginBottom: '6px', fontWeight: 500 }}>Default sales tax (%)</label>
+        <FormTitle isDarkMode={isDarkMode} style={{ fontSize: '18px', marginBottom: '16px' }}>Store accounting settings</FormTitle>
+        <FormField>
+          <FormLabel isDarkMode={isDarkMode}>Default sales tax (%)</FormLabel>
           <input
             type="number"
             min="0"
@@ -554,17 +578,18 @@ function SettingsTab({ formatCurrency, getAuthHeaders }) {
             step="0.01"
             value={edit.default_sales_tax_pct}
             onChange={e => setEdit(prev => ({ ...prev, default_sales_tax_pct: e.target.value }))}
-            style={{ padding: '8px 12px', border: `1px solid ${borderColor}`, borderRadius: '6px', backgroundColor: isDarkMode ? '#1a1a1a' : 'white', color: textColor, width: '120px' }}
+            {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+            style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '120px' }}
           />
           <span style={{ marginLeft: '8px', color: textColor, opacity: 0.8 }}>% (e.g. 8 for 8%)</span>
-        </div>
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', color: textColor, marginBottom: '8px', fontWeight: 500 }}>Transaction fee rates (card/processing)</label>
+        </FormField>
+        <FormField>
+          <FormLabel isDarkMode={isDarkMode}>Transaction fee rates (card/processing)</FormLabel>
           <p style={{ fontSize: '13px', color: textColor, opacity: 0.8, marginBottom: '8px' }}>As decimal (e.g. 0.029 = 2.9%). Cash/check/store credit typically 0.</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
             {feeMethods.map(method => (
               <div key={method} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ color: textColor, minWidth: '110px', fontSize: '13px' }}>{method.replace(/_/g, ' ')}</label>
+                <label style={{ ...formLabelStyle(isDarkMode), marginBottom: 0, minWidth: '110px', fontSize: '13px' }}>{method.replace(/_/g, ' ')}</label>
                 <input
                   type="number"
                   min="0"
@@ -572,16 +597,19 @@ function SettingsTab({ formatCurrency, getAuthHeaders }) {
                   step="0.001"
                   value={rates[method] ?? 0}
                   onChange={e => setFeeRate(method, e.target.value)}
-                  style={{ padding: '6px 8px', border: `1px solid ${borderColor}`, borderRadius: '6px', backgroundColor: isDarkMode ? '#1a1a1a' : 'white', color: textColor, width: '80px' }}
+                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                  style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '80px' }}
                 />
               </div>
             ))}
           </div>
-        </div>
-        <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: isDarkMode ? '#1a1a1a' : '#f3f4f6', borderRadius: '8px' }}>
-          <strong style={{ color: textColor }}>Hourly wage</strong>
-          <p style={{ fontSize: '13px', color: textColor, opacity: 0.8, marginTop: '4px' }}>Set each employee’s hourly rate in <strong>Employees</strong>. Labor cost on the Dashboard uses time clock hours × hourly rate.</p>
-        </div>
+        </FormField>
+        <FormField>
+          <div style={{ padding: '12px', backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f3f4f6', borderRadius: '8px' }}>
+            <strong style={{ color: textColor }}>Hourly wage</strong>
+            <p style={{ fontSize: '13px', color: textColor, opacity: 0.8, marginTop: '4px' }}>Set each employee’s hourly rate in <strong>Employees</strong>. Labor cost on the Dashboard uses time clock hours × hourly rate.</p>
+          </div>
+        </FormField>
         <button
           type="button"
           onClick={handleSave}
@@ -768,7 +796,7 @@ function ChartOfAccountsTab({ formatCurrency, getAuthHeaders }) {
         alignItems: 'center' 
       }}>
         <div>
-          <h3 style={{ color: textColor, margin: 0, fontSize: '24px', fontWeight: 600 }}>
+          <h3 style={{ ...formTitleStyle(isDarkMode), margin: 0, fontSize: '24px' }}>
             Chart of Accounts
           </h3>
           <p style={{ color: textColor, opacity: 0.7, marginTop: '4px', fontSize: '14px' }}>
@@ -1318,7 +1346,7 @@ function InvoicesTab({ dateRange, formatCurrency, getAuthHeaders }) {
 
   return (
     <div>
-      <h3 style={{ color: textColor, marginBottom: '16px' }}>Invoices</h3>
+      <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>Invoices</h3>
       {invoices.length === 0 ? (
         <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>
           No invoices found for this period.
@@ -1502,7 +1530,7 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders }) {
   return (
     <div>
       <div style={{ marginBottom: '24px' }}>
-        <h3 style={{ color: textColor, marginBottom: '8px', fontSize: '24px', fontWeight: '600' }}>
+        <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '8px', fontSize: '24px' }}>
           General Ledger
         </h3>
         <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
@@ -1702,9 +1730,14 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
     if (!accountId) return
     
     setLoading(true)
+    setLedgerData(null)
     try {
       const data = await transactionService.getAccountLedger(accountId, filters)
-      setLedgerData(data)
+      if (data && data.account && Array.isArray(data.entries)) {
+        setLedgerData(data)
+      } else {
+        showToast('Invalid account ledger response', 'error')
+      }
     } catch (err) {
       console.error('Error loading account ledger:', err)
       showToast(err.response?.data?.message || 'Failed to fetch account ledger', 'error')
@@ -1724,6 +1757,7 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
   }
 
   const buildAccountLedgerRows = () => {
+    if (!ledgerData?.account || !Array.isArray(ledgerData?.entries)) return []
     const headers = ['Date', 'Transaction #', 'Description', 'Debit', 'Credit', 'Balance']
     const rows = ledgerData.entries.map(entry => [
       new Date(entry.transaction_date).toLocaleDateString(),
@@ -1734,8 +1768,8 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
       entry.running_balance?.toFixed(2) || '',
     ])
     return [
-      [`Account: ${ledgerData.account.account_number || ''} ${ledgerData.account.account_name}`],
-      [`Ending Balance: $${ledgerData.ending_balance.toFixed(2)}`],
+      [`Account: ${ledgerData.account?.account_number || ''} ${ledgerData.account?.account_name || ''}`],
+      [`Ending Balance: $${Number(ledgerData.ending_balance).toFixed(2)}`],
       [],
       headers,
       ...rows
@@ -1799,7 +1833,8 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
     return <LoadingSpinner size="lg" text="Loading account ledger..." />
   }
 
-  if (!ledgerData) {
+  const hasValidLedger = ledgerData?.account && Array.isArray(ledgerData?.entries)
+  if (!ledgerData || !hasValidLedger) {
     return (
       <div style={{ padding: '16px', color: textColor, backgroundColor: isDarkMode ? 'rgba(239,68,68,0.1)' : '#fee2e2', border: `1px solid ${isDarkMode ? 'rgba(239,68,68,0.3)' : '#fecaca'}`, borderRadius: '8px' }}>
         Failed to load account ledger
@@ -1821,12 +1856,12 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
           ← Back to Accounts
         </Button>
         <div>
-          <h3 style={{ color: textColor, marginBottom: '4px', fontSize: '24px', fontWeight: '600' }}>
+          <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '4px', fontSize: '24px' }}>
             Account Ledger
           </h3>
           <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
-            {ledgerData.account.account_number && `${ledgerData.account.account_number} - `}
-            {ledgerData.account.account_name}
+            {ledgerData.account?.account_number && `${ledgerData.account.account_number} - `}
+            {ledgerData.account?.account_name ?? '—'}
           </p>
         </div>
       </div>
@@ -1845,12 +1880,7 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
         marginBottom: '24px',
         boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)'
       }}>
-        <h3 style={{ 
-          fontSize: '18px', 
-          fontWeight: '600', 
-          marginBottom: '16px',
-          color: textColor
-        }}>
+        <h3 style={{ ...formTitleStyle(isDarkMode), fontSize: '18px', marginBottom: '16px' }}>
           Filter Transactions
         </h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
@@ -1980,8 +2010,46 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
   )
 }
 
+// Financial Statements Tab (combined P&L, Balance Sheet, Cash Flow with dropdown)
+function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }) {
+  const [reportType, setReportType] = useState('profit-loss')
+  const isDarkMode = document.documentElement.classList.contains('dark-theme')
+  const textColor = isDarkMode ? '#ffffff' : '#1a1a1a'
+
+  return (
+    <div>
+      <div style={{ marginBottom: '24px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+        <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: 0 }}>Report type</FormLabel>
+        <select
+          value={reportType}
+          onChange={(e) => setReportType(e.target.value)}
+          style={{
+            ...inputBaseStyle(isDarkMode, '132, 0, 255', false),
+            width: 'auto',
+            minWidth: '220px',
+            cursor: 'pointer'
+          }}
+        >
+          <option value="profit-loss">Profit & Loss Statement</option>
+          <option value="balance-sheet">Balance Sheet</option>
+          <option value="cash-flow">Cash Flow Statement</option>
+        </select>
+      </div>
+      {reportType === 'profit-loss' && (
+        <ProfitLossTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle />
+      )}
+      {reportType === 'balance-sheet' && (
+        <BalanceSheetTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle />
+      )}
+      {reportType === 'cash-flow' && (
+        <CashFlowTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle />
+      )}
+    </div>
+  )
+}
+
 // Profit & Loss Tab
-function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }) {
+function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false }) {
   const { show: showToast } = useToast()
   const [reportData, setReportData] = useState(null)
   const [comparativeData, setComparativeData] = useState(null)
@@ -2156,7 +2224,9 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
   }
 
   const handleAccountClick = (accountId) => {
-    sessionStorage.setItem('selectedAccountId', accountId)
+    const id = accountId != null ? Number(accountId) : NaN
+    if (Number.isNaN(id) || id < 1) return
+    sessionStorage.setItem('selectedAccountId', String(id))
     setActiveTab('account-ledger')
   }
 
@@ -2171,14 +2241,16 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
 
   return (
     <div>
-      <div style={{ marginBottom: '24px' }}>
-        <h3 style={{ color: textColor, marginBottom: '8px', fontSize: '24px', fontWeight: '600' }}>
-          Profit & Loss Statement
-        </h3>
-        <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
-          Income statement showing revenue, expenses, and net income
-        </p>
-      </div>
+      {!hideTitle && (
+        <div style={{ marginBottom: '24px' }}>
+          <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '8px', fontSize: '24px' }}>
+            Profit & Loss Statement
+          </h3>
+          <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
+            Income statement showing revenue, expenses, and net income
+          </p>
+        </div>
+      )}
 
       <ProfitLossFilters
         filters={filters}
@@ -2291,7 +2363,7 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
 }
 
 // Balance Sheet Tab
-function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }) {
+function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false }) {
   const { show: showToast } = useToast()
   const [reportData, setReportData] = useState(null)
   const [comparativeData, setComparativeData] = useState(null)
@@ -2380,6 +2452,9 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
     rows.push([])
     rows.push(['EQUITY'])
     reportData.equity.equity_accounts?.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+    if (typeof reportData.equity.inventory_valuation_adjustment === 'number' && Math.abs(reportData.equity.inventory_valuation_adjustment) >= 0.005) {
+      rows.push(['  Inventory valuation adjustment', num(reportData.equity.inventory_valuation_adjustment).toFixed(2)])
+    }
     rows.push(['Current Year Earnings', num(reportData.equity.current_year_earnings).toFixed(2)])
     rows.push(['TOTAL EQUITY', num(reportData.equity.total_equity).toFixed(2)])
     rows.push([])
@@ -2439,6 +2514,9 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
     rows.push([])
     rows.push(['EQUITY'])
     reportData.equity.equity_accounts?.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+    if (typeof reportData.equity.inventory_valuation_adjustment === 'number' && Math.abs(reportData.equity.inventory_valuation_adjustment) >= 0.005) {
+      rows.push(['  Inventory valuation adjustment', num(reportData.equity.inventory_valuation_adjustment).toFixed(2)])
+    }
     rows.push(['Current Year Earnings', num(reportData.equity.current_year_earnings).toFixed(2)])
     rows.push(['TOTAL EQUITY', num(reportData.equity.total_equity).toFixed(2)])
     rows.push([])
@@ -2452,7 +2530,9 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
   }
 
   const handleAccountClick = (accountId) => {
-    sessionStorage.setItem('selectedAccountId', accountId)
+    const id = accountId != null ? Number(accountId) : NaN
+    if (Number.isNaN(id) || id < 1) return
+    sessionStorage.setItem('selectedAccountId', String(id))
     setActiveTab('account-ledger')
   }
 
@@ -2461,12 +2541,15 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
 
   return (
     <div>
-      <div style={{ marginBottom: '24px' }}>
-        <h3 style={{ color: textColor, marginBottom: '8px', fontSize: '24px', fontWeight: '600' }}>Balance Sheet</h3>
-        <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
-          Statement of financial position showing assets, liabilities, and equity
-        </p>
-      </div>
+      {!hideTitle && (
+        <div style={{ marginBottom: '24px' }}>
+          <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '8px', fontSize: '24px' }}>Balance Sheet</h3>
+          <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
+            Statement of financial position showing assets, liabilities, and equity.
+            Inventory (Current Assets) is calculated from actual store stock (quantity × cost).
+          </p>
+        </div>
+      )}
       <BalanceSheetFilters
         filters={filters}
         onFilterChange={setFilters}
@@ -2485,7 +2568,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
                 </p>
               )}
             </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
               <Button variant="secondary" onClick={handleExport}>📊 Export to CSV</Button>
               <Button variant="secondary" onClick={handleExportExcel}>📗 Export to Excel</Button>
               <Button variant="secondary" onClick={() => window.print()}>🖨️ Print</Button>
@@ -2500,7 +2583,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
               />
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' }}>
                 <div>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: textColor }}>Current Period Detail</h3>
+                  <h3 style={{ ...formTitleStyle(isDarkMode), fontSize: '18px', marginBottom: '16px' }}>Current Period Detail</h3>
                   <BalanceSheetTable data={reportData} onAccountClick={handleAccountClick} />
                 </div>
                 <BalanceSheetChart data={reportData} />
@@ -2529,7 +2612,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
 }
 
 // Cash Flow Tab
-function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }) {
+function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false }) {
   const { show: showToast } = useToast()
   const [reportData, setReportData] = useState(null)
   const [comparativeData, setComparativeData] = useState(null)
@@ -2666,7 +2749,9 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }
   }
 
   const handleAccountClick = (accountId) => {
-    sessionStorage.setItem('selectedAccountId', accountId)
+    const id = accountId != null ? Number(accountId) : NaN
+    if (Number.isNaN(id) || id < 1) return
+    sessionStorage.setItem('selectedAccountId', String(id))
     setActiveTab('account-ledger')
   }
 
@@ -2679,12 +2764,14 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }
 
   return (
     <div>
-      <div style={{ marginBottom: '24px' }}>
-        <h3 style={{ color: textColor, marginBottom: '8px', fontSize: '24px', fontWeight: '600' }}>Cash Flow Statement</h3>
-        <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
-          Statement of cash flows showing operating, investing, and financing activities
-        </p>
-      </div>
+      {!hideTitle && (
+        <div style={{ marginBottom: '24px' }}>
+          <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '8px', fontSize: '24px' }}>Cash Flow Statement</h3>
+          <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
+            Statement of cash flows showing operating, investing, and financing activities
+          </p>
+        </div>
+      )}
       <CashFlowFilters filters={filters} onFilterChange={setFilters} onGenerate={handleGenerateReport} loading={loading} />
       {loading && <LoadingSpinner size="lg" text="Generating report..." />}
       {!loading && reportData && (
@@ -2705,7 +2792,7 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab }
               <ComparativeCashFlowTable data={comparativeData} currentLabel={getPeriodLabel()} priorLabel={getPriorLabel()} />
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' }}>
                 <div>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: textColor }}>Current Period Detail</h3>
+                  <h3 style={{ ...formTitleStyle(isDarkMode), fontSize: '18px', marginBottom: '16px' }}>Current Period Detail</h3>
                   <CashFlowTable data={reportData} onAccountClick={handleAccountClick} />
                 </div>
                 <CashFlowChart data={reportData} />
@@ -2767,7 +2854,7 @@ function BillsTab({ dateRange, formatCurrency, getAuthHeaders }) {
 
   return (
     <div>
-      <h3 style={{ color: textColor, marginBottom: '16px' }}>Bills</h3>
+      <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>Bills</h3>
       {bills.length === 0 ? (
         <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>
           No bills found for this period.
@@ -2847,7 +2934,7 @@ function CustomersTab({ formatCurrency, getAuthHeaders }) {
 
   return (
     <div>
-      <h3 style={{ color: textColor, marginBottom: '16px' }}>Customers</h3>
+      <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>Customers</h3>
       {customers.length === 0 ? (
         <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>
           No customers found.
@@ -2913,7 +3000,7 @@ function VendorsTab({ formatCurrency, getAuthHeaders }) {
 
   return (
     <div>
-      <h3 style={{ color: textColor, marginBottom: '16px' }}>Vendors</h3>
+      <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>Vendors</h3>
       {vendors.length === 0 ? (
         <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>
           No vendors found.
@@ -3023,7 +3110,7 @@ function ReportsTab({ dateRange, formatCurrency, getAuthHeaders }) {
           borderRadius: '8px',
           padding: '24px'
         }}>
-          <h3 style={{ color: textColor, marginBottom: '16px' }}>
+          <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>
             {selectedReport.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
           </h3>
           <pre style={{ color: textColor, fontSize: '12px', overflow: 'auto' }}>

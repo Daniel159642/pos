@@ -6484,9 +6484,12 @@ def get_employee_role(employee_id: int) -> Optional[Dict[str, Any]]:
     """, (employee_id,))
     
     row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    columns = [desc[0] for desc in cursor.description]
     conn.close()
-    
-    return dict(row) if row else None
+    return dict(zip(columns, row))
 
 def assign_role_to_employee(employee_id: int, role_id: int) -> bool:
     """Assign a role to an employee"""

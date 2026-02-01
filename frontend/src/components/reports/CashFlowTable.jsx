@@ -9,16 +9,17 @@ function CashFlowTable({ data, onAccountClick }) {
   }
 
   const ItemRow = ({ item, indent = false }) => {
+    const accountId = item.account_id ?? item.id
     const rowStyle = {
-      cursor: item.account_id && onAccountClick ? 'pointer' : 'default',
+      cursor: accountId && onAccountClick ? 'pointer' : 'default',
       backgroundColor: 'transparent'
     }
     return (
       <tr
         style={rowStyle}
-        onClick={() => item.account_id && onAccountClick && onAccountClick(item.account_id)}
+        onClick={() => accountId && onAccountClick && onAccountClick(accountId)}
         onMouseEnter={(e) => {
-          if (item.account_id && onAccountClick) e.currentTarget.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f3f4f6'
+          if (accountId && onAccountClick) e.currentTarget.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f3f4f6'
         }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
       >

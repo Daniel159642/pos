@@ -6052,13 +6052,52 @@ def calendar_feed(token):
         traceback.print_exc()
         return f"Error generating calendar feed: {str(e)}", 500
 
+def _create_calendar_subscriptions_table_if_missing():
+    """Create calendar_subscriptions table (lowercase) so INSERT finds it. Idempotent."""
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                subscription_id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                subscription_token VARCHAR(255) NOT NULL,
+                include_shifts SMALLINT DEFAULT 1,
+                include_shipments SMALLINT DEFAULT 1,
+                include_meetings SMALLINT DEFAULT 1,
+                include_deadlines SMALLINT DEFAULT 1,
+                calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
+                is_active SMALLINT DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cur.close()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 @app.route('/api/calendar/subscription/create', methods=['POST'])
-def create_subscription():
+def api_calendar_subscription_create():
     """Create calendar subscription for employee"""
     try:
+        _create_calendar_subscriptions_table_if_missing()
         session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        data = request.get_json(silent=True) or {}
         if not session_token:
-            session_token = request.json.get('session_token')
+            session_token = data.get('session_token')
         
         if not session_token:
             return jsonify({'success': False, 'message': 'Authentication required'}), 401
@@ -6067,11 +6106,20 @@ def create_subscription():
         if not session_data.get('valid'):
             return jsonify({'success': False, 'message': 'Invalid session'}), 401
         
-        employee_id = session_data['employee_id']
-        preferences = request.json.get('preferences') or request.json
+        employee_id = session_data.get('employee_id')
+        if employee_id is None:
+            return jsonify({'success': False, 'message': 'Session missing employee_id'}), 401
+        
+        preferences = data.get('preferences') or data
         
         from calendar_integration import CalendarIntegrationSystem
-        calendar_system = CalendarIntegrationSystem(base_url=request.url_root.rstrip('/'))
+        base_url = request.url_root.rstrip('/')
+        if not base_url or base_url.startswith('http://localhost:3000'):
+            try:
+                base_url = request.host_url.rstrip('/').replace('localhost:3000', 'localhost:5001')
+            except Exception:
+                base_url = 'http://localhost:5001'
+        calendar_system = CalendarIntegrationSystem(base_url=base_url)
         
         subscription = calendar_system.create_subscription(employee_id, preferences)
         
@@ -6080,10 +6128,51 @@ def create_subscription():
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
+def _ensure_calendar_subscriptions_table():
+    """Create calendar_subscriptions table if it does not exist."""
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                subscription_id SERIAL PRIMARY KEY,
+                employee_id INTEGER NOT NULL,
+                subscription_token VARCHAR(255) NOT NULL,
+                include_shifts SMALLINT DEFAULT 1,
+                include_shipments SMALLINT DEFAULT 1,
+                include_meetings SMALLINT DEFAULT 1,
+                include_deadlines SMALLINT DEFAULT 1,
+                calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
+                is_active SMALLINT DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cur.close()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 @app.route('/api/calendar/subscription/urls', methods=['GET'])
 def get_subscription_urls():
     """Get calendar subscription URLs"""
     try:
+        try:
+            _create_calendar_subscriptions_table_if_missing()
+        except Exception:
+            pass
         session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
         if not session_token:
             session_token = request.args.get('session_token')
@@ -8132,6 +8221,10 @@ if _ACCOUNTING_BACKEND_AVAILABLE:
     @app.route('/api/v1/transactions/general-ledger', methods=['GET'])
     def api_v1_transactions_gl():
         return transaction_controller.get_general_ledger()
+
+    @app.route('/api/v1/transactions/account-ledger/<int:account_id>', methods=['GET'])
+    def api_v1_transactions_account_ledger(account_id):
+        return transaction_controller.get_account_ledger(account_id)
 
     @app.route('/api/v1/transactions/<int:transaction_id>', methods=['GET'])
     def api_v1_transactions_get(transaction_id):

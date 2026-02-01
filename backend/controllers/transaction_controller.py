@@ -4,7 +4,7 @@ Transaction Controller
 Handles HTTP requests and responses for transaction endpoints
 """
 
-from flask import request, jsonify
+from flask import request, jsonify, make_response
 from typing import Dict, Any
 from datetime import datetime
 import sys
@@ -246,21 +246,21 @@ class TransactionController:
                 try:
                     start_date = datetime.fromisoformat(request.args.get('start_date').split('T')[0]).date()
                 except ValueError:
-                    return jsonify({'success': False, 'message': 'Invalid start_date format. Use YYYY-MM-DD'}), 400
+                    return make_response(jsonify({'success': False, 'message': 'Invalid start_date format. Use YYYY-MM-DD'}), 400)
             
             end_date = None
             if request.args.get('end_date'):
                 try:
                     end_date = datetime.fromisoformat(request.args.get('end_date').split('T')[0]).date()
                 except ValueError:
-                    return jsonify({'success': False, 'message': 'Invalid end_date format. Use YYYY-MM-DD'}), 400
+                    return make_response(jsonify({'success': False, 'message': 'Invalid end_date format. Use YYYY-MM-DD'}), 400)
             
             ledger = transaction_service.get_account_ledger(account_id, start_date, end_date)
             
-            return jsonify({
+            return make_response(jsonify({
                 'success': True,
                 'data': ledger
-            }), 200
+            }), 200)
         except ValueError as e:
             raise AppError(str(e), 404)
 

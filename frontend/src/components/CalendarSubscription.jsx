@@ -11,6 +11,8 @@ function CalendarSubscriptionPage() {
   })
   const [showInstructions, setShowInstructions] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
+  const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
     loadSubscriptionUrls()
@@ -21,25 +23,76 @@ function CalendarSubscriptionPage() {
   }
 
   const loadSubscriptionUrls = async () => {
+    setLoadError(null)
     try {
       const token = getSessionToken()
-      const response = await fetch('/api/calendar/subscription/urls', {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+      const response = await fetch('/api/calendar/subscription/urls', { headers })
+      const result = response.ok ? await response.json().catch(() => null) : null
+
+      if (result?.success && result?.data && (result.data.google_url || result.data.ical_url)) {
+        setUrls(result.data)
+        setLoading(false)
+        return
+      }
+      // No URLs yet: create a subscription so we get links
+      const createRes = await fetch('/api/calendar/subscription/create', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(preferences)
       })
-      
-      if (response.ok) {
-        const result = await response.json()
-        if (result.success && result.data) {
-          setUrls(result.data)
-        }
+      let createResult = null
+      try {
+        createResult = await createRes.json()
+      } catch (_) {
+        createResult = null
+      }
+      if (createRes.ok && createResult?.success && createResult?.data) {
+        setUrls(createResult.data)
+      } else {
+        setLoadError(createResult?.message || (createRes.ok ? 'No links returned' : `Request failed (${createRes.status})`))
       }
     } catch (err) {
       console.error('Error loading subscription URLs:', err)
+      setLoadError(err?.message || 'Network error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const retryGenerateLinks = async () => {
+    setLoadError(null)
+    setGenerating(true)
+    try {
+      const token = getSessionToken()
+      if (!token) {
+        setLoadError('Not logged in. Please sign in and try again.')
+        return
+      }
+      const res = await fetch('/api/calendar/subscription/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(preferences)
+      })
+      let data = null
+      try {
+        data = await res.json()
+      } catch (_) {
+        data = null
+      }
+      if (res.ok && data?.success && data?.data) {
+        setUrls(data.data)
+      } else {
+        const errMsg = data?.message || `Request failed (${res.status})`
+        setLoadError(errMsg)
+      }
+    } catch (e) {
+      setLoadError(e?.message || 'Request failed')
+    } finally {
+      setGenerating(false)
     }
   }
 
@@ -183,6 +236,40 @@ function CalendarSubscriptionPage() {
           Update Preferences
         </button>
       </div>
+
+      {!urls && (
+        <div style={{
+          backgroundColor: '#fff',
+          borderRadius: '8px',
+          padding: '20px',
+          marginBottom: '20px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          border: '1px solid #e0e0e0'
+        }}>
+          <h2 style={{ marginTop: 0, marginBottom: '8px' }}>Calendar links</h2>
+          <p style={{ color: '#666', marginBottom: '16px' }}>
+            {loadError ? `Could not load links: ${loadError}` : 'Generate your personal calendar link to add this calendar to Google, Apple, or Outlook.'}
+          </p>
+          <button
+            type="button"
+            onClick={retryGenerateLinks}
+            disabled={generating}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: generating ? '#666' : '#000',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              fontSize: '14px',
+              fontWeight: 500,
+              cursor: generating ? 'wait' : 'pointer',
+              opacity: generating ? 0.9 : 1
+            }}
+          >
+            {generating ? 'Generating…' : 'Generate calendar links'}
+          </button>
+        </div>
+      )}
 
       {urls && (
         <>

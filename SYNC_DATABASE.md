@@ -1,4 +1,4 @@
-# 🔄 Syncing Database After Pulling Code
+# 🔄 Syncing Database After Pulling Code from GitHub
 
 **IMPORTANT:** When you pull code from GitHub, the database doesn't automatically update!
 
@@ -40,20 +40,20 @@ python3 fix_audit_triggers.py
 psql -U postgres -d pos_db -f accounting_triggers.sql
 ```
 
-## Complete Database Sync
+## Complete Database Sync (recommended after pull)
 
-If you want to ensure everything matches:
+From the **pos** directory, run the complete setup (safe to run multiple times):
 
 ```bash
-# Run the complete setup (safe to run multiple times)
+cd pos
 python3 setup_complete_database.py
 ```
 
 This will:
 - Run all schemas
-- Run all migrations
-- Update triggers
-- Create missing tables
+- Run all migrations (including `add_calendar_subscriptions.sql` and others)
+- Create missing tables (e.g. `calendar_subscriptions`)
+- Create admin account and permissions if missing
 
 ## When to Run This
 
