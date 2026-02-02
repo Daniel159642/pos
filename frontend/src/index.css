@@ -625,3 +625,28 @@ body {
     animation: passwordJitter 0.6s ease-in-out;
 }
 
+/* Accounting reports: print only the report content, not the whole page */
+@media print {
+    body * {
+        visibility: hidden;
+    }
+    .accounting-report-print-area,
+    .accounting-report-print-area * {
+        visibility: visible;
+    }
+    .accounting-report-print-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        max-width: none;
+    }
+    .no-print {
+        display: none !important;
+    }
+    body {
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+    }
+}
+

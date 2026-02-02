@@ -133,8 +133,7 @@ function Accounting() {
     { id: 'invoices', label: 'Invoices', icon: FileText },
     { id: 'bills', label: 'Bills', icon: Receipt },
     { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'vendors', label: 'Vendors', icon: Truck },
-    { id: 'reports', label: 'Reports', icon: FileBarChart }
+    { id: 'vendors', label: 'Vendors', icon: Truck }
   ]
 
   return (
@@ -307,7 +306,6 @@ function Accounting() {
         {activeTab === 'bills' && <BillsTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
         {activeTab === 'customers' && <CustomersTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
         {activeTab === 'vendors' && <VendorsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
-        {activeTab === 'reports' && <ReportsTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
       </div>
     </div>
   )
@@ -2048,7 +2046,8 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
           options={[
             { value: 'profit-loss', label: 'Profit & Loss Statement' },
             { value: 'balance-sheet', label: 'Balance Sheet' },
-            { value: 'cash-flow', label: 'Cash Flow Statement' }
+            { value: 'cash-flow', label: 'Cash Flow Statement' },
+            { value: 'trial-balance', label: 'Trial Balance' }
           ]}
           placeholder="Select report type"
           isDarkMode={isDarkMode}
@@ -2056,6 +2055,9 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
           style={{ minWidth: '220px', marginBottom: 0 }}
         />
       </div>
+      {reportType === 'trial-balance' && (
+        <TrialBalanceTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
+      )}
       {reportType === 'profit-loss' && (
         <ProfitLossTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
       )}
@@ -2064,6 +2066,289 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
       )}
       {reportType === 'cash-flow' && (
         <CashFlowTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
+      )}
+    </div>
+  )
+}
+
+// Trial Balance Tab (Financial Statements dropdown)
+function TrialBalanceTab({ dateRange, formatCurrency, getAuthHeaders, hideTitle = false, themeColorRgb, isDarkMode }) {
+  const { show: showToast } = useToast()
+  const [filters, setFilters] = useState({ as_of_date: dateRange.end_date })
+  const [reportData, setReportData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
+  const textColor = _isDark ? '#ffffff' : '#1a1a1a'
+  const borderColor = _isDark ? '#3a3a3a' : '#e5e7eb'
+  const cardBg = _isDark ? '#1f1f1f' : '#ffffff'
+  const rgb = themeColorRgb || '132, 0, 255'
+
+  useEffect(() => {
+    setFilters(prev => ({ ...prev, as_of_date: dateRange.end_date }))
+  }, [dateRange.end_date])
+
+  const handleChange = (e) => {
+    const { name, value } = e.target
+    setFilters(prev => ({ ...prev, [name]: value }))
+  }
+
+  const setPresetDate = (preset) => {
+    const today = new Date()
+    let asOfDate
+    switch (preset) {
+      case 'today':
+        asOfDate = today
+        break
+      case 'end_of_month':
+        asOfDate = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+        break
+      case 'end_of_last_month':
+        asOfDate = new Date(today.getFullYear(), today.getMonth(), 0)
+        break
+      case 'end_of_quarter':
+        asOfDate = new Date(today.getFullYear(), (Math.floor(today.getMonth() / 3) + 1) * 3, 0)
+        break
+      case 'end_of_year':
+        asOfDate = new Date(today.getFullYear(), 11, 31)
+        break
+      case 'end_of_last_year':
+        asOfDate = new Date(today.getFullYear() - 1, 11, 31)
+        break
+      default:
+        return
+    }
+    setFilters(prev => ({ ...prev, as_of_date: asOfDate.toISOString().split('T')[0] }))
+  }
+
+  const handleGenerateReport = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(
+        `/api/accounting/trial-balance?as_of_date=${encodeURIComponent(filters.as_of_date)}`,
+        { headers: getAuthHeaders() }
+      )
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load trial balance')
+      setReportData(data)
+      showToast('Trial balance generated successfully', 'success')
+    } catch (err) {
+      console.error('Error loading trial balance:', err)
+      setReportData(null)
+      showToast(err.message || 'Failed to load trial balance', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleExport = () => {
+    if (!reportData) {
+      showToast('No report data to export', 'error')
+      return
+    }
+    const payload = reportData?.data ?? reportData
+    const accounts = payload.accounts ?? []
+    const num = (v) => (parseFloat(v) || 0)
+    const totalDebits = num(payload.total_debits)
+    const totalCredits = num(payload.total_credits)
+    const asOfDate = payload.date ? new Date(payload.date).toLocaleDateString() : filters.as_of_date
+    const rows = [
+      ['Trial Balance'],
+      [`As of ${asOfDate}`],
+      [],
+      ['Account #', 'Account Name', 'Type', 'Debits', 'Credits', 'Balance']
+    ]
+    accounts.forEach((row) => {
+      rows.push([
+        row.account_number ?? '',
+        row.account_name ?? '',
+        row.account_type ?? '',
+        num(row.total_debits).toFixed(2),
+        num(row.total_credits).toFixed(2),
+        num(row.balance).toFixed(2)
+      ])
+    })
+    rows.push(['Total', '', '', totalDebits.toFixed(2), totalCredits.toFixed(2), ''])
+    const csv = rows.map((r) => r.map((c) => `"${c}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `trial-balance-${filters.as_of_date}.csv`
+    a.click()
+    window.URL.revokeObjectURL(url)
+    showToast('Report exported to CSV', 'success')
+  }
+
+  const handleExportExcel = async () => {
+    if (!reportData) {
+      showToast('No report data to export', 'error')
+      return
+    }
+    const payload = reportData?.data ?? reportData
+    const accounts = payload.accounts ?? []
+    const num = (v) => (parseFloat(v) || 0)
+    const totalDebits = num(payload.total_debits)
+    const totalCredits = num(payload.total_credits)
+    const asOfDate = payload.date ? new Date(payload.date).toLocaleDateString() : filters.as_of_date
+    const rows = [
+      ['Trial Balance'],
+      [`As of ${asOfDate}`],
+      [],
+      ['Account #', 'Account Name', 'Type', 'Debits', 'Credits', 'Balance']
+    ]
+    accounts.forEach((row) => {
+      rows.push([
+        row.account_number ?? '',
+        row.account_name ?? '',
+        row.account_type ?? '',
+        num(row.total_debits).toFixed(2),
+        num(row.total_credits).toFixed(2),
+        num(row.balance).toFixed(2)
+      ])
+    })
+    rows.push(['Total', '', '', totalDebits.toFixed(2), totalCredits.toFixed(2), ''])
+    try {
+      await downloadExcel(rows, `trial-balance-${filters.as_of_date}.xlsx`)
+      showToast('Report exported to Excel', 'success')
+    } catch (e) {
+      showToast('Excel export failed', 'error')
+    }
+  }
+
+  const containerStyle = {
+    backgroundColor: _isDark ? '#2a2a2a' : 'white',
+    padding: '24px',
+    borderRadius: '8px',
+    border: `1px solid ${borderColor}`,
+    marginBottom: '24px',
+    boxShadow: _isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)'
+  }
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: '16px',
+    marginBottom: '16px'
+  }
+  const quickSelectStyle = {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: '16px',
+    paddingTop: '16px',
+    borderTop: `1px solid ${borderColor}`
+  }
+  const quickSelectButtonStyle = {
+    padding: '4px 16px',
+    height: '28px',
+    display: 'flex',
+    alignItems: 'center',
+    whiteSpace: 'nowrap',
+    backgroundColor: `rgba(${rgb}, 0.7)`,
+    border: `1px solid rgba(${rgb}, 0.5)`,
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#fff',
+    cursor: 'pointer',
+    transition: 'all 0.3s ease',
+    boxShadow: `0 4px 15px rgba(${rgb}, 0.3)`
+  }
+
+  return (
+    <div>
+      {!hideTitle && (
+        <div style={{ marginBottom: '24px' }}>
+          <h3 style={{ ...formTitleStyle(_isDark), marginBottom: '8px', fontSize: '24px' }}>Trial Balance</h3>
+          <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
+            List of all accounts with debit and credit balances as of a specific date.
+          </p>
+        </div>
+      )}
+      <div style={containerStyle}>
+        <h3 style={{
+          fontSize: '18px',
+          fontWeight: '600',
+          marginBottom: '16px',
+          color: textColor
+        }}>
+          Report Settings
+        </h3>
+        <div style={gridStyle}>
+          <Input
+            label="As of Date"
+            name="as_of_date"
+            type="date"
+            value={filters.as_of_date || ''}
+            onChange={handleChange}
+            required
+          />
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '4px', visibility: 'hidden', lineHeight: 1.2 }} aria-hidden>Generate</label>
+            <Button
+              type="button"
+              onClick={handleGenerateReport}
+              disabled={loading || !filters.as_of_date}
+              style={{ width: '100%' }}
+            >
+              {loading ? 'Generating...' : 'Generate Report'}
+            </Button>
+          </div>
+        </div>
+        <div style={quickSelectStyle}>
+          <span style={{ fontSize: '14px', color: _isDark ? '#9ca3af' : '#6b7280', marginRight: '8px' }}>
+            Quick Select:
+          </span>
+          <button type="button" onClick={() => setPresetDate('today')} style={quickSelectButtonStyle}>Today</button>
+          <button type="button" onClick={() => setPresetDate('end_of_month')} style={quickSelectButtonStyle}>End of Month</button>
+          <button type="button" onClick={() => setPresetDate('end_of_last_month')} style={quickSelectButtonStyle}>End of Last Month</button>
+          <button type="button" onClick={() => setPresetDate('end_of_quarter')} style={quickSelectButtonStyle}>End of Quarter</button>
+          <button type="button" onClick={() => setPresetDate('end_of_year')} style={quickSelectButtonStyle}>End of Year</button>
+          <button type="button" onClick={() => setPresetDate('end_of_last_year')} style={quickSelectButtonStyle}>End of Last Year</button>
+        </div>
+      </div>
+      {loading && <LoadingSpinner size="lg" text="Generating report..." />}
+      {!loading && reportData && (
+        <div className="accounting-report-print-area">
+          <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: '600', color: textColor }}>
+              As of {reportData?.data?.date ? new Date(reportData.data.date).toLocaleDateString() : filters.as_of_date}
+            </h2>
+            <div className="no-print" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <Button variant="primary" onClick={handleExport} themeColorRgb={themeColorRgb} isDarkMode={_isDark}>
+                📊 Export to CSV
+              </Button>
+              <Button variant="primary" onClick={handleExportExcel} themeColorRgb={themeColorRgb} isDarkMode={_isDark}>
+                📗 Export to Excel
+              </Button>
+              <Button variant="primary" onClick={() => window.print()} themeColorRgb={themeColorRgb} isDarkMode={_isDark}>
+                🖨️ Print
+              </Button>
+            </div>
+          </div>
+          <div style={{
+            backgroundColor: cardBg,
+            border: `1px solid ${borderColor}`,
+            borderRadius: '8px',
+            padding: '24px'
+          }}>
+            <ReportsTabContent
+              selectedReport="trial-balance"
+              reportData={reportData}
+              formatCurrency={formatCurrency}
+              textColor={textColor}
+              borderColor={borderColor}
+              isDarkMode={_isDark}
+            />
+          </div>
+        </div>
+      )}
+      {!loading && !reportData && (
+        <div style={{ backgroundColor: cardBg, borderRadius: '8px', border: `1px solid ${borderColor}`, padding: '48px', textAlign: 'center' }}>
+          <p style={{ color: textColor, opacity: 0.7 }}>
+            Select a date above and click &quot;Generate Report&quot; to view your Trial Balance
+          </p>
+        </div>
       )}
     </div>
   )
@@ -2283,7 +2568,7 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
       {loading && <LoadingSpinner size="lg" text="Generating report..." />}
 
       {!loading && reportData && (
-        <>
+        <div className="accounting-report-print-area">
           <div style={{ 
             marginBottom: '24px', 
             display: 'flex', 
@@ -2300,7 +2585,7 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
                 </p>
               )}
             </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
+            <div className="no-print" style={{ display: 'flex', gap: '12px' }}>
               <Button variant="primary" onClick={handleExport} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>
                 📊 Export to CSV
               </Button>
@@ -2360,7 +2645,7 @@ function ProfitLossTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab
               <ProfitLossChart data={reportData} />
             </div>
           )}
-        </>
+        </div>
       )}
 
       {!loading && !reportData && (
@@ -2576,7 +2861,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
       />
       {loading && <LoadingSpinner size="lg" text="Generating report..." />}
       {!loading && reportData && (
-        <>
+        <div className="accounting-report-print-area">
           <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <h2 style={{ fontSize: '20px', fontWeight: '600', color: textColor }}>As of {getAsOfLabel()}</h2>
@@ -2586,7 +2871,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
                 </p>
               )}
             </div>
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <div className="no-print" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
               <Button variant="primary" onClick={handleExport} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>📊 Export to CSV</Button>
               <Button variant="primary" onClick={handleExportExcel} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>📗 Export to Excel</Button>
               <Button variant="primary" onClick={() => window.print()} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>🖨️ Print</Button>
@@ -2615,7 +2900,7 @@ function BalanceSheetTab({ dateRange, formatCurrency, getAuthHeaders, setActiveT
               <BalanceSheetChart data={reportData} />
             </div>
           )}
-        </>
+        </div>
       )}
       {!loading && !reportData && (
         <div style={{ backgroundColor: cardBg, borderRadius: '8px', border: `1px solid ${borderColor}`, padding: '48px', textAlign: 'center' }}>
@@ -2792,13 +3077,13 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, 
       <CashFlowFilters filters={filters} onFilterChange={setFilters} onGenerate={handleGenerateReport} loading={loading} />
       {loading && <LoadingSpinner size="lg" text="Generating report..." />}
       {!loading && reportData && (
-        <>
+        <div className="accounting-report-print-area">
           <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <h2 style={{ fontSize: '20px', fontWeight: '600', color: textColor }}>{getPeriodLabel()}</h2>
               {comparativeData && <p style={{ fontSize: '14px', color: textColor, opacity: 0.7, marginTop: '4px' }}>Compared to: {getPriorLabel()}</p>}
             </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
+            <div className="no-print" style={{ display: 'flex', gap: '12px' }}>
               <Button variant="primary" onClick={handleExport} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>📊 Export to CSV</Button>
               <Button variant="primary" onClick={handleExportExcel} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>📗 Export to Excel</Button>
               <Button variant="primary" onClick={() => window.print()} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode}>🖨️ Print</Button>
@@ -2823,7 +3108,7 @@ function CashFlowTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, 
               <CashFlowChart data={reportData} />
             </div>
           )}
-        </>
+        </div>
       )}
       {!loading && !reportData && (
         <div style={{ backgroundColor: cardBg, borderRadius: '8px', border: `1px solid ${borderColor}`, padding: '48px', textAlign: 'center' }}>
@@ -3338,112 +3623,6 @@ function ReportsTabContent({ selectedReport, reportData, formatCurrency, textCol
     <pre style={{ color: textColor, fontSize: '12px', overflow: 'auto', margin: 0 }}>
       {JSON.stringify(reportData, null, 2)}
     </pre>
-  )
-}
-
-// Reports Tab
-function ReportsTab({ dateRange, formatCurrency, getAuthHeaders, themeColorRgb, isDarkMode }) {
-  const [selectedReport, setSelectedReport] = useState('trial-balance')
-  const [reportData, setReportData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
-  const textColor = _isDark ? '#ffffff' : '#1a1a1a'
-  const borderColor = _isDark ? '#3a3a3a' : '#e0e0e0'
-  const cardBg = _isDark ? '#1f1f1f' : '#ffffff'
-  const rgb = themeColorRgb || '59, 130, 246'
-
-  const loadReport = async () => {
-    try {
-      setLoading(true)
-      let url = ''
-      if (selectedReport === 'trial-balance') {
-        url = `/api/accounting/trial-balance?as_of_date=${dateRange.end_date}`
-      } else if (selectedReport === 'profit-loss') {
-        url = `/api/accounting/profit-loss?start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`
-      } else if (selectedReport === 'balance-sheet') {
-        url = `/api/accounting/balance-sheet?as_of_date=${dateRange.end_date}`
-      } else if (selectedReport === 'aging') {
-        url = `/api/accounting/aging?as_of_date=${dateRange.end_date}`
-      }
-      
-      if (url) {
-        const response = await fetch(url, { headers: getAuthHeaders() })
-        if (response.ok) {
-          const data = await response.json()
-          setReportData(data)
-        }
-      }
-    } catch (err) {
-      console.error('Error loading report:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (selectedReport) {
-      loadReport()
-    }
-  }, [selectedReport, dateRange])
-
-  return (
-    <div>
-      <div style={{ marginBottom: '24px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-        {['trial-balance', 'profit-loss', 'balance-sheet', 'aging'].map(report => (
-          <button
-            key={report}
-            type="button"
-            onClick={() => setSelectedReport(report)}
-            style={{
-              padding: '4px 16px',
-              height: '28px',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-              backgroundColor: selectedReport === report ? `rgba(${rgb}, 0.7)` : (_isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-              border: selectedReport === report ? `1px solid rgba(${rgb}, 0.5)` : `1px solid ${_isDark ? 'var(--border-light, #333)' : '#ddd'}`,
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: selectedReport === report ? 600 : 500,
-              color: selectedReport === report ? '#fff' : textColor,
-              cursor: 'pointer',
-              transition: 'all 0.3s ease',
-              boxShadow: selectedReport === report ? `0 4px 15px rgba(${rgb}, 0.3)` : 'none',
-              textTransform: 'capitalize'
-            }}
-          >
-            {report.replace('-', ' ')}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>Loading report...</div>
-      ) : reportData ? (
-        <div style={{
-          backgroundColor: cardBg,
-          border: `1px solid ${borderColor}`,
-          borderRadius: '8px',
-          padding: '24px'
-        }}>
-          <h3 style={{ ...formTitleStyle(_isDark), marginBottom: '16px', fontSize: '18px' }}>
-            {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-          </h3>
-          <ReportsTabContent
-            selectedReport={selectedReport}
-            reportData={reportData}
-            formatCurrency={formatCurrency}
-            textColor={textColor}
-            borderColor={borderColor}
-            isDarkMode={_isDark}
-          />
-        </div>
-      ) : (
-        <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>
-          Select a report type above to view financial reports.
-        </div>
-      )}
-    </div>
   )
 }
 

@@ -2,186 +2,151 @@ import React from 'react'
 
 function CashFlowTable({ data, onAccountClick }) {
   const isDarkMode = document.documentElement.classList.contains('dark-theme')
+  const textColor = isDarkMode ? '#ffffff' : '#1a1a1a'
+  const borderColor = isDarkMode ? '#3a3a3a' : '#e0e0e0'
 
   const formatCurrency = (amount) => {
     const sign = amount < 0 ? '-' : ''
     return `${sign}$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  const ItemRow = ({ item, indent = false }) => {
-    const accountId = item.account_id ?? item.id
-    const rowStyle = {
-      cursor: accountId && onAccountClick ? 'pointer' : 'default',
-      backgroundColor: 'transparent'
-    }
-    return (
-      <tr
-        style={rowStyle}
-        onClick={() => accountId && onAccountClick && onAccountClick(accountId)}
-        onMouseEnter={(e) => {
-          if (accountId && onAccountClick) e.currentTarget.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f3f4f6'
-        }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
-      >
-        <td style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#d1d5db' : '#1a1a1a', paddingLeft: indent ? '48px' : '24px' }}>
-          {item.description}
-        </td>
-        <td style={{
-          padding: '8px 24px',
-          fontSize: '14px',
-          textAlign: 'right',
-          fontWeight: '500',
-          color: item.amount < 0 ? '#dc2626' : (isDarkMode ? '#d1d5db' : '#1a1a1a')
-        }}>
-          {formatCurrency(item.amount)}
-        </td>
-      </tr>
-    )
+  const sectionHeaderStyle = {
+    padding: '8px 12px',
+    fontSize: '14px',
+    fontWeight: 600,
+    color: textColor,
+    backgroundColor: isDarkMode ? '#1f1f1f' : '#f9f9f9'
   }
 
-  const SubtotalRow = ({ label, amount, className = '' }) => {
-    const bg = className.includes('blue') ? (isDarkMode ? '#1a1a3a' : '#93c5fd')
-      : className.includes('yellow') ? (isDarkMode ? '#3a3a1a' : '#fef08a')
-      : className.includes('green') ? (isDarkMode ? '#1a3a1a' : '#6ee7b7')
-      : className.includes('gray') ? (isDarkMode ? '#2a2a2a' : '#e5e7eb')
-      : 'transparent'
-    return (
-      <tr style={{ fontWeight: '600', backgroundColor: bg }}>
-        <td style={{ padding: '12px 24px', fontSize: '14px', color: isDarkMode ? '#fff' : '#1a1a1a' }}>{label}</td>
-        <td style={{
-          padding: '12px 24px',
-          fontSize: '14px',
-          textAlign: 'right',
-          borderTop: `1px solid ${isDarkMode ? '#3a3a3a' : '#d1d5db'}`,
-          color: amount < 0 ? '#dc2626' : '#059669'
-        }}>
-          {formatCurrency(amount)}
-        </td>
-      </tr>
-    )
-  }
+  const SubtotalRow = ({ label, amount }) => (
+    <tr style={{ borderBottom: `1px solid ${borderColor}`, fontWeight: 600 }}>
+      <td style={{ padding: '10px 12px', color: textColor }}>{label}</td>
+      <td style={{
+        padding: '10px 12px',
+        textAlign: 'right',
+        color: amount < 0 ? '#ef4444' : textColor
+      }}>
+        {formatCurrency(amount)}
+      </td>
+    </tr>
+  )
 
-  const TotalRow = ({ label, amount, className = '' }) => {
-    const bg = className.includes('gray') ? (isDarkMode ? '#2a2a2a' : '#e5e7eb') : (isDarkMode ? '#1a1a3a' : '#93c5fd')
-    return (
-      <tr style={{ fontWeight: '700', backgroundColor: bg }}>
-        <td style={{ padding: '16px 24px', fontSize: '16px', color: isDarkMode ? '#fff' : '#1a1a1a' }}>{label}</td>
-        <td style={{
-          padding: '16px 24px',
-          fontSize: '16px',
-          textAlign: 'right',
-          borderTop: `2px solid ${isDarkMode ? '#555' : '#1a1a1a'}`,
-          color: amount < 0 ? '#dc2626' : '#059669'
-        }}>
-          {formatCurrency(amount)}
-        </td>
-      </tr>
-    )
-  }
-
-  const sectionStyle = { padding: '12px 24px', fontSize: '14px', fontWeight: '700', color: isDarkMode ? '#fff' : '#1a1a1a' }
-  const tableStyle = { width: '100%', borderCollapse: 'collapse', backgroundColor: isDarkMode ? '#2a2a2a' : 'white' }
-  const thStyle = {
-    padding: '12px 24px',
-    textAlign: 'left',
-    fontSize: '12px',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    color: isDarkMode ? '#9ca3af' : '#6b7280',
-    backgroundColor: isDarkMode ? '#1a1a1a' : '#f9fafb',
-    borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}`
-  }
+  const TotalRow = ({ label, amount, isFinal }) => (
+    <tr style={{
+      fontWeight: isFinal ? 700 : 600,
+      backgroundColor: isFinal ? (isDarkMode ? '#252525' : '#e8e8e8') : 'transparent',
+      borderTop: isFinal ? `2px solid ${borderColor}` : undefined,
+      borderBottom: !isFinal ? `1px solid ${borderColor}` : undefined
+    }}>
+      <td style={{ padding: isFinal ? '12px' : '10px 12px', fontSize: '14px', color: textColor, fontWeight: isFinal ? 700 : 600 }}>{label}</td>
+      <td style={{
+        padding: isFinal ? '12px' : '10px 12px',
+        fontSize: '14px',
+        textAlign: 'right',
+        color: amount < 0 ? '#ef4444' : textColor,
+        fontWeight: isFinal ? 700 : 600
+      }}>
+        {formatCurrency(amount)}
+      </td>
+    </tr>
+  )
 
   const op = data.operating_activities || {}
   const inv = data.investing_activities || {}
   const fin = data.financing_activities || {}
 
+  const itemRow = (item, key) => (
+    <tr key={key} style={{ borderBottom: `1px solid ${borderColor}` }}>
+      <td style={{ padding: '6px 12px 6px 24px', color: textColor }}>{item.description}</td>
+      <td style={{
+        padding: '6px 12px',
+        fontSize: '14px',
+        textAlign: 'right',
+        color: item.amount < 0 ? '#ef4444' : textColor
+      }}>
+        {formatCurrency(item.amount)}
+      </td>
+    </tr>
+  )
+
   return (
     <div style={{
-      backgroundColor: isDarkMode ? '#2a2a2a' : 'white',
+      border: `1px solid ${borderColor}`,
       borderRadius: '8px',
-      border: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}`,
-      overflow: 'hidden',
-      boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)'
+      overflow: 'hidden'
     }}>
       <div style={{ overflowX: 'auto' }}>
-        <table style={tableStyle}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
           <thead>
-            <tr>
-              <th style={thStyle}>Activity</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Amount</th>
+            <tr style={{ backgroundColor: isDarkMode ? '#1f1f1f' : '#f9f9f9' }}>
+              <th style={{ padding: '10px 12px', textAlign: 'left', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Activity</th>
+              <th style={{ padding: '10px 12px', textAlign: 'right', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Amount</th>
             </tr>
           </thead>
           <tbody>
-            <tr style={{ backgroundColor: isDarkMode ? '#1a1a3a' : '#dbeafe' }}>
-              <td colSpan={2} style={sectionStyle}>CASH FLOWS FROM OPERATING ACTIVITIES</td>
+            <tr style={{ backgroundColor: sectionHeaderStyle.backgroundColor }}>
+              <td colSpan={2} style={sectionHeaderStyle}>Cash flows from operating activities</td>
             </tr>
-            <tr>
-              <td style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#d1d5db' : '#1a1a1a', paddingLeft: '48px' }}>Net Income</td>
-              <td style={{ padding: '8px 24px', fontSize: '14px', textAlign: 'right', fontWeight: '500', color: isDarkMode ? '#d1d5db' : '#1a1a1a' }}>
+            <tr style={{ borderBottom: `1px solid ${borderColor}` }}>
+              <td style={{ padding: '6px 12px 6px 24px', color: textColor }}>Net Income</td>
+              <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>
                 {formatCurrency(op.net_income ?? 0)}
               </td>
             </tr>
             {(op.adjustments || []).length > 0 && (
               <>
-                <tr style={{ backgroundColor: isDarkMode ? '#1a1a3a' : '#bfdbfe' }}>
-                  <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontSize: '12px', fontWeight: '600' }}>Adjustments to reconcile net income to cash:</td>
-                </tr>
-                {(op.adjustments || []).map((item, i) => <ItemRow key={`adj-${i}`} item={item} indent />)}
+                {(op.adjustments || []).map((item, i) => itemRow(item, `adj-${i}`))}
               </>
             )}
             {(op.working_capital_changes || []).length > 0 && (
               <>
-                <tr style={{ backgroundColor: isDarkMode ? '#1a1a3a' : '#bfdbfe' }}>
-                  <td colSpan={2} style={{ ...sectionStyle, paddingLeft: '48px', fontSize: '12px', fontWeight: '600' }}>Changes in working capital:</td>
-                </tr>
-                {(op.working_capital_changes || []).map((item, i) => <ItemRow key={`wc-${i}`} item={item} indent />)}
+                {(op.working_capital_changes || []).map((item, i) => itemRow(item, `wc-${i}`))}
               </>
             )}
-            <SubtotalRow label="Net Cash from Operating Activities" amount={op.net_cash_from_operations ?? 0} className="blue" />
+            <SubtotalRow label="Net Cash from Operating Activities" amount={op.net_cash_from_operations ?? 0} />
 
-            <tr style={{ backgroundColor: isDarkMode ? '#3a3a1a' : '#fef9c3' }}>
-              <td colSpan={2} style={sectionStyle}>CASH FLOWS FROM INVESTING ACTIVITIES</td>
+            <tr style={{ backgroundColor: sectionHeaderStyle.backgroundColor }}>
+              <td colSpan={2} style={sectionHeaderStyle}>Cash flows from investing activities</td>
             </tr>
             {(inv.items || []).length > 0 ? (
               <>
-                {(inv.items || []).map((item, i) => <ItemRow key={`inv-${i}`} item={item} indent />)}
-                <SubtotalRow label="Net Cash from Investing Activities" amount={inv.net_cash_from_investing ?? 0} className="yellow" />
+                {(inv.items || []).map((item, i) => itemRow(item, `inv-${i}`))}
+                <SubtotalRow label="Net Cash from Investing Activities" amount={inv.net_cash_from_investing ?? 0} />
               </>
             ) : (
-              <tr>
-                <td colSpan={2} style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#9ca3af' : '#6b7280', fontStyle: 'italic', paddingLeft: '48px' }}>
+              <tr style={{ borderBottom: `1px solid ${borderColor}` }}>
+                <td colSpan={2} style={{ padding: '6px 12px 6px 24px', fontSize: '14px', color: textColor, fontStyle: 'italic' }}>
                   No investing activities during this period
                 </td>
               </tr>
             )}
 
-            <tr style={{ backgroundColor: isDarkMode ? '#1a3a1a' : '#d1fae5' }}>
-              <td colSpan={2} style={sectionStyle}>CASH FLOWS FROM FINANCING ACTIVITIES</td>
+            <tr style={{ backgroundColor: sectionHeaderStyle.backgroundColor }}>
+              <td colSpan={2} style={sectionHeaderStyle}>Cash flows from financing activities</td>
             </tr>
             {(fin.items || []).length > 0 ? (
               <>
-                {(fin.items || []).map((item, i) => <ItemRow key={`fin-${i}`} item={item} indent />)}
-                <SubtotalRow label="Net Cash from Financing Activities" amount={fin.net_cash_from_financing ?? 0} className="green" />
+                {(fin.items || []).map((item, i) => itemRow(item, `fin-${i}`))}
+                <SubtotalRow label="Net Cash from Financing Activities" amount={fin.net_cash_from_financing ?? 0} />
               </>
             ) : (
-              <tr>
-                <td colSpan={2} style={{ padding: '8px 24px', fontSize: '14px', color: isDarkMode ? '#9ca3af' : '#6b7280', fontStyle: 'italic', paddingLeft: '48px' }}>
+              <tr style={{ borderBottom: `1px solid ${borderColor}` }}>
+                <td colSpan={2} style={{ padding: '6px 12px 6px 24px', fontSize: '14px', color: textColor, fontStyle: 'italic' }}>
                   No financing activities during this period
                 </td>
               </tr>
             )}
 
-            <TotalRow label="NET CHANGE IN CASH" amount={data.net_change_in_cash ?? 0} className="gray" />
-            <tr>
-              <td style={{ padding: '12px 24px', fontSize: '14px', color: isDarkMode ? '#d1d5db' : '#1a1a1a' }}>Cash at Beginning of Period</td>
-              <td style={{ padding: '12px 24px', fontSize: '14px', textAlign: 'right', fontWeight: '500', color: isDarkMode ? '#d1d5db' : '#1a1a1a' }}>
+            <TotalRow label="Net change in cash" amount={data.net_change_in_cash ?? 0} />
+            <tr style={{ borderBottom: `1px solid ${borderColor}` }}>
+              <td style={{ padding: '10px 12px', color: textColor }}>Cash at beginning of period</td>
+              <td style={{ padding: '10px 12px', textAlign: 'right', color: textColor }}>
                 {formatCurrency(data.beginning_cash ?? 0)}
               </td>
             </tr>
-            <TotalRow label="CASH AT END OF PERIOD" amount={data.ending_cash ?? 0} className="blue" />
-            <tr style={{ backgroundColor: isDarkMode ? '#1a3a1a' : '#d1fae5' }}>
-              <td colSpan={2} style={{ padding: '12px 24px', fontSize: '14px', color: '#065f46', fontWeight: '600', textAlign: 'center' }}>
+            <TotalRow label="Cash at end of period" amount={data.ending_cash ?? 0} isFinal />
+            <tr>
+              <td colSpan={2} style={{ padding: '8px 12px', color: textColor, fontSize: '13px', fontStyle: 'italic' }}>
                 ✓ Verification: Beginning Cash ({formatCurrency(data.beginning_cash ?? 0)}) + Net Change ({formatCurrency(data.net_change_in_cash ?? 0)}) = Ending Cash ({formatCurrency(data.ending_cash ?? 0)})
               </td>
             </tr>
