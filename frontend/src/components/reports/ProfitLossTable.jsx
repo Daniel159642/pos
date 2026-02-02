@@ -2,13 +2,11 @@ import React from 'react'
 
 function ProfitLossTable({ data, showPercentages = true, onAccountClick, periodLabel }) {
   const isDarkMode = document.documentElement.classList.contains('dark-theme')
-  const textColor = isDarkMode ? '#ffffff' : '#1a1a1a'
-  const borderColor = isDarkMode ? '#3a3a3a' : '#e0e0e0'
 
   const formatCurrency = (amount) => {
     const n = Number(amount)
     if (Number.isNaN(n)) return '$0.00'
-    return `$${Math.abs(n).toFixed(2)}`
+    return `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
   const formatPercentage = (percentage) => {
@@ -18,55 +16,75 @@ function ProfitLossTable({ data, showPercentages = true, onAccountClick, periodL
     return `${n.toFixed(1)}%`
   }
 
-  const TotalRow = ({ label, amount, percentage, className = '' }) => {
-    const isFinalTotal = className.includes('final-total')
-    const rowStyle = {
-      fontWeight: isFinalTotal ? 700 : 600,
-      backgroundColor: isFinalTotal ? (isDarkMode ? '#252525' : '#e8e8e8') : 'transparent',
-      borderTop: isFinalTotal ? `2px solid ${borderColor}` : undefined,
-      borderBottom: !isFinalTotal ? `1px solid ${borderColor}` : undefined
-    }
-    const pad = isFinalTotal ? '12px' : '10px 12px'
-    return (
-      <tr style={rowStyle}>
-        <td style={{
-          padding: pad,
-          fontSize: '14px',
-          color: textColor,
-          fontWeight: rowStyle.fontWeight
-        }}>
-          {label}
-        </td>
-        <td style={{
-          padding: pad,
-          fontSize: '14px',
-          textAlign: 'right',
-          fontWeight: rowStyle.fontWeight,
-          color: amount < 0 ? '#ef4444' : textColor
-        }}>
-          {formatCurrency(amount)}
-        </td>
-        {showPercentages && (
-          <td style={{
-            padding: pad,
-            fontSize: '14px',
-            textAlign: 'right',
-            color: textColor
-          }}>
-            {percentage !== undefined && percentage !== null ? formatPercentage(percentage) : ''}
-          </td>
-        )}
-      </tr>
-    )
+  // Match Balance Sheet: teal/blue-grey headers, light grey totals
+  const mainHeaderBg = isDarkMode ? '#2d4a5a' : '#2d5a6b'
+  const subHeaderBg = isDarkMode ? '#3a5566' : '#c5d9e0'
+  const totalRowBg = isDarkMode ? '#2a3a45' : '#e8e8e8'
+  const borderColor = isDarkMode ? '#3a4a55' : '#d0d0d0'
+  const textColor = isDarkMode ? '#e8e8e8' : '#333'
+  const subHeaderText = isDarkMode ? '#c8d4dc' : '#2d4a5a'
+
+  const bannerStyle = {
+    backgroundColor: mainHeaderBg,
+    padding: '14px 20px',
+    textAlign: 'center',
+    border: `1px solid ${borderColor}`,
+    borderBottom: 'none'
   }
 
-  const grossProfitPercentage = data.total_revenue > 0 
-    ? (data.gross_profit / data.total_revenue) * 100 
-    : 0
+  const sectionHeaderStyle = {
+    padding: '10px 12px',
+    fontSize: '13px',
+    fontWeight: 700,
+    color: '#fff',
+    backgroundColor: mainHeaderBg,
+    border: `1px solid ${borderColor}`,
+    borderTop: 'none',
+    textTransform: 'uppercase',
+    letterSpacing: '0.02em'
+  }
 
-  const netIncomePercentage = data.total_revenue > 0 
-    ? (data.net_income / data.total_revenue) * 100 
-    : 0
+  const columnHeaderStyle = {
+    padding: '8px 12px',
+    fontSize: '12px',
+    fontWeight: 700,
+    color: subHeaderText,
+    backgroundColor: subHeaderBg,
+    border: `1px solid ${borderColor}`,
+    borderTop: 'none',
+    textAlign: 'left'
+  }
+
+  const cellStyle = {
+    padding: '6px 12px',
+    fontSize: '14px',
+    color: textColor,
+    border: `1px solid ${borderColor}`,
+    borderTop: 'none',
+    backgroundColor: isDarkMode ? '#1f2a33' : '#fff'
+  }
+
+  const cellIndentStyle = { ...cellStyle, paddingLeft: '24px' }
+
+  const subtotalRowStyle = {
+    padding: '10px 12px',
+    fontSize: '14px',
+    fontWeight: 700,
+    color: textColor,
+    backgroundColor: totalRowBg,
+    border: `1px solid ${borderColor}`,
+    borderTop: `2px solid ${borderColor}`
+  }
+
+  const finalTotalRowStyle = {
+    ...subtotalRowStyle,
+    borderTop: `3px solid ${borderColor}`,
+    padding: '12px'
+  }
+
+  const revenueBase = data.net_sales ?? data.total_revenue ?? 0
+  const grossProfitPercentage = revenueBase > 0 ? (data.gross_profit / revenueBase) * 100 : 0
+  const netIncomePercentage = revenueBase > 0 ? (data.net_income / revenueBase) * 100 : 0
 
   const tableStyle = {
     width: '100%',
@@ -74,115 +92,200 @@ function ProfitLossTable({ data, showPercentages = true, onAccountClick, periodL
     fontSize: '14px'
   }
 
-  const thStyle = {
-    padding: '10px 12px',
-    textAlign: 'left',
-    color: textColor,
-    backgroundColor: isDarkMode ? '#1f1f1f' : '#f9f9f9',
-    borderBottom: `1px solid ${borderColor}`
-  }
-
-  const sectionHeaderStyle = {
-    padding: '8px 12px',
-    fontSize: '14px',
-    fontWeight: 600,
-    color: textColor,
-    backgroundColor: isDarkMode ? '#1f1f1f' : '#f9f9f9'
-  }
-
   return (
     <div style={{
       border: `1px solid ${borderColor}`,
       borderRadius: '8px',
-      overflow: 'hidden'
+      overflow: 'hidden',
+      backgroundColor: isDarkMode ? '#1f2a33' : '#fff'
     }}>
+      {/* Title: Income Statement, centered above the sheet */}
+      <div style={bannerStyle}>
+        <span style={{ fontSize: '20px', fontWeight: 700, color: '#fff' }}>
+          Income Statement
+        </span>
+      </div>
+
       <div style={{ overflowX: 'auto' }}>
         <table style={tableStyle}>
           <thead>
             <tr>
-              <th style={thStyle}>Account</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Amount</th>
+              <th style={{ ...columnHeaderStyle, textAlign: 'left' }}>Account</th>
+              <th style={{ ...columnHeaderStyle, textAlign: 'right', width: '140px' }}>Amount</th>
               {showPercentages && (
-                <th style={{ ...thStyle, textAlign: 'right' }}>% of Revenue</th>
+                <th style={{ ...columnHeaderStyle, textAlign: 'right', width: '100px' }}>% of Revenue</th>
               )}
             </tr>
           </thead>
           <tbody>
             {/* Revenue Section */}
-            <tr style={{ backgroundColor: sectionHeaderStyle.backgroundColor }}>
+            <tr>
               <td colSpan={showPercentages ? 3 : 2} style={sectionHeaderStyle}>
                 Revenue
               </td>
             </tr>
-            {data.revenue.map((account) => (
-              <tr key={account.account_id} style={{ borderBottom: `1px solid ${borderColor}` }}>
-                <td style={{ padding: '6px 12px 6px 24px', color: textColor }}>{account.account_number} {account.account_name}</td>
-                <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>{formatCurrency(account.balance)}</td>
+            {(data.revenue || []).map((account) => (
+              <tr
+                key={account.account_id}
+                onClick={() => onAccountClick?.(account.account_id)}
+                style={{ cursor: onAccountClick ? 'pointer' : 'default' }}
+              >
+                <td style={cellIndentStyle}>{account.account_number} {account.account_name}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>{formatCurrency(account.balance)}</td>
                 {showPercentages && (
-                  <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>{formatPercentage(account.percentage_of_revenue)}</td>
+                  <td style={{ ...cellStyle, textAlign: 'right' }}>{formatPercentage(account.percentage_of_revenue)}</td>
                 )}
               </tr>
             ))}
-            <TotalRow
-              label="Total Revenue"
-              amount={data.total_revenue}
-              percentage={100}
-            />
+            {(data.contra_revenue || []).map((account) => (
+              <tr
+                key={account.account_id}
+                onClick={() => onAccountClick?.(account.account_id)}
+                style={{ cursor: onAccountClick ? 'pointer' : 'default' }}
+              >
+                <td style={{ ...cellIndentStyle, paddingLeft: '32px' }}>Less: {account.account_name}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>{formatCurrency(account.balance)}</td>
+                {showPercentages && (
+                  <td style={{ ...cellStyle, textAlign: 'right' }}>{formatPercentage(account.percentage_of_revenue)}</td>
+                )}
+              </tr>
+            ))}
+            <tr>
+              <td style={subtotalRowStyle}>Net Sales</td>
+              <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatCurrency(data.net_sales ?? data.total_revenue)}</td>
+              {showPercentages && (
+                <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>
+                  {(data.net_sales ?? data.total_revenue) > 0 ? '100.0%' : ''}
+                </td>
+              )}
+            </tr>
 
-            {/* COGS Section */}
-            {data.cost_of_goods_sold && data.cost_of_goods_sold.length > 0 && (
-              <>
-                <tr style={{ backgroundColor: sectionHeaderStyle.backgroundColor }}>
-                  <td colSpan={showPercentages ? 3 : 2} style={sectionHeaderStyle}>
-                    Cost of Goods Sold
-                  </td>
-                </tr>
-                {data.cost_of_goods_sold.map((account) => (
-                  <tr key={account.account_id} style={{ borderBottom: `1px solid ${borderColor}` }}>
-                    <td style={{ padding: '6px 12px 6px 24px', color: textColor }}>{account.account_number} {account.account_name}</td>
-                    <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>{formatCurrency(account.balance)}</td>
-                    {showPercentages && (
-                      <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>{formatPercentage(account.percentage_of_revenue)}</td>
-                    )}
-                  </tr>
-                ))}
-                <TotalRow
-                  label="Gross Profit"
-                  amount={data.gross_profit}
-                  percentage={grossProfitPercentage}
-                />
-              </>
-            )}
-
-            {/* Expenses Section */}
-            <tr style={{ backgroundColor: sectionHeaderStyle.backgroundColor }}>
+            {/* Cost of Goods Sold */}
+            <tr>
               <td colSpan={showPercentages ? 3 : 2} style={sectionHeaderStyle}>
-                Expenses
+                Cost of Goods Sold
               </td>
             </tr>
-            {data.expenses.map((account) => (
-              <tr key={account.account_id} style={{ borderBottom: `1px solid ${borderColor}` }}>
-                <td style={{ padding: '6px 12px 6px 24px', color: textColor }}>{account.account_number} {account.account_name}</td>
-                <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>{formatCurrency(account.balance)}</td>
+            {(data.cost_of_goods_sold || []).map((account) => (
+              <tr
+                key={account.account_id}
+                onClick={() => onAccountClick?.(account.account_id)}
+                style={{ cursor: onAccountClick ? 'pointer' : 'default' }}
+              >
+                <td style={cellIndentStyle}>{account.account_number} {account.account_name}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>{formatCurrency(account.balance)}</td>
                 {showPercentages && (
-                  <td style={{ padding: '6px 12px', textAlign: 'right', color: textColor }}>{formatPercentage(account.percentage_of_revenue)}</td>
+                  <td style={{ ...cellStyle, textAlign: 'right' }}>{formatPercentage(account.percentage_of_revenue)}</td>
                 )}
               </tr>
             ))}
-            <TotalRow
-              label="Total Expenses"
-              amount={data.total_expenses}
-              percentage={(data.total_expenses / data.total_revenue) * 100}
-            />
+            <tr>
+              <td style={subtotalRowStyle}>Total Cost of Goods Sold</td>
+              <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatCurrency(data.total_cogs)}</td>
+              {showPercentages && (
+                <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>
+                  {(data.net_sales ?? data.total_revenue) ? formatPercentage((data.total_cogs / (data.net_sales ?? data.total_revenue)) * 100) : ''}
+                </td>
+              )}
+            </tr>
+            <tr>
+              <td style={subtotalRowStyle}>Gross Profit</td>
+              <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatCurrency(data.gross_profit)}</td>
+              {showPercentages && (
+                <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatPercentage(grossProfitPercentage)}</td>
+              )}
+            </tr>
 
-            {/* Net Income */}
-            <TotalRow
-              label="Net Income"
-              amount={data.net_income}
-              percentage={netIncomePercentage}
-              className="final-total"
-            />
+            {/* Operating Expenses */}
+            <tr>
+              <td colSpan={showPercentages ? 3 : 2} style={sectionHeaderStyle}>
+                Operating Expenses
+              </td>
+            </tr>
+            {(data.expenses || []).map((account) => (
+              <tr
+                key={account.account_id}
+                onClick={() => onAccountClick?.(account.account_id)}
+                style={{ cursor: onAccountClick ? 'pointer' : 'default' }}
+              >
+                <td style={cellIndentStyle}>{account.account_number} {account.account_name}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>{formatCurrency(account.balance)}</td>
+                {showPercentages && (
+                  <td style={{ ...cellStyle, textAlign: 'right' }}>{formatPercentage(account.percentage_of_revenue)}</td>
+                )}
+              </tr>
+            ))}
+            <tr>
+              <td style={subtotalRowStyle}>Total Operating Expenses</td>
+              <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatCurrency(data.total_expenses)}</td>
+              {showPercentages && (
+                <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>
+                  {(data.net_sales ?? data.total_revenue) ? formatPercentage((data.total_expenses / (data.net_sales ?? data.total_revenue)) * 100) : ''}
+                </td>
+              )}
+            </tr>
+            <tr>
+              <td style={subtotalRowStyle}>Operating Profit (Loss)</td>
+              <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatCurrency(data.operating_profit ?? (data.gross_profit - data.total_expenses))}</td>
+              {showPercentages && (
+                <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>
+                  {revenueBase > 0 ? formatPercentage(((data.operating_profit ?? (data.gross_profit - data.total_expenses)) / revenueBase) * 100) : ''}
+                </td>
+              )}
+            </tr>
 
+            {/* Add Other Income */}
+            <tr>
+              <td colSpan={showPercentages ? 3 : 2} style={{ ...cellStyle, paddingLeft: '24px', fontWeight: 600 }}>
+                Add Other Income
+              </td>
+            </tr>
+            {(data.other_income || []).map((account) => (
+              <tr
+                key={account.account_id}
+                onClick={() => onAccountClick?.(account.account_id)}
+                style={{ cursor: onAccountClick ? 'pointer' : 'default' }}
+              >
+                <td style={cellIndentStyle}>{account.account_number} {account.account_name}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>{formatCurrency(account.balance)}</td>
+                {showPercentages && (
+                  <td style={{ ...cellStyle, textAlign: 'right' }}>{formatPercentage(account.percentage_of_revenue)}</td>
+                )}
+              </tr>
+            ))}
+            <tr>
+              <td style={subtotalRowStyle}>Profit (Loss) Before Taxes</td>
+              <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>{formatCurrency(data.profit_before_taxes ?? data.net_income)}</td>
+              {showPercentages && (
+                <td style={{ ...subtotalRowStyle, textAlign: 'right' }}>
+                  {revenueBase > 0 && (data.profit_before_taxes != null) ? formatPercentage((data.profit_before_taxes / revenueBase) * 100) : ''}
+                </td>
+              )}
+            </tr>
+            <tr>
+              <td style={cellIndentStyle}>Less: Tax Expense</td>
+              <td style={{ ...cellStyle, textAlign: 'right' }}>{formatCurrency(data.tax_expense ?? 0)}</td>
+              {showPercentages && (
+                <td style={{ ...cellStyle, textAlign: 'right' }}>
+                  {revenueBase > 0 && (data.tax_expense != null) ? formatPercentage((data.tax_expense / revenueBase) * 100) : ''}
+                </td>
+              )}
+            </tr>
+
+            {/* Net Profit (Loss) - final total with thicker border */}
+            <tr>
+              <td style={finalTotalRowStyle}>Net Profit (Loss)</td>
+              <td style={{
+                ...finalTotalRowStyle,
+                textAlign: 'right',
+                color: data.net_income < 0 ? (isDarkMode ? '#f0a0a0' : '#b91c1c') : textColor
+              }}>
+                {formatCurrency(data.net_income)}
+              </td>
+              {showPercentages && (
+                <td style={{ ...finalTotalRowStyle, textAlign: 'right' }}>{formatPercentage(netIncomePercentage)}</td>
+              )}
+            </tr>
             {periodLabel && (
               <tr style={{ borderBottom: `1px solid ${borderColor}` }}>
                 <td colSpan={showPercentages ? 3 : 2} style={{ padding: '8px 12px', color: textColor, fontSize: '13px', fontStyle: 'italic' }}>
