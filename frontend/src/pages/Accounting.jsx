@@ -465,7 +465,7 @@ function DashboardTab({ dateRange, formatCurrency, getAuthHeaders }) {
           <br />• Journal Entries with automatic balance validation
           <br />• Invoice and Bill management
           <br />• Customer and Vendor tracking
-          <br />• Financial Reports (Trial Balance, P&L, Balance Sheet)
+          <br />• Financial Reports (Trial Balance, Income Statement, Balance Sheet)
           <br />• Complete audit trail
         </p>
       </div>
@@ -2135,7 +2135,7 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
   )
 }
 
-// Financial Statements Tab (combined P&L, Balance Sheet, Cash Flow with dropdown)
+// Financial Statements Tab (Income Statement, Balance Sheet, Cash Flow with dropdown)
 function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, themeColorRgb, isDarkMode }) {
   const [reportType, setReportType] = useState('profit-loss')
   const [generateButtonState, setGenerateButtonState] = useState({ loading: false, disabled: true, hasReportData: false })
@@ -2168,7 +2168,7 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
           value={reportType}
           onChange={(e) => setReportType(e.target.value)}
           options={[
-            { value: 'profit-loss', label: 'Profit & Loss Statement' },
+            { value: 'profit-loss', label: 'Income Statement' },
             { value: 'balance-sheet', label: 'Balance Sheet' },
             { value: 'cash-flow', label: 'Cash Flow Statement' },
             { value: 'trial-balance', label: 'Trial Balance' }
@@ -2505,7 +2505,7 @@ const TrialBalanceTab = forwardRef(function TrialBalanceTab(
   )
 })
 
-// Profit & Loss Tab
+// Income Statement Tab
 const ProfitLossTab = forwardRef(function ProfitLossTab(
   { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange },
   ref
@@ -2585,7 +2585,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     }
 
     const rows = [
-      ['Profit & Loss Statement'],
+      ['Income Statement'],
       [`Period: ${new Date(reportData.start_date).toLocaleDateString()} - ${new Date(reportData.end_date).toLocaleDateString()}`],
       [],
       ['Account', 'Amount', '% of Revenue'],
@@ -2637,7 +2637,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `profit-loss-${filters.start_date}-to-${filters.end_date}.csv`
+    a.download = `income-statement-${filters.start_date}-to-${filters.end_date}.csv`
     a.click()
     window.URL.revokeObjectURL(url)
 
@@ -2650,7 +2650,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
       return
     }
     const rows = [
-      ['Profit & Loss Statement'],
+      ['Income Statement'],
       [`Period: ${new Date(reportData.start_date).toLocaleDateString()} - ${new Date(reportData.end_date).toLocaleDateString()}`],
       [],
       ['Account', 'Amount', '% of Revenue'],
@@ -2680,7 +2680,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     rows.push([])
     rows.push(['NET INCOME', num(reportData.net_income).toFixed(2), (num(reportData.net_income) / num(reportData.total_revenue) * 100).toFixed(1) + '%'])
     try {
-      await downloadExcel(rows, `profit-loss-${filters.start_date}-to-${filters.end_date}.xlsx`)
+      await downloadExcel(rows, `income-statement-${filters.start_date}-to-${filters.end_date}.xlsx`)
       showToast('Report exported to Excel', 'success')
     } catch (e) {
       showToast('Excel export failed', 'error')
@@ -2715,7 +2715,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
       {!hideTitle && (
         <div style={{ marginBottom: '24px' }}>
           <h3 style={{ ...formTitleStyle(_isDark), marginBottom: '8px', fontSize: '24px' }}>
-            Profit & Loss Statement
+            Income Statement
           </h3>
           <p style={{ color: textColor, opacity: 0.7, fontSize: '14px' }}>
             Income statement showing revenue, expenses, and net income
@@ -2782,7 +2782,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
           textAlign: 'center' 
         }}>
           <p style={{ color: textColor, opacity: 0.7 }}>
-            Select a date range above and click "Generate Report" to view your Profit & Loss Statement
+            Select a date range above and click "Generate Report" to view your Income Statement
           </p>
         </div>
       )}
@@ -3492,62 +3492,121 @@ function VendorsTab({ formatCurrency, getAuthHeaders }) {
   )
 }
 
-// Report content renderer: Trial Balance, P&L, Balance Sheet, Aging
+// Report content renderer: Trial Balance, Income Statement, Balance Sheet, Aging
 function ReportsTabContent({ selectedReport, reportData, formatCurrency, textColor, borderColor, isDarkMode }) {
   const payload = reportData?.data ?? reportData
   const num = (v) => (parseFloat(v) || 0)
 
   if (selectedReport === 'trial-balance' && payload?.accounts) {
     const accounts = payload.accounts
-    const totalDebits = num(payload.total_debits)
-    const totalCredits = num(payload.total_credits)
-    const asOfDate = payload.date ? new Date(payload.date).toLocaleDateString() : '—'
+    // Date from API response = as_of_date from report settings (avoid timezone shift by formatting YYYY-MM-DD directly)
+    const dateStr = payload.date && String(payload.date).split('T')[0]
+    const reportDate = dateStr ? (() => {
+      const [y, m, d] = dateStr.split('-')
+      return m && d && y ? `${Number(m)}/${Number(d)}/${y}` : dateStr
+    })() : '—'
+    // Match Balance Sheet: teal/blue-grey headers, light grey totals
+    const mainHeaderBg = isDarkMode ? '#2d4a5a' : '#2d5a6b'
+    const subHeaderBg = isDarkMode ? '#3a5566' : '#c5d9e0'
+    const totalRowBg = isDarkMode ? '#2a3a45' : '#e8e8e8'
+    const trialBorder = isDarkMode ? '#3a4a55' : '#d0d0d0'
+    const rowBg = isDarkMode ? '#1f2a33' : '#fff'
+    const getDebitCredit = (row) => {
+      const bal = num(row.balance)
+      const bt = (row.balance_type || '').toLowerCase()
+      if (bt === 'debit') {
+        return { debit: bal >= 0 ? bal : 0, credit: bal < 0 ? Math.abs(bal) : 0 }
+      }
+      if (bt === 'credit') {
+        return { debit: bal < 0 ? Math.abs(bal) : 0, credit: bal >= 0 ? bal : 0 }
+      }
+      const deb = num(row.total_debits)
+      const cred = num(row.total_credits)
+      return deb >= cred ? { debit: deb - cred, credit: 0 } : { debit: 0, credit: cred - deb }
+    }
+    let sumDebit = 0
+    let sumCredit = 0
+    const rows = accounts.map((row) => {
+      const { debit, credit } = getDebitCredit(row)
+      sumDebit += debit
+      sumCredit += credit
+      return { ...row, _debit: debit, _credit: credit }
+    })
+    const totalDebits = sumDebit
+    const totalCredits = sumCredit
+    const difference = Math.abs(totalDebits - totalCredits)
+    const isBalanced = difference < 0.01
+    const formatAmt = (n) => (n === 0 ? '' : formatCurrency(n))
+    const thStyle = {
+      padding: '10px 12px',
+      fontSize: '13px',
+      fontWeight: 700,
+      color: '#fff',
+      backgroundColor: mainHeaderBg,
+      border: `1px solid ${trialBorder}`,
+      borderTop: 'none',
+      textTransform: 'uppercase',
+      letterSpacing: '0.02em'
+    }
+    const tdCell = {
+      padding: '6px 12px',
+      fontSize: '14px',
+      color: textColor,
+      border: `1px solid ${trialBorder}`,
+      borderTop: 'none',
+      backgroundColor: rowBg
+    }
+    const totalRowStyle = {
+      padding: '10px 12px',
+      fontSize: '14px',
+      fontWeight: 700,
+      color: textColor,
+      backgroundColor: totalRowBg,
+      border: `1px solid ${trialBorder}`,
+      borderTop: `2px solid ${trialBorder}`
+    }
     return (
-      <div style={{ border: `1px solid ${borderColor}`, borderRadius: '8px', overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-          <thead>
-            <tr style={{ backgroundColor: isDarkMode ? '#1f1f1f' : '#f9f9f9' }}>
-              <th style={{ padding: '10px 12px', textAlign: 'left', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Account #</th>
-              <th style={{ padding: '10px 12px', textAlign: 'left', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Account Name</th>
-              <th style={{ padding: '10px 12px', textAlign: 'left', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Type</th>
-              <th style={{ padding: '10px 12px', textAlign: 'right', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Debits</th>
-              <th style={{ padding: '10px 12px', textAlign: 'right', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Credits</th>
-              <th style={{ padding: '10px 12px', textAlign: 'right', color: textColor, borderBottom: `1px solid ${borderColor}` }}>Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.map((row, i) => (
-              <tr key={i} style={{ borderBottom: `1px solid ${borderColor}` }}>
-                <td style={{ padding: '10px 12px', color: textColor }}>{row.account_number ?? ''}</td>
-                <td style={{ padding: '10px 12px', color: textColor }}>{row.account_name ?? ''}</td>
-                <td style={{ padding: '10px 12px', color: textColor }}>{row.account_type ?? ''}</td>
-                <td style={{ padding: '10px 12px', textAlign: 'right', color: textColor }}>{formatCurrency(num(row.total_debits))}</td>
-                <td style={{ padding: '10px 12px', textAlign: 'right', color: textColor }}>{formatCurrency(num(row.total_credits))}</td>
-                <td style={{ padding: '10px 12px', textAlign: 'right', color: textColor }}>{formatCurrency(num(row.balance))}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr style={{ backgroundColor: isDarkMode ? '#252525' : '#f0f0f0', fontWeight: 600, borderTop: `2px solid ${borderColor}` }}>
-              <td colSpan={3} style={{ padding: '12px', color: textColor }}>Total</td>
-              <td style={{ padding: '12px', textAlign: 'right', color: textColor }}>{formatCurrency(totalDebits)}</td>
-              <td style={{ padding: '12px', textAlign: 'right', color: textColor }}>{formatCurrency(totalCredits)}</td>
-              <td style={{ padding: '12px', textAlign: 'right', color: textColor }}>—</td>
-            </tr>
-            {Math.abs(totalDebits - totalCredits) < 0.01 && (
+      <div style={{ backgroundColor: isDarkMode ? '#1f2a33' : '#fff', padding: '16px', borderRadius: '8px', border: `1px solid ${trialBorder}` }}>
+        <div style={{ backgroundColor: mainHeaderBg, color: '#fff', padding: '12px 16px', marginBottom: '0', border: `1px solid ${trialBorder}`, borderBottom: 'none', textAlign: 'center' }}>
+          <div style={{ fontSize: '20px', fontWeight: 700 }}>Trial Balance</div>
+          <div style={{ fontSize: '13px', opacity: 0.95, marginTop: '4px' }}>As of {reportDate}</div>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+            <thead>
               <tr>
-                <td colSpan={6} style={{ padding: '8px 12px', color: textColor, fontSize: '13px', fontStyle: 'italic' }}>
-                  ✓ Debits equal credits — trial balance is balanced.
-                </td>
+                <th style={{ ...thStyle, textAlign: 'left' }}>A/C. Code</th>
+                <th style={{ ...thStyle, textAlign: 'left', borderLeft: 'none' }}>Account Title</th>
+                <th style={{ ...thStyle, textAlign: 'right', borderLeft: 'none' }}>Debit</th>
+                <th style={{ ...thStyle, textAlign: 'right', borderLeft: 'none' }}>Credit</th>
               </tr>
-            )}
-            <tr>
-              <td colSpan={6} style={{ padding: '8px 12px', color: textColor, fontSize: '13px', fontStyle: 'italic', borderBottom: `1px solid ${borderColor}` }}>
-                As of {asOfDate}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i}>
+                  <td style={{ ...tdCell }}>{row.account_number ?? ''}</td>
+                  <td style={{ ...tdCell, borderLeft: 'none' }}>{row.account_name ?? ''}</td>
+                  <td style={{ ...tdCell, textAlign: 'right', borderLeft: 'none' }}>{formatAmt(row._debit)}</td>
+                  <td style={{ ...tdCell, textAlign: 'right', borderLeft: 'none' }}>{formatAmt(row._credit)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td style={{ ...totalRowStyle }}></td>
+                <td style={{ ...totalRowStyle, borderLeft: 'none' }}>Total</td>
+                <td style={{ ...totalRowStyle, textAlign: 'right', borderLeft: 'none' }}>{formatCurrency(totalDebits)}</td>
+                <td style={{ ...totalRowStyle, textAlign: 'right', borderLeft: 'none' }}>{formatCurrency(totalCredits)}</td>
+              </tr>
+              <tr>
+                <td style={{ ...totalRowStyle, borderTop: 'none' }}></td>
+                <td style={{ ...totalRowStyle, borderLeft: 'none', borderTop: 'none' }}>Status / Difference</td>
+                <td style={{ ...totalRowStyle, textAlign: 'right', borderLeft: 'none', borderTop: 'none' }}>{isBalanced ? 'Balanced' : ''}</td>
+                <td style={{ ...totalRowStyle, textAlign: 'right', borderLeft: 'none', borderTop: 'none' }}>{formatCurrency(difference)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
     )
   }

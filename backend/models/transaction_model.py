@@ -618,6 +618,55 @@ class TransactionRepository:
         finally:
             cursor.close()
 
+    @staticmethod
+    def get_transactions_with_lines_involving_accounts(
+        account_ids: List[int],
+        start_date: date,
+        end_date: date
+    ) -> List[Dict[str, Any]]:
+        """Get all posted, non-void transactions in date range that have at least one line
+        touching any of the given account_ids. Returns each transaction with full lines
+        (account_number, account_type, debit_amount, credit_amount) for cash flow classification."""
+        if not account_ids:
+            return []
+        cursor = get_cursor()
+        try:
+            placeholders = ','.join(['%s'] * len(account_ids))
+            cursor.execute("""
+                SELECT t.id AS transaction_id, t.transaction_date,
+                       tl.account_id, a.account_number, a.account_type, a.account_name,
+                       tl.debit_amount, tl.credit_amount
+                FROM accounting.transactions t
+                JOIN accounting.transaction_lines tl ON t.id = tl.transaction_id
+                JOIN accounting.accounts a ON tl.account_id = a.id
+                WHERE t.is_posted = true AND t.is_void = false
+                  AND t.transaction_date >= %s AND t.transaction_date <= %s
+                  AND t.id IN (
+                    SELECT DISTINCT transaction_id FROM accounting.transaction_lines
+                    WHERE account_id IN (""" + placeholders + """)
+                  )
+                ORDER BY t.transaction_date, t.id, tl.line_number
+            """, [start_date, end_date] + list(account_ids))
+            rows = cursor.fetchall()
+            # Group by transaction
+            by_txn: Dict[int, Dict[str, Any]] = {}
+            for row in rows:
+                r = dict(row)
+                txn_id = r['transaction_id']
+                if txn_id not in by_txn:
+                    by_txn[txn_id] = {'transaction_id': txn_id, 'transaction_date': r['transaction_date'], 'lines': []}
+                by_txn[txn_id]['lines'].append({
+                    'account_id': r['account_id'],
+                    'account_number': r['account_number'],
+                    'account_type': r['account_type'],
+                    'account_name': r.get('account_name'),
+                    'debit_amount': float(r.get('debit_amount') or 0),
+                    'credit_amount': float(r.get('credit_amount') or 0),
+                })
+            return list(by_txn.values())
+        finally:
+            cursor.close()
+
 
 # Singleton instance
 transaction_repository = TransactionRepository()

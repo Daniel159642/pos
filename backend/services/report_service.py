@@ -93,96 +93,151 @@ def get_store_inventory_list(establishment_id: Optional[int] = None) -> List[Dic
 
 class ReportService:
     """Service layer for financial report generation"""
-    
+
+    # Income Statement template order: account numbers per section (include zero-balance accounts)
+    INCOME_STATEMENT_REVENUE_ORDER = ['4000']  # Sales (Sales Revenue)
+    INCOME_STATEMENT_CONTRA_REVENUE_ORDER = ['4010', '4020']  # Less: Sales Return, Less: Discounts and Allowances
+    INCOME_STATEMENT_COGS_ORDER = ['5000', '5010', '5020']   # Materials / Cost of Goods Sold, Labor, Overhead
+    INCOME_STATEMENT_OPEX_ORDER = [
+        '5110', '5120', '5130', '5140', '5150', '5160', '5170', '5180', '5190',
+        '5200', '5210', '5220', '5290', '5100'
+    ]  # Wages, Advertising, Repairs, Travel, Rent, Delivery, Utilities, Insurance, Mileage, Office Supplies, Depreciation, Interest, Other Expenses, Operating Expenses
+    INCOME_STATEMENT_OTHER_INCOME_ORDER = ['4110', '4100']   # Interest Income, Other Income
+    INCOME_STATEMENT_TAX_ACCOUNTS = ['6000']   # Tax Expense
+
     @staticmethod
     def get_profit_loss(start_date: date, end_date: date) -> Dict[str, Any]:
-        """Generate Profit & Loss statement for date range"""
-        # Get all accounts by type
+        """Generate Income Statement for date range in template order (Revenue, Net Sales, COGS, Gross Profit, Operating Expenses, Operating Profit, Other Income, Profit Before Taxes, Tax, Net Profit)."""
         all_accounts = AccountRepository.find_all()
-        
-        # Filter accounts by type
-        revenue_accounts = [acc for acc in all_accounts if acc.account_type == 'Revenue']
-        expense_accounts = [acc for acc in all_accounts if acc.account_type == 'Expense']
-        cogs_accounts = [acc for acc in all_accounts if acc.account_type in ['COGS', 'Cost of Goods Sold']]
-        
-        # Calculate balances for each account in the period
-        revenue_balances = []
-        for account in revenue_accounts:
-            if account.is_active:
-                balance = ReportService._calculate_account_balance_for_period(
-                    account.id, start_date, end_date, account.balance_type
-                )
-                if balance != 0:  # Only include accounts with activity
-                    revenue_balances.append({
-                        'account_id': account.id,
-                        'account_number': account.account_number,
-                        'account_name': account.account_name,
-                        'account_type': account.account_type,
-                        'sub_type': account.sub_type,
-                        'balance': balance
-                    })
-        
-        cogs_balances = []
-        for account in cogs_accounts:
-            if account.is_active:
-                balance = ReportService._calculate_account_balance_for_period(
-                    account.id, start_date, end_date, account.balance_type
-                )
-                if balance != 0:
-                    cogs_balances.append({
-                        'account_id': account.id,
-                        'account_number': account.account_number,
-                        'account_name': account.account_name,
-                        'account_type': account.account_type,
-                        'sub_type': account.sub_type,
-                        'balance': balance
-                    })
-        
-        expense_balances = []
-        for account in expense_accounts:
-            if account.is_active:
-                balance = ReportService._calculate_account_balance_for_period(
-                    account.id, start_date, end_date, account.balance_type
-                )
-                if balance != 0:
-                    expense_balances.append({
-                        'account_id': account.id,
-                        'account_number': account.account_number,
-                        'account_name': account.account_name,
-                        'account_type': account.account_type,
-                        'sub_type': account.sub_type,
-                        'balance': balance
-                    })
-        
-        # Calculate totals (coerce to float to avoid float + Decimal elsewhere)
+        by_number = {acc.account_number: acc for acc in all_accounts if acc.account_number}
+
         def _f(v):
             return float(v) if v is not None else 0.0
-        total_revenue = _f(sum(_f(item['balance']) for item in revenue_balances))
-        total_cogs = _f(sum(_f(item['balance']) for item in cogs_balances))
-        gross_profit = _f(total_revenue - total_cogs)
-        total_expenses = _f(sum(_f(item['balance']) for item in expense_balances))
-        net_income = _f(gross_profit - total_expenses)
-        
-        # Calculate percentage of revenue for each line
-        def add_percentage(items):
-            return [
-                {
-                    **item,
-                    'balance': _f(item['balance']),
-                    'percentage_of_revenue': _f((item['balance'] / total_revenue * 100) if total_revenue > 0 else 0)
-                }
-                for item in items
-            ]
-        
+
+        def _balance(acc):
+            if not acc or not getattr(acc, 'is_active', True):
+                return 0.0
+            return _f(ReportService._calculate_account_balance_for_period(
+                acc.id, start_date, end_date, acc.balance_type
+            ))
+
+        def _row(acc, balance, pct_base=None):
+            b = _f(balance)
+            pct = (b / pct_base * 100) if pct_base and pct_base > 0 else 0.0
+            return {
+                'account_id': acc.id,
+                'account_number': acc.account_number,
+                'account_name': acc.account_name,
+                'account_type': getattr(acc, 'account_type', None),
+                'sub_type': getattr(acc, 'sub_type', None),
+                'balance': b,
+                'percentage_of_revenue': _f(pct)
+            }
+
+        # Revenue (credit): template order, include zero
+        revenue_rows = []
+        for num in ReportService.INCOME_STATEMENT_REVENUE_ORDER:
+            acc = by_number.get(num)
+            if acc and acc.account_type == 'Revenue':
+                bal = _balance(acc)
+                revenue_rows.append(_row(acc, bal))
+        total_revenue = _f(sum(r['balance'] for r in revenue_rows))
+
+        # Contra revenue (debit): Less: Sales Return, Less: Discounts and Allowances
+        contra_rows = []
+        for num in ReportService.INCOME_STATEMENT_CONTRA_REVENUE_ORDER:
+            acc = by_number.get(num)
+            if acc:
+                contra_rows.append(_row(acc, _balance(acc)))
+        total_contra = _f(sum(r['balance'] for r in contra_rows))
+
+        # Add any Revenue-type accounts not in template order (e.g. other revenue accounts)
+        for acc in all_accounts:
+            if acc.account_type != 'Revenue' or not acc.is_active or acc.account_number in ReportService.INCOME_STATEMENT_REVENUE_ORDER:
+                continue
+            revenue_rows.append(_row(acc, _balance(acc)))
+        total_revenue = _f(sum(r['balance'] for r in revenue_rows))
+        net_sales = _f(total_revenue - total_contra)
+
+        # COGS: template order, include zero
+        cogs_rows = []
+        for num in ReportService.INCOME_STATEMENT_COGS_ORDER:
+            acc = by_number.get(num)
+            if acc and acc.account_type in ('COGS', 'Cost of Goods Sold'):
+                cogs_rows.append(_row(acc, _balance(acc), net_sales))
+        for acc in all_accounts:
+            if acc.account_type not in ('COGS', 'Cost of Goods Sold') or not acc.is_active:
+                continue
+            if acc.account_number in ReportService.INCOME_STATEMENT_COGS_ORDER:
+                continue
+            cogs_rows.append(_row(acc, _balance(acc), net_sales))
+        total_cogs = _f(sum(r['balance'] for r in cogs_rows))
+        gross_profit = _f(net_sales - total_cogs)
+
+        # Operating expenses: template order, include zero (exclude Tax)
+        opex_rows = []
+        for num in ReportService.INCOME_STATEMENT_OPEX_ORDER:
+            acc = by_number.get(num)
+            if acc and acc.account_type == 'Expense' and getattr(acc, 'sub_type', None) != 'Tax':
+                opex_rows.append(_row(acc, _balance(acc), net_sales))
+        for acc in all_accounts:
+            if acc.account_type != 'Expense' or not acc.is_active:
+                continue
+            if getattr(acc, 'sub_type', None) == 'Tax':
+                continue
+            if acc.account_number in ReportService.INCOME_STATEMENT_OPEX_ORDER:
+                continue
+            opex_rows.append(_row(acc, _balance(acc), net_sales))
+        total_operating_expenses = _f(sum(r['balance'] for r in opex_rows))
+        operating_profit = _f(gross_profit - total_operating_expenses)
+
+        # Other income: template order, include zero
+        other_income_rows = []
+        for num in ReportService.INCOME_STATEMENT_OTHER_INCOME_ORDER:
+            acc = by_number.get(num)
+            if acc and acc.account_type == 'Other Income':
+                other_income_rows.append(_row(acc, _balance(acc), net_sales))
+        for acc in all_accounts:
+            if acc.account_type != 'Other Income' or not acc.is_active:
+                continue
+            if acc.account_number in ReportService.INCOME_STATEMENT_OTHER_INCOME_ORDER:
+                continue
+            other_income_rows.append(_row(acc, _balance(acc), net_sales))
+        total_other_income = _f(sum(r['balance'] for r in other_income_rows))
+        profit_before_taxes = _f(operating_profit + total_other_income)
+
+        # Tax expense
+        tax_total = 0.0
+        for num in ReportService.INCOME_STATEMENT_TAX_ACCOUNTS:
+            acc = by_number.get(num)
+            if acc:
+                tax_total = _f(tax_total + _balance(acc))
+        for acc in all_accounts:
+            if getattr(acc, 'sub_type', None) == 'Tax' and acc.is_active and acc.account_number not in ReportService.INCOME_STATEMENT_TAX_ACCOUNTS:
+                tax_total = _f(tax_total + _balance(acc))
+        net_income = _f(profit_before_taxes - tax_total)
+
+        # Percentages based on net_sales for consistency
+        def add_pct(items, base=net_sales):
+            return [{**item, 'percentage_of_revenue': _f((item['balance'] / base * 100) if base and base > 0 else 0)} for item in items]
+
         return {
-            'revenue': add_percentage(revenue_balances),
-            'cost_of_goods_sold': add_percentage(cogs_balances),
-            'expenses': add_percentage(expense_balances),
-            'total_revenue': total_revenue,
+            'revenue': add_pct(revenue_rows),
+            'contra_revenue': add_pct(contra_rows),
+            'net_sales': net_sales,
+            'cost_of_goods_sold': add_pct(cogs_rows),
             'total_cogs': total_cogs,
             'gross_profit': gross_profit,
-            'total_expenses': total_expenses,
+            'expenses': add_pct(opex_rows),
+            'total_expenses': total_operating_expenses,
+            'total_operating_expenses': total_operating_expenses,
+            'operating_profit': operating_profit,
+            'other_income': add_pct(other_income_rows),
+            'total_other_income': total_other_income,
+            'profit_before_taxes': profit_before_taxes,
+            'tax_expense': tax_total,
             'net_income': net_income,
+            'total_revenue': total_revenue,
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat()
         }
@@ -254,11 +309,22 @@ class ReportService:
         except (TypeError, ValueError):
             return 0.0
 
+    # Template order: account numbers per section so balance sheet matches standard template
+    BALANCE_SHEET_TEMPLATE = {
+        'current_assets': ['1000', '1010', '1020', '1030', '1100', '1110', '1200', '1300', '1310', '1320', '1350', '1400'],
+        'fixed_assets': ['1450', '1500', '1510', '1520', '1530', '1540', '1550', '1560', '1600', '1610', '1620'],
+        'other_assets': ['1700', '1800'],
+        'current_liabilities': ['2000', '2010', '2020', '2030', '2040', '2050', '2100', '2110', '2120', '2200', '2300'],
+        'long_term_liabilities': ['2500', '2510', '2520', '2590', '2600'],
+        'equity': ['3000', '3100', '3200', '3300', '3400', '3500', '3600', '3700'],
+    }
+
     @staticmethod
     def get_balance_sheet(as_of_date: date, establishment_id: Optional[int] = None) -> Dict[str, Any]:
-        """Generate Balance Sheet as of a specific date. Inventory (1200) uses actual store stock value."""
+        """Generate Balance Sheet as of a specific date in template order. Inventory (1200) uses actual store stock value."""
         _f = ReportService._to_float
         all_accounts = AccountRepository.find_all()
+        accounts_by_number = {getattr(a, 'account_number', None): a for a in all_accounts if getattr(a, 'account_number', None)}
         asset_accounts = [a for a in all_accounts if a.account_type == 'Asset' and a.is_active]
         liability_accounts = [a for a in all_accounts if a.account_type == 'Liability' and a.is_active]
         equity_accounts = [a for a in all_accounts if a.account_type == 'Equity' and a.is_active]
@@ -266,14 +332,13 @@ class ReportService:
         store_inventory_value = get_store_inventory_value(establishment_id)
 
         def _balance(acc) -> float:
-            # Use actual store inventory value for account 1200 (Inventory) so accounting matches stock
             if getattr(acc, 'account_number', None) == '1200':
                 return _f(store_inventory_value)
             b = AccountRepository.get_account_balance(acc.id, as_of_date)
             return _f(b)
 
-        def _item(acc):
-            bal = _balance(acc)
+        def _item(acc, balance_override=None):
+            bal = _f(balance_override) if balance_override is not None else _balance(acc)
             return {
                 'account_id': acc.id,
                 'account_number': acc.account_number,
@@ -284,42 +349,113 @@ class ReportService:
             }
 
         def _is_current_asset(a) -> bool:
-            s = (a.sub_type or '') + (a.account_name or '')
-            s = s.lower()
-            return any(k in s for k in ('current', 'cash', 'bank', 'receivable', 'inventory'))
+            s = ((a.sub_type or '') + (a.account_name or '')).lower()
+            return any(k in s for k in ('current', 'cash', 'bank', 'receivable', 'inventory', 'prepaid', 'short-term', 'investment'))
 
         def _is_fixed_asset(a) -> bool:
-            s = (a.sub_type or '') + (a.account_name or '')
-            s = s.lower()
-            return any(k in s for k in ('fixed', 'property', 'equipment', 'depreciat'))
+            s = ((a.sub_type or '') + (a.account_name or '')).lower()
+            return any(k in s for k in ('fixed', 'property', 'equipment', 'depreciat', 'long-term investment', 'intangible', 'plant'))
+
+        def _is_accumulated_depreciation(a) -> bool:
+            s = (a.account_name or '').lower()
+            return 'accumulated depreciation' in s
 
         def _is_current_liability(a) -> bool:
-            s = (a.sub_type or '') + (a.account_name or '')
-            s = s.lower()
-            return any(k in s for k in ('current', 'payable', 'credit card'))
+            s = ((a.sub_type or '') + (a.account_name or '')).lower()
+            return any(k in s for k in ('current', 'payable', 'credit card', 'short-term', 'accrued', 'unearned', 'income tax'))
 
         def _is_long_term_liability(a) -> bool:
-            s = (a.sub_type or '') + (a.account_name or '')
-            s = s.lower()
-            return any(k in s for k in ('long', 'term', 'loan', 'mortgage'))
+            s = ((a.sub_type or '') + (a.account_name or '')).lower()
+            return any(k in s for k in ('long', 'term', 'loan', 'mortgage', 'deferred'))
 
-        current_assets = [_item(a) for a in asset_accounts if _is_current_asset(a) and _balance(a) != 0]
-        fixed_assets = [_item(a) for a in asset_accounts if _is_fixed_asset(a) and not _is_current_asset(a) and _balance(a) != 0]
-        other_assets = [
-            _item(a) for a in asset_accounts
-            if not _is_current_asset(a) and not _is_fixed_asset(a) and _balance(a) != 0
-        ]
+        # Current assets: template order, include all current asset accounts (including zero balance)
+        current_asset_list = [a for a in asset_accounts if _is_current_asset(a)]
+        current_assets = []
+        seen_ids = set()
+        for num in ReportService.BALANCE_SHEET_TEMPLATE['current_assets']:
+            acc = accounts_by_number.get(num)
+            if acc and getattr(acc, 'account_type', None) == 'Asset' and acc.id not in seen_ids and _is_current_asset(acc):
+                current_assets.append(_item(acc))
+                seen_ids.add(acc.id)
+        for a in current_asset_list:
+            if a.id not in seen_ids:
+                current_assets.append(_item(a))
+                seen_ids.add(a.id)
 
-        current_liabilities = [_item(a) for a in liability_accounts if _is_current_liability(a) and _balance(a) != 0]
-        long_term_liabilities = [
-            _item(a) for a in liability_accounts
-            if _is_long_term_liability(a) and _balance(a) != 0
-        ]
-        other_liab = [
-            _item(a) for a in liability_accounts
-            if not _is_current_liability(a) and not _is_long_term_liability(a) and _balance(a) != 0
-        ]
-        current_liabilities = current_liabilities + other_liab
+        # Fixed assets: template order; collapse "(Less Accumulated Depreciation)" into one line
+        accum_depr_total = 0.0
+        fixed_no_depr = []
+        fixed_seen = set()
+        for num in ReportService.BALANCE_SHEET_TEMPLATE['fixed_assets']:
+            acc = accounts_by_number.get(num)
+            if acc is None or getattr(acc, 'account_type', None) != 'Asset' or not _is_fixed_asset(acc):
+                continue
+            if _is_accumulated_depreciation(acc):
+                accum_depr_total += _balance(acc)
+                continue
+            if acc.id not in fixed_seen:
+                fixed_no_depr.append(_item(acc))
+                fixed_seen.add(acc.id)
+        for a in asset_accounts:
+            if not _is_fixed_asset(a) or _is_accumulated_depreciation(a) or a.id in fixed_seen:
+                continue
+            fixed_no_depr.append(_item(a))
+            fixed_seen.add(a.id)
+        if accum_depr_total != 0:
+            fixed_no_depr.append({
+                'account_id': None,
+                'account_number': None,
+                'account_name': '(Less Accumulated Depreciation)',
+                'account_type': 'Asset',
+                'sub_type': 'Fixed Asset',
+                'balance': _f(-abs(accum_depr_total)),
+            })
+        # Sort so "(Less Accumulated Depreciation)" appears after PPE, before Intangible
+        def _fixed_sort_key(item):
+            if item.get('account_name') == '(Less Accumulated Depreciation)':
+                return (1, '')
+            num = item.get('account_number') or ''
+            return (0, num)
+        fixed_assets = sorted(fixed_no_depr, key=_fixed_sort_key)
+
+        # Other assets: template order
+        other_assets = []
+        for num in ReportService.BALANCE_SHEET_TEMPLATE['other_assets']:
+            acc = accounts_by_number.get(num)
+            if acc and getattr(acc, 'account_type', None) == 'Asset' and not _is_current_asset(acc) and not _is_fixed_asset(acc):
+                other_assets.append(_item(acc))
+        for a in asset_accounts:
+            if _is_current_asset(a) or _is_fixed_asset(a):
+                continue
+            num = getattr(a, 'account_number', None)
+            if num and num not in ReportService.BALANCE_SHEET_TEMPLATE['other_assets']:
+                other_assets.append(_item(a))
+
+        # Current liabilities: template order
+        current_liabilities = []
+        for num in ReportService.BALANCE_SHEET_TEMPLATE['current_liabilities']:
+            acc = accounts_by_number.get(num)
+            if acc and getattr(acc, 'account_type', None) == 'Liability' and _is_current_liability(acc):
+                current_liabilities.append(_item(acc))
+        for a in liability_accounts:
+            if _is_long_term_liability(a):
+                continue
+            num = getattr(a, 'account_number', None)
+            if num and num not in ReportService.BALANCE_SHEET_TEMPLATE['current_liabilities']:
+                current_liabilities.append(_item(a))
+
+        # Long-term liabilities: template order
+        long_term_liabilities = []
+        for num in ReportService.BALANCE_SHEET_TEMPLATE['long_term_liabilities']:
+            acc = accounts_by_number.get(num)
+            if acc and getattr(acc, 'account_type', None) == 'Liability' and _is_long_term_liability(acc):
+                long_term_liabilities.append(_item(acc))
+        for a in liability_accounts:
+            if not _is_long_term_liability(a):
+                continue
+            num = getattr(a, 'account_number', None)
+            if num and num not in ReportService.BALANCE_SHEET_TEMPLATE['long_term_liabilities']:
+                long_term_liabilities.append(_item(a))
 
         total_current_assets = _f(sum(_f(x['balance']) for x in current_assets))
         total_fixed_assets = _f(sum(_f(x['balance']) for x in fixed_assets))
@@ -330,7 +466,18 @@ class ReportService:
         total_long_term_liabilities = _f(sum(_f(x['balance']) for x in long_term_liabilities))
         total_liabilities = _f(total_current_liabilities + total_long_term_liabilities)
 
-        equity_items = [_item(a) for a in equity_accounts if _balance(a) != 0]
+        # Equity: template order, include all (including zero balance)
+        equity_items = []
+        equity_seen = set()
+        for num in ReportService.BALANCE_SHEET_TEMPLATE['equity']:
+            acc = accounts_by_number.get(num)
+            if acc and getattr(acc, 'account_type', None) == 'Equity' and acc.id not in equity_seen:
+                equity_items.append(_item(acc))
+                equity_seen.add(acc.id)
+        for a in equity_accounts:
+            if a.id not in equity_seen:
+                equity_items.append(_item(a))
+                equity_seen.add(a.id)
         retained_earnings = _f(sum(_f(x['balance']) for x in equity_items))
 
         year_start = date(as_of_date.year, 1, 1)
@@ -436,149 +583,220 @@ class ReportService:
     def _cash_flow_adjustment(description: str, amount: float, account_id: Optional[int] = None) -> Dict[str, Any]:
         return {'description': description, 'amount': amount, 'account_id': account_id}
 
+    # Cash Flow Statement template: direct-method line item keys and account number mappings
+    # Receipts = cash debit (money in); Payments = cash credit (money out). Classify by counterpart account.
+    _CF_OPERATIONS_RECEIPTS = {
+        'Customers': ['1100', '4000'],           # AR, Sales Revenue
+        'Other Operations': ['4100', '4110'],     # Other Income, Interest Income
+    }
+    _CF_OPERATIONS_PAID = {
+        'Inventory purchases': ['1200'],
+        'General operating and administrative expenses': ['5100', '5120', '5130', '5140', '5150', '5160', '5170', '5180', '5190', '5200', '5210', '5290', '2000'],  # AP -> general
+        'Wage expenses': ['5110'],
+        'Interest': ['5220'],
+        'Income taxes': ['6000'],
+    }
+    _CF_INVESTING_RECEIPTS = {
+        'Sale of property and equipment': ['1500', '1520'],
+        'Collection of principal on loans': ['1400'],
+        'Sale of investment securities': ['1350', '1450'],
+    }
+    _CF_INVESTING_PAID = {
+        'Purchase of property and equipment': ['1500'],
+        'Making loans to other entities': ['1400'],
+        'Purchase of investment securities': ['1350', '1450'],
+    }
+    _CF_FINANCING_RECEIPTS = {
+        'Issuance of stock': ['3000', '3100', '3700'],
+        'Borrowing': ['2100', '2500', '2120'],
+    }
+    _CF_FINANCING_PAID = {
+        'Repurchase of stock (treasury stock)': ['3200'],
+        'Repayment of loans': ['2100', '2500', '2120'],
+        'Dividends': ['3310'],
+    }
+
+    @staticmethod
+    def _classify_cash_flow_line(account_number: str, account_type: str, receipt: bool, amount: float,
+                                  receipt_map: Dict[str, List[str]], paid_map: Dict[str, List[str]]) -> Optional[tuple]:
+        """Return (bucket_label, amount) for template line, or None if unclassified. receipt=True means cash debit."""
+        num = (account_number or '').strip()
+        if receipt:
+            for label, nums in receipt_map.items():
+                if num in nums:
+                    return (label, amount)
+        else:
+            for label, nums in paid_map.items():
+                if num in nums:
+                    return (label, -amount)
+        return None
+
     @staticmethod
     def get_cash_flow(start_date: date, end_date: date) -> Dict[str, Any]:
-        """Cash Flow Statement (indirect method) for period."""
-        pl = ReportService.get_profit_loss(start_date, end_date)
-        net_income = pl['net_income']
-
+        """Cash Flow Statement (direct method) for period: Operations, Investing, Financing with
+        Cash receipts from / Cash paid for template line items. All line items included (zero if no activity)."""
         prior = start_date - timedelta(days=1)
         beginning_cash = ReportService._get_cash_balance(prior)
         ending_cash = ReportService._get_cash_balance(end_date)
 
         all_accounts = AccountRepository.find_all()
-        assets = [a for a in all_accounts if a.account_type == 'Asset' and a.is_active]
-        liabilities = [a for a in all_accounts if a.account_type == 'Liability' and a.is_active]
-        expenses = [a for a in all_accounts if a.account_type == 'Expense' and a.is_active]
-        equity = [a for a in all_accounts if a.account_type == 'Equity' and a.is_active]
-
-        def _is_cash(a) -> bool:
-            s = ((a.sub_type or '') + (a.account_name or '')).lower()
-            return any(k in s for k in ('cash', 'bank', 'checking', 'savings'))
-
-        def _is_fixed(a) -> bool:
-            s = ((a.sub_type or '') + (a.account_name or '')).lower()
-            return any(k in s for k in ('fixed', 'property', 'equipment', 'depreciat'))
-
-        def _is_current_asset_no_cash(a) -> bool:
-            if _is_cash(a):
-                return False
-            s = ((a.sub_type or '') + (a.account_name or '')).lower()
-            return any(k in s for k in ('current', 'receivable', 'inventory', 'prepaid'))
-
-        def _is_current_liability(a) -> bool:
-            s = ((a.sub_type or '') + (a.account_name or '')).lower()
-            return any(k in s for k in ('current', 'payable', 'credit card'))
-
-        def _is_long_term_liability(a) -> bool:
-            s = ((a.sub_type or '') + (a.account_name or '')).lower()
-            return any(k in s for k in ('long', 'term', 'loan', 'mortgage', 'note'))
-
-        adjustments: List[Dict[str, Any]] = []
-        for a in expenses:
-            s = (a.account_name or '').lower()
-            if 'depreciation' in s or 'amortization' in s:
-                bal = ReportService._period_activity(a.id, start_date, end_date, a.balance_type or 'debit')
-                if abs(bal) > 1e-9:
-                    adjustments.append(ReportService._cash_flow_adjustment(a.account_name, bal, a.id))
-
-        working_capital: List[Dict[str, Any]] = []
-        for a in assets:
-            if not _is_current_asset_no_cash(a):
+        cash_account_ids = []
+        for a in all_accounts:
+            if a.account_type != 'Asset' or not getattr(a, 'is_active', True):
                 continue
-            beg = ReportService._balance_as_of(a.id, prior)
-            end = ReportService._balance_as_of(a.id, end_date)
-            ch = end - beg
-            if abs(ch) > 1e-9:
-                working_capital.append(
-                    ReportService._cash_flow_adjustment(f'Change in {a.account_name}', -ch, a.id)
-                )
-        for a in liabilities:
-            if not _is_current_liability(a):
-                continue
-            beg = ReportService._balance_as_of(a.id, prior)
-            end = ReportService._balance_as_of(a.id, end_date)
-            ch = end - beg
-            if abs(ch) > 1e-9:
-                working_capital.append(
-                    ReportService._cash_flow_adjustment(f'Change in {a.account_name}', ch, a.id)
-                )
-
-        adj_total = sum(x['amount'] for x in adjustments)
-        wc_total = sum(x['amount'] for x in working_capital)
-        net_cash_operations = net_income + adj_total + wc_total
-
-        investing: List[Dict[str, Any]] = []
-        for a in assets:
-            if not _is_fixed(a):
-                continue
-            ledger = TransactionRepository.get_general_ledger(a.id, start_date, end_date)
-            purchases = sum(float(e.get('debit_amount') or 0) for e in ledger)
-            sales = sum(float(e.get('credit_amount') or 0) for e in ledger)
-            if purchases > 1e-9:
-                investing.append(
-                    ReportService._cash_flow_adjustment(f'Purchase of {a.account_name}', -purchases, a.id)
-                )
-            if sales > 1e-9:
-                investing.append(
-                    ReportService._cash_flow_adjustment(f'Sale of {a.account_name}', sales, a.id)
-                )
-        net_investing = sum(x['amount'] for x in investing)
-
-        financing: List[Dict[str, Any]] = []
-        for a in liabilities:
-            if not _is_long_term_liability(a):
-                continue
-            ledger = TransactionRepository.get_general_ledger(a.id, start_date, end_date)
-            borrow = sum(float(e.get('credit_amount') or 0) for e in ledger)
-            pay = sum(float(e.get('debit_amount') or 0) for e in ledger)
-            if borrow > 1e-9:
-                financing.append(
-                    ReportService._cash_flow_adjustment(f'Proceeds from {a.account_name}', borrow, a.id)
-                )
-            if pay > 1e-9:
-                financing.append(
-                    ReportService._cash_flow_adjustment(f'Payment on {a.account_name}', -pay, a.id)
-                )
-        total_contrib = 0.0
-        total_draws = 0.0
-        for a in equity:
-            s = (a.account_name or '').lower()
-            if 'retained' in s or 'earnings' in s:
-                continue
-            ledger = TransactionRepository.get_general_ledger(a.id, start_date, end_date)
-            total_contrib += sum(float(e.get('credit_amount') or 0) for e in ledger)
-            total_draws += sum(float(e.get('debit_amount') or 0) for e in ledger)
-        if total_contrib > 1e-9:
-            financing.append(
-                ReportService._cash_flow_adjustment('Owner contributions', total_contrib, None)
+            s = ((getattr(a, 'sub_type') or '') + (getattr(a, 'account_name') or '')).lower()
+            if any(k in s for k in ('cash', 'bank', 'checking', 'savings')):
+                cash_account_ids.append(a.id)
+        if not cash_account_ids:
+            op_r = {k: 0.0 for k in ReportService._CF_OPERATIONS_RECEIPTS}
+            op_p = {k: 0.0 for k in ReportService._CF_OPERATIONS_PAID}
+            inv_r = {k: 0.0 for k in ReportService._CF_INVESTING_RECEIPTS}
+            inv_p = {k: 0.0 for k in ReportService._CF_INVESTING_PAID}
+            fin_r = {k: 0.0 for k in ReportService._CF_FINANCING_RECEIPTS}
+            fin_p = {k: 0.0 for k in ReportService._CF_FINANCING_PAID}
+            return ReportService._cash_flow_template_response(
+                start_date, end_date, beginning_cash, ending_cash,
+                op_r, op_p, inv_r, inv_p, fin_r, fin_p, 0.0, 0.0, 0.0, 0.0
             )
-        if total_draws > 1e-9:
-            financing.append(
-                ReportService._cash_flow_adjustment('Owner draws', -total_draws, None)
-            )
-        net_financing = sum(x['amount'] for x in financing)
 
-        net_change = net_cash_operations + net_investing + net_financing
+        txns = TransactionRepository.get_transactions_with_lines_involving_accounts(
+            cash_account_ids, start_date, end_date
+        )
 
+        def _f(x):
+            return float(x) if x is not None else 0.0
+
+        op_receipts: Dict[str, float] = {k: 0.0 for k in ReportService._CF_OPERATIONS_RECEIPTS}
+        op_paid: Dict[str, float] = {k: 0.0 for k in ReportService._CF_OPERATIONS_PAID}
+        inv_receipts: Dict[str, float] = {k: 0.0 for k in ReportService._CF_INVESTING_RECEIPTS}
+        inv_paid: Dict[str, float] = {k: 0.0 for k in ReportService._CF_INVESTING_PAID}
+        fin_receipts: Dict[str, float] = {k: 0.0 for k in ReportService._CF_FINANCING_RECEIPTS}
+        fin_paid: Dict[str, float] = {k: 0.0 for k in ReportService._CF_FINANCING_PAID}
+
+        for txn in txns:
+            lines = txn.get('lines') or []
+            cash_debit = 0.0
+            cash_credit = 0.0
+            non_cash: List[Dict[str, Any]] = []
+            for line in lines:
+                aid = line.get('account_id')
+                anum = line.get('account_number') or ''
+                atype = line.get('account_type') or ''
+                deb = _f(line.get('debit_amount'))
+                cred = _f(line.get('credit_amount'))
+                if aid in cash_account_ids:
+                    cash_debit += deb
+                    cash_credit += cred
+                else:
+                    non_cash.append({'account_number': anum, 'account_type': atype, 'debit_amount': deb, 'credit_amount': cred})
+            if not non_cash:
+                continue
+            # Attribute this transaction's cash_debit to one receipt bucket and cash_credit to one paid bucket (first matching counterpart)
+            receipt_done = False
+            paid_done = False
+            for nc in non_cash:
+                anum = nc.get('account_number') or ''
+                atype = nc.get('account_type') or ''
+                if cash_debit > 1e-9 and not receipt_done:
+                    tup = ReportService._classify_cash_flow_line(
+                        anum, atype, True, cash_debit,
+                        ReportService._CF_OPERATIONS_RECEIPTS, ReportService._CF_OPERATIONS_PAID
+                    )
+                    if tup:
+                        op_receipts[tup[0]] = op_receipts.get(tup[0], 0) + tup[1]
+                        receipt_done = True
+                    else:
+                        tup = ReportService._classify_cash_flow_line(
+                            anum, atype, True, cash_debit,
+                            ReportService._CF_INVESTING_RECEIPTS, ReportService._CF_INVESTING_PAID
+                        )
+                        if tup:
+                            inv_receipts[tup[0]] = inv_receipts.get(tup[0], 0) + tup[1]
+                            receipt_done = True
+                        else:
+                            tup = ReportService._classify_cash_flow_line(
+                                anum, atype, True, cash_debit,
+                                ReportService._CF_FINANCING_RECEIPTS, ReportService._CF_FINANCING_PAID
+                            )
+                            if tup:
+                                fin_receipts[tup[0]] = fin_receipts.get(tup[0], 0) + tup[1]
+                                receipt_done = True
+                if cash_credit > 1e-9 and not paid_done:
+                    tup = ReportService._classify_cash_flow_line(
+                        anum, atype, False, cash_credit,
+                        ReportService._CF_OPERATIONS_RECEIPTS, ReportService._CF_OPERATIONS_PAID
+                    )
+                    if tup:
+                        op_paid[tup[0]] = op_paid.get(tup[0], 0) + tup[1]
+                        paid_done = True
+                    else:
+                        tup = ReportService._classify_cash_flow_line(
+                            anum, atype, False, cash_credit,
+                            ReportService._CF_INVESTING_RECEIPTS, ReportService._CF_INVESTING_PAID
+                        )
+                        if tup:
+                            inv_paid[tup[0]] = inv_paid.get(tup[0], 0) + tup[1]
+                            paid_done = True
+                        else:
+                            tup = ReportService._classify_cash_flow_line(
+                                anum, atype, False, cash_credit,
+                                ReportService._CF_FINANCING_RECEIPTS, ReportService._CF_FINANCING_PAID
+                            )
+                            if tup:
+                                fin_paid[tup[0]] = fin_paid.get(tup[0], 0) + tup[1]
+                                paid_done = True
+                if receipt_done and paid_done:
+                    break
+
+        net_ops = sum(op_receipts.values()) + sum(op_paid.values())  # op_paid are already negative
+        net_inv = sum(inv_receipts.values()) + sum(inv_paid.values())
+        net_fin = sum(fin_receipts.values()) + sum(fin_paid.values())
+        net_change = net_ops + net_inv + net_fin
+
+        return ReportService._cash_flow_template_response(
+            start_date, end_date, beginning_cash, ending_cash,
+            op_receipts, op_paid, inv_receipts, inv_paid, fin_receipts, fin_paid,
+            net_ops, net_inv, net_fin, net_change
+        )
+
+    @staticmethod
+    def _cash_flow_template_response(
+        start_date: date, end_date: date,
+        beginning_cash: float, ending_cash: float,
+        op_receipts: Dict[str, float], op_paid: Dict[str, float],
+        inv_receipts: Dict[str, float], inv_paid: Dict[str, float],
+        fin_receipts: Dict[str, float], fin_paid: Dict[str, float],
+        net_ops: float, net_inv: float, net_fin: float, net_change: float
+    ) -> Dict[str, Any]:
+        """Build API response with template structure; all line items present (zero if missing)."""
+        def _line_list_in_order(order_keys: List[str], d: Dict[str, float]) -> List[Dict[str, Any]]:
+            return [{'description': k, 'amount': float(d.get(k, 0))} for k in order_keys]
+
+        op_receipt_order = list(ReportService._CF_OPERATIONS_RECEIPTS.keys())
+        op_paid_order = list(ReportService._CF_OPERATIONS_PAID.keys())
+        inv_receipt_order = list(ReportService._CF_INVESTING_RECEIPTS.keys())
+        inv_paid_order = list(ReportService._CF_INVESTING_PAID.keys())
+        fin_receipt_order = list(ReportService._CF_FINANCING_RECEIPTS.keys())
+        fin_paid_order = list(ReportService._CF_FINANCING_PAID.keys())
         return {
             'operating_activities': {
-                'net_income': net_income,
-                'adjustments': adjustments,
-                'working_capital_changes': working_capital,
-                'net_cash_from_operations': net_cash_operations,
+                'cash_receipts_from': _line_list_in_order(op_receipt_order, op_receipts),
+                'cash_paid_for': _line_list_in_order(op_paid_order, op_paid),
+                'net_cash_from_operations': float(net_ops),
             },
             'investing_activities': {
-                'items': investing,
-                'net_cash_from_investing': net_investing,
+                'cash_receipts_from': _line_list_in_order(inv_receipt_order, inv_receipts),
+                'cash_paid_for': _line_list_in_order(inv_paid_order, inv_paid),
+                'net_cash_from_investing': float(net_inv),
             },
             'financing_activities': {
-                'items': financing,
-                'net_cash_from_financing': net_financing,
+                'cash_receipts_from': _line_list_in_order(fin_receipt_order, fin_receipts),
+                'cash_paid_for': _line_list_in_order(fin_paid_order, fin_paid),
+                'net_cash_from_financing': float(net_fin),
             },
-            'beginning_cash': beginning_cash,
-            'net_change_in_cash': net_change,
-            'ending_cash': ending_cash,
+            'beginning_cash': float(beginning_cash),
+            'net_change_in_cash': float(net_change),
+            'ending_cash': float(ending_cash),
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
         }
