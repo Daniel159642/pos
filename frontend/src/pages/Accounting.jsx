@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 're
 import { useTheme } from '../contexts/ThemeContext'
 import {
   LayoutDashboard,
+  FolderOpen,
   Settings as SettingsIcon,
   BookOpen,
   ArrowLeftRight,
@@ -15,8 +16,14 @@ import {
   Truck,
   FileBarChart,
   PanelLeft,
-  Plus
+  Plus,
+  X
 } from 'lucide-react'
+import { Document, Page, pdfjs } from 'react-pdf'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+import 'react-pdf/dist/Page/TextLayer.css'
+
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
 import accountService from '../services/accountService'
 import transactionService from '../services/transactionService'
 import AccountTable from '../components/accounts/AccountTable'
@@ -82,6 +89,7 @@ function Accounting() {
   const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 })
   const [isInitialMount, setIsInitialMount] = useState(true)
   const accountingHeaderRef = useRef(null)
+  const directoryRefreshRef = useRef(null)
 
   useEffect(() => {
     const timer = setTimeout(() => setIsInitialMount(false), 0)
@@ -125,7 +133,7 @@ function Accounting() {
   }
 
   const accountingSections = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'dashboard', label: 'Directory', icon: FolderOpen },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
     { id: 'chart-of-accounts', label: 'Chart of Accounts', icon: BookOpen },
     { id: 'transactions', label: 'Transactions', icon: ArrowLeftRight },
@@ -277,7 +285,7 @@ function Accounting() {
         )}
 
         {/* Tab Content */}
-        {activeTab === 'dashboard' && <DashboardTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
+        {activeTab === 'dashboard' && <DashboardTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} onDirectoryRefresh={directoryRefreshRef} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
         {activeTab === 'settings' && <SettingsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
         {activeTab === 'chart-of-accounts' && <ChartOfAccountsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
         {activeTab === 'transactions' && <TransactionsTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
@@ -301,6 +309,7 @@ function Accounting() {
             setActiveTab={setActiveTab}
             themeColorRgb={themeColorRgb}
             isDarkMode={isDarkMode}
+            directoryRefreshRef={directoryRefreshRef}
           />
         )}
         {activeTab === 'invoices' && <InvoicesTab dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} />}
@@ -312,163 +321,760 @@ function Accounting() {
   )
 }
 
-// Dashboard Tab
-function DashboardTab({ dateRange, formatCurrency, getAuthHeaders }) {
-  const [data, setData] = useState(null)
+// Dashboard Tab – Directory view: saved reports and shipment documents
+function DashboardTab({ dateRange, formatCurrency, getAuthHeaders, onDirectoryRefresh, themeColorRgb = '59, 130, 246', isDarkMode: isDarkModeProp }) {
+  const { show: showToast } = useToast()
+  const [data, setData] = useState({ saved_reports: [], shipment_documents: [] })
   const [loading, setLoading] = useState(true)
-  const isDarkMode = document.documentElement.classList.contains('dark-theme')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [openMenuKey, setOpenMenuKey] = useState(null) // 'report:name' or 'shipment:id'
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState(null) // 'report:name' or 'shipment:id' when showing confirm
+  const menuRef = useRef(null)
+  const [viewingFile, setViewingFile] = useState(null) // { type: 'report'|'shipment', name, url?, isPdf, csvText?, isExcel?, excelHtml? }
+  const [pdfNumPages, setPdfNumPages] = useState(null)
+  const [pdfZoom, setPdfZoom] = useState(100)
+  const pdfViewerRef = useRef(null)
+  const [pdfViewerWidth, setPdfViewerWidth] = useState(600)
+  const isDarkMode = isDarkModeProp ?? document.documentElement.classList.contains('dark-theme')
   const textColor = isDarkMode ? '#ffffff' : '#1a1a1a'
   const cardBg = isDarkMode ? '#1f1f1f' : '#f9f9f9'
-  const borderColor = isDarkMode ? '#3a3a3a' : '#e0e0e0'
+  const borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#e0e0e0'
+  const borderColorLight = isDarkMode ? '#555' : '#ccc'
+  const bgPrimary = isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff'
+  const bgSecondary = isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f5f5f5'
+  const textSecondary = isDarkMode ? 'var(--text-secondary, #ccc)' : '#666'
 
   useEffect(() => {
-    loadDashboard()
-  }, [dateRange])
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setOpenMenuKey(null)
+        setConfirmDeleteKey(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
-  const loadDashboard = async () => {
+  const loadDirectory = async () => {
     try {
       setLoading(true)
-      const [trialBalanceRes, pnlRes, dashboardRes] = await Promise.all([
-        fetch(`/api/accounting/trial-balance?as_of_date=${dateRange.end_date}`, { headers: getAuthHeaders() }).then(r => r.ok ? r.json() : null),
-        fetch(`/api/accounting/profit-loss?start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`, { headers: getAuthHeaders() }).then(r => r.ok ? r.json() : null),
-        fetch(`/api/accounting/dashboard?start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`, { headers: getAuthHeaders() }).then(r => r.ok ? r.json() : null)
-      ])
-      const trialBalanceRows = Array.isArray(trialBalanceRes?.data?.accounts) ? trialBalanceRes.data.accounts : []
-      const pnlData = pnlRes?.data || {}
-      const dashboardData = dashboardRes?.pos_summary != null ? dashboardRes : null
-      const laborData = dashboardRes?.labor_summary != null ? dashboardRes.labor_summary : { total_hours: 0, total_labor_cost: 0, entries: [] }
-      setData({ trialBalance: trialBalanceRows, pnl: pnlData, dashboard: dashboardData, labor: laborData })
+      const res = await fetch('/api/accounting/directory', { headers: getAuthHeaders() })
+      const json = await res.json()
+      if (json.success && json.data) {
+        setData({
+          saved_reports: json.data.saved_reports || [],
+          shipment_documents: json.data.shipment_documents || []
+        })
+      }
     } catch (err) {
-      console.error('Error loading dashboard:', err)
+      console.error('Error loading directory:', err)
+      showToast('Failed to load directory', 'error')
     } finally {
       setLoading(false)
     }
   }
 
-  if (loading) {
-    return <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>Loading dashboard...</div>
+  useEffect(() => {
+    loadDirectory()
+  }, [])
+  useEffect(() => {
+    if (onDirectoryRefresh) onDirectoryRefresh.current = loadDirectory
+  }, [onDirectoryRefresh, loadDirectory])
+
+  const baseUrl = window.location.origin
+
+  const closeViewer = () => {
+    if (viewingFile?.url && viewingFile.url.startsWith('blob:')) {
+      try { URL.revokeObjectURL(viewingFile.url) } catch (_) {}
+    }
+    setViewingFile(null)
+    setPdfNumPages(null)
+    setPdfZoom(100)
   }
 
-  // Trial balance rows use total_debits / total_credits (from API)
-  const totalDebits = Array.isArray(data?.trialBalance) ? data.trialBalance.reduce((sum, row) => sum + (parseFloat(row.total_debits) || 0), 0) : 0
-  const totalCredits = Array.isArray(data?.trialBalance) ? data.trialBalance.reduce((sum, row) => sum + (parseFloat(row.total_credits) || 0), 0) : 0
-  // P&L API returns net_income directly
-  const netIncome = typeof data?.pnl?.net_income === 'number' ? data.pnl.net_income : (parseFloat(data?.pnl?.net_income) || 0)
+  const viewReport = async (name) => {
+    try {
+      const res = await fetch(`${baseUrl}/api/accounting/directory/report/${encodeURIComponent(name)}`, { headers: getAuthHeaders() })
+      if (!res.ok) throw new Error(res.statusText)
+      const contentType = (res.headers.get('content-type') || '').toLowerCase()
+      const isPdf = name.toLowerCase().endsWith('.pdf') || contentType.includes('application/pdf')
+      if (isPdf) {
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        setViewingFile({ type: 'report', name, url, isPdf: true })
+      } else {
+        const csvText = await res.text()
+        setViewingFile({ type: 'report', name, isPdf: false, csvText })
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('Failed to load report', 'error')
+    }
+  }
+
+  const viewShipment = async (id) => {
+    try {
+      const item = data.shipment_documents.find(d => d.id === id)
+      const name = item?.name || `Shipment ${id}`
+      const res = await fetch(`${baseUrl}/api/accounting/directory/shipment/${id}`, { headers: getAuthHeaders() })
+      if (!res.ok) throw new Error(res.statusText)
+      const blob = await res.blob()
+      const ext = (name.split('.').pop() || '').toLowerCase()
+      if (ext === 'pdf') {
+        const url = URL.createObjectURL(blob)
+        setViewingFile({ type: 'shipment', name, url, isPdf: true })
+        return
+      }
+      if (['xlsx', 'xls'].includes(ext)) {
+        const arrayBuffer = await blob.arrayBuffer()
+        const XLSX = await import('xlsx')
+        const data = new Uint8Array(arrayBuffer)
+        const workbook = XLSX.read(data, { type: 'array' })
+        const firstSheetName = workbook.SheetNames[0]
+        const worksheet = workbook.Sheets[firstSheetName]
+        const excelHtml = XLSX.utils.sheet_to_html(worksheet)
+        setViewingFile({ type: 'shipment', name, isPdf: false, isExcel: true, excelHtml })
+        return
+      }
+      if (ext === 'csv') {
+        const csvText = await blob.text()
+        setViewingFile({ type: 'shipment', name, isPdf: false, csvText })
+        return
+      }
+      const contentType = (res.headers.get('content-type') || '').toLowerCase()
+      if (contentType.includes('application/pdf')) {
+        const url = URL.createObjectURL(blob)
+        setViewingFile({ type: 'shipment', name, url, isPdf: true })
+      } else {
+        const csvText = await blob.text()
+        setViewingFile({ type: 'shipment', name, isPdf: false, csvText })
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('Failed to load document', 'error')
+    }
+  }
+
+  // Measure PDF viewer container width (same as ShipmentVerification)
+  useEffect(() => {
+    if (!viewingFile?.isPdf) return
+    const el = pdfViewerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width
+      if (typeof w === 'number' && w > 0) setPdfViewerWidth(w)
+    })
+    ro.observe(el)
+    setPdfViewerWidth(el.getBoundingClientRect().width || 600)
+    return () => ro.disconnect()
+  }, [viewingFile?.isPdf])
+
+  const formatDate = (iso) => {
+    if (!iso) return '—'
+    try {
+      const d = new Date(iso)
+      return isNaN(d.getTime()) ? iso : d.toLocaleString()
+    } catch {
+      return iso
+    }
+  }
+
+  const searchLower = (searchQuery || '').toLowerCase().trim()
+  const filteredReports = searchLower
+    ? data.saved_reports.filter((r) => (r.name || '').toLowerCase().includes(searchLower) || (formatDate(r.saved_at) || '').toLowerCase().includes(searchLower))
+    : data.saved_reports
+  const filteredShipments = searchLower
+    ? data.shipment_documents.filter((s) => (s.name || '').toLowerCase().includes(searchLower) || (formatDate(s.saved_at) || '').toLowerCase().includes(searchLower))
+    : data.shipment_documents
+
+  const deleteReport = async (name) => {
+    try {
+      const res = await fetch(`${baseUrl}/api/accounting/directory/report/${encodeURIComponent(name)}`, { method: 'DELETE', headers: getAuthHeaders() })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.message || 'Failed to delete')
+      showToast('Report deleted', 'success')
+      setOpenMenuKey(null)
+      setConfirmDeleteKey(null)
+      loadDirectory()
+    } catch (err) {
+      showToast(err.message || 'Failed to delete report', 'error')
+    }
+  }
+
+  const deleteShipment = async (id, name) => {
+    try {
+      const res = await fetch(`${baseUrl}/api/accounting/directory/shipment/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.message || 'Failed to delete')
+      showToast('Document removed', 'success')
+      setOpenMenuKey(null)
+      setConfirmDeleteKey(null)
+      loadDirectory()
+    } catch (err) {
+      showToast(err.message || 'Failed to remove document', 'error')
+    }
+  }
+
+  const menuStyle = {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: '4px',
+    minWidth: '120px',
+    backgroundColor: isDarkMode ? '#2d2d2d' : '#fff',
+    border: isDarkMode ? '1px solid #333' : '1px solid #e5e7eb',
+    borderRadius: '6px',
+    boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.15)',
+    zIndex: 9999,
+    overflow: 'hidden'
+  }
+  const menuItemStyle = {
+    display: 'block',
+    width: '100%',
+    padding: '10px 14px',
+    textAlign: 'left',
+    border: 'none',
+    background: 'none',
+    color: isDarkMode ? '#fff' : '#333',
+    fontSize: '14px',
+    cursor: 'pointer',
+    transition: 'background-color 0.15s'
+  }
+
+  if (loading) {
+    return <div style={{ color: textColor, padding: '40px', textAlign: 'center' }}>Loading directory...</div>
+  }
 
   return (
     <div>
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
-        gap: '16px',
-        marginBottom: '24px'
-      }}>
-        <MetricCard 
-          title="Total Debits" 
-          value={formatCurrency(totalDebits)}
-          color="#10b981"
-          cardBackgroundColor={cardBg}
-          borderColor={borderColor}
-          textColor={textColor}
-        />
-        <MetricCard 
-          title="Total Credits" 
-          value={formatCurrency(totalCredits)}
-          color="#3b82f6"
-          cardBackgroundColor={cardBg}
-          borderColor={borderColor}
-          textColor={textColor}
-        />
-        <MetricCard 
-          title="Net Income" 
-          value={formatCurrency(netIncome)}
-          color={netIncome >= 0 ? "#10b981" : "#ef4444"}
-          cardBackgroundColor={cardBg}
-          borderColor={borderColor}
-          textColor={textColor}
-        />
-        <MetricCard 
-          title="Balance Check" 
-          value={Math.abs(totalDebits - totalCredits) < 0.01 ? "✓ Balanced" : "⚠ Unbalanced"}
-          color={Math.abs(totalDebits - totalCredits) < 0.01 ? "#10b981" : "#ef4444"}
-          cardBackgroundColor={cardBg}
-          borderColor={borderColor}
-          textColor={textColor}
-        />
+      <div style={{ marginBottom: '24px' }}>
+        <h1 style={{ fontSize: '16px', fontWeight: 500, color: isDarkMode ? '#9ca3af' : '#6b7280', margin: 0 }}>Directory</h1>
+        <p style={{ fontSize: '14px', color: isDarkMode ? '#9ca3af' : '#6b7280', marginTop: '4px' }}>Saved reports and shipment documents. Use <strong>Save</strong> on each report to add it here.</p>
       </div>
 
-      {/* POS Summary – transactions from actual POS */}
-      {data?.dashboard?.pos_summary && (
-        <div style={{ marginTop: '24px' }}>
-          <h3 style={{ color: textColor, marginBottom: '12px' }}>POS Summary (date range)</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-            <MetricCard title="Transactions" value={String(data.dashboard.pos_summary.transaction_count ?? 0)} color="#6366f1" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="Revenue" value={formatCurrency(data.dashboard.pos_summary.revenue)} color="#10b981" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="Tax Collected" value={formatCurrency(data.dashboard.pos_summary.tax_collected)} color="#3b82f6" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="CC/Processing Fees" value={formatCurrency(data.dashboard.pos_summary.transaction_fees)} color="#f59e0b" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="Returns" value={formatCurrency(data.dashboard.pos_summary.returns_total)} color="#ef4444" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="COGS" value={formatCurrency(data.dashboard.pos_summary.cogs)} color="#8b5cf6" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="Margin (Price − Cost)" value={formatCurrency(data.dashboard.pos_summary.margin)} color={((data.dashboard.pos_summary.margin || 0) >= 0) ? '#10b981' : '#ef4444'} cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
+      <div style={{ marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: '200px', display: 'flex', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Search reports and documents..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '8px 0',
+                border: 'none',
+                borderBottom: isDarkMode ? '2px solid #404040' : '2px solid #ddd',
+                borderRadius: 0,
+                backgroundColor: 'transparent',
+                outline: 'none',
+                fontSize: '14px',
+                boxSizing: 'border-box',
+                color: isDarkMode ? '#fff' : '#333',
+                transition: 'border-color 0.2s ease'
+              }}
+              onFocus={(e) => {
+                e.target.style.borderBottomColor = `rgba(${themeColorRgb}, 0.7)`
+              }}
+              onBlur={(e) => {
+                e.target.style.borderBottomColor = isDarkMode ? '#404040' : '#ddd'
+              }}
+            />
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Labor – hours worked and labor cost (always show so users see the section and hint) */}
-      {data?.labor && (
-        <div style={{ marginTop: '24px' }}>
-          <h3 style={{ color: textColor, marginBottom: '12px' }}>Labor (hours worked)</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '12px' }}>
-            <MetricCard title="Total Hours" value={String(data.labor.total_hours ?? 0)} color="#0ea5e9" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
-            <MetricCard title="Labor Cost" value={formatCurrency(data.labor.total_labor_cost)} color="#06b6d4" cardBackgroundColor={cardBg} borderColor={borderColor} textColor={textColor} />
+      <div style={{ marginBottom: '32px' }}>
+        <h4 style={{ color: textColor, marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Saved Reports</h4>
+        <div
+          style={{
+            backgroundColor: isDarkMode ? '#2a2a2a' : 'white',
+            borderRadius: '8px',
+            boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
+            overflow: 'visible'
+          }}
+        >
+          <div style={{ padding: '16px 24px', borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+            <p style={{ fontSize: '14px', color: textSecondary, margin: 0 }}>Showing {filteredReports.length} of {data.saved_reports.length} reports</p>
           </div>
-          <p style={{ color: textColor, opacity: 0.8, fontSize: '13px' }}>Configure hourly wage per employee in <strong>Employees</strong>.</p>
-          {Array.isArray(data.labor.entries) && data.labor.entries.length > 0 && (
-            <div style={{ overflowX: 'auto', marginTop: '8px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${borderColor}` }}>
-                    <th style={{ textAlign: 'left', padding: '8px', color: textColor }}>Employee</th>
-                    <th style={{ textAlign: 'right', padding: '8px', color: textColor }}>Hours</th>
-                    <th style={{ textAlign: 'right', padding: '8px', color: textColor }}>Hourly rate</th>
-                    <th style={{ textAlign: 'right', padding: '8px', color: textColor }}>Labor cost</th>
+          {filteredReports.length === 0 ? (
+            <div style={{ padding: '24px', color: textColor, opacity: 0.7 }}>No saved reports yet. Generate a report (Trial Balance, P&amp;L, Balance Sheet, Cash Flow) and click <strong>Save</strong> to add it here.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}`, backgroundColor: isDarkMode ? '#1f1f1f' : '#f9fafb' }}>
+                  <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: '12px', fontWeight: 500, color: textSecondary, textTransform: 'uppercase' }}>Name</th>
+                  <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: '12px', fontWeight: 500, color: textSecondary, textTransform: 'uppercase' }}>Saved</th>
+                  <th style={{ textAlign: 'right', padding: '12px 24px', fontSize: '12px', fontWeight: 500, color: textSecondary, textTransform: 'uppercase' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredReports.map((item) => (
+                  <tr key={item.name} style={{ borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}` }}>
+                    <td style={{ padding: '12px 24px', color: isDarkMode ? '#e5e7eb' : '#111', fontWeight: 500 }}>{item.name}</td>
+                    <td style={{ padding: '12px 24px', color: textSecondary }}>{formatDate(item.saved_at)}</td>
+                    <td style={{ padding: '12px 24px', textAlign: 'right' }}>
+                      <div ref={(openMenuKey === ('report:' + item.name) || confirmDeleteKey === ('report:' + item.name)) ? menuRef : null} style={{ position: 'relative', display: 'inline-block' }}>
+                        <button
+                          type="button"
+                          onClick={() => { setOpenMenuKey((k) => (k === 'report:' + item.name ? null : 'report:' + item.name)); setConfirmDeleteKey(null) }}
+                          aria-label="Actions"
+                          style={{
+                            padding: '4px 8px',
+                            backgroundColor: openMenuKey === 'report:' + item.name ? (isDarkMode ? '#3a3a3a' : '#eee') : 'transparent',
+                            color: textSecondary,
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '18px',
+                            lineHeight: 1
+                          }}
+                          onMouseEnter={(e) => { if (openMenuKey !== 'report:' + item.name) { e.target.style.color = textColor; e.target.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#eee' } }}
+                          onMouseLeave={(e) => { if (openMenuKey !== 'report:' + item.name) { e.target.style.color = textSecondary; e.target.style.backgroundColor = 'transparent' } }}
+                        >
+                          ⋮
+                        </button>
+                        {openMenuKey === 'report:' + item.name && !confirmDeleteKey && (
+                          <div role="menu" style={menuStyle}>
+                            <button
+                              role="menuitem"
+                              type="button"
+                              style={menuItemStyle}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f0f0f0' }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent' }}
+                              onClick={() => { viewReport(item.name); setOpenMenuKey(null) }}
+                            >
+                              View
+                            </button>
+                            <button
+                              role="menuitem"
+                              type="button"
+                              style={menuItemStyle}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f0f0f0' }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent' }}
+                              onClick={() => { setOpenMenuKey(null); setConfirmDeleteKey('report:' + item.name) }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                        {confirmDeleteKey === 'report:' + item.name && (
+                          <div role="dialog" aria-label="Confirm delete" style={{ ...menuStyle, minWidth: '200px', padding: '12px 14px' }}>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: textColor }}>Delete &quot;{item.name}&quot;?</p>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteKey(null)}
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '13px',
+                                  borderRadius: '6px',
+                                  border: `1px solid ${borderColorLight}`,
+                                  background: bgPrimary,
+                                  color: textColor,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteReport(item.name)}
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '13px',
+                                  borderRadius: '6px',
+                                  border: 'none',
+                                  background: isDarkMode ? '#dc2626' : '#ef4444',
+                                  color: '#fff',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {data.labor.entries.map((e, i) => (
-                    <tr key={i} style={{ borderBottom: `1px solid ${borderColor}` }}>
-                      <td style={{ padding: '8px', color: textColor }}>{e.employee_name || `Employee ${e.employee_id}`}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: textColor }}>{e.hours}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: textColor }}>{formatCurrency(e.hourly_rate)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', color: textColor }}>{formatCurrency(e.labor_cost)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
-      )}
-      
-      <div style={{ 
-        padding: '20px',
-        backgroundColor: cardBg,
-        border: `1px solid ${borderColor}`,
-        borderRadius: '8px',
-        marginTop: '24px'
-      }}>
-        <h3 style={{ ...formTitleStyle(isDarkMode), marginBottom: '16px', fontSize: '18px' }}>Quick Links</h3>
-        <p style={{ color: textColor, opacity: 0.8, fontSize: '14px', lineHeight: '1.8' }}>
-          Welcome to the Accounting System! This system uses double-entry bookkeeping principles.
-          <br /><br />
-          <strong>Key Features:</strong>
-          <br />• Chart of Accounts with hierarchical structure
-          <br />• Journal Entries with automatic balance validation
-          <br />• Invoice and Bill management
-          <br />• Customer and Vendor tracking
-          <br />• Financial Reports (Trial Balance, Income Statement, Balance Sheet)
-          <br />• Complete audit trail
-        </p>
       </div>
+
+      <div>
+        <h4 style={{ color: textColor, marginBottom: '12px', fontSize: '16px', fontWeight: 600 }}>Shipment Documents (uploaded)</h4>
+        <div
+          style={{
+            backgroundColor: isDarkMode ? '#2a2a2a' : 'white',
+            borderRadius: '8px',
+            boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
+            overflow: 'visible'
+          }}
+        >
+          <div style={{ padding: '16px 24px', borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+            <p style={{ fontSize: '14px', color: textSecondary, margin: 0 }}>Showing {filteredShipments.length} of {data.shipment_documents.length} documents</p>
+          </div>
+          {filteredShipments.length === 0 ? (
+            <div style={{ padding: '24px', color: textColor, opacity: 0.7 }}>No shipment documents yet. Documents uploaded when creating or previewing a shipment will appear here.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}`, backgroundColor: isDarkMode ? '#1f1f1f' : '#f9fafb' }}>
+                  <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: '12px', fontWeight: 500, color: textSecondary, textTransform: 'uppercase' }}>Name</th>
+                  <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: '12px', fontWeight: 500, color: textSecondary, textTransform: 'uppercase' }}>Uploaded</th>
+                  <th style={{ textAlign: 'right', padding: '12px 24px', fontSize: '12px', fontWeight: 500, color: textSecondary, textTransform: 'uppercase' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredShipments.map((item) => (
+                  <tr key={'s-' + item.id} style={{ borderBottom: `1px solid ${isDarkMode ? '#3a3a3a' : '#e5e7eb'}` }}>
+                    <td style={{ padding: '12px 24px', color: isDarkMode ? '#e5e7eb' : '#111', fontWeight: 500 }}>{item.name}</td>
+                    <td style={{ padding: '12px 24px', color: textSecondary }}>{formatDate(item.saved_at)}</td>
+                    <td style={{ padding: '12px 24px', textAlign: 'right' }}>
+                      <div ref={(openMenuKey === ('shipment:' + item.id) || confirmDeleteKey === ('shipment:' + item.id)) ? menuRef : null} style={{ position: 'relative', display: 'inline-block' }}>
+                        <button
+                          type="button"
+                          onClick={() => { setOpenMenuKey((k) => (k === 'shipment:' + item.id ? null : 'shipment:' + item.id)); setConfirmDeleteKey(null) }}
+                          aria-label="Actions"
+                          style={{
+                            padding: '4px 8px',
+                            backgroundColor: openMenuKey === 'shipment:' + item.id ? (isDarkMode ? '#3a3a3a' : '#eee') : 'transparent',
+                            color: textSecondary,
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '18px',
+                            lineHeight: 1
+                          }}
+                          onMouseEnter={(e) => { if (openMenuKey !== 'shipment:' + item.id) { e.target.style.color = textColor; e.target.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#eee' } }}
+                          onMouseLeave={(e) => { if (openMenuKey !== 'shipment:' + item.id) { e.target.style.color = textSecondary; e.target.style.backgroundColor = 'transparent' } }}
+                        >
+                          ⋮
+                        </button>
+                        {openMenuKey === 'shipment:' + item.id && !confirmDeleteKey && (
+                          <div role="menu" style={menuStyle}>
+                            <button
+                              role="menuitem"
+                              type="button"
+                              style={menuItemStyle}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f0f0f0' }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent' }}
+                              onClick={() => { viewShipment(item.id); setOpenMenuKey(null) }}
+                            >
+                              View
+                            </button>
+                            <button
+                              role="menuitem"
+                              type="button"
+                              style={menuItemStyle}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = isDarkMode ? '#3a3a3a' : '#f0f0f0' }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent' }}
+                              onClick={() => { setOpenMenuKey(null); setConfirmDeleteKey('shipment:' + item.id) }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                        {confirmDeleteKey === 'shipment:' + item.id && (
+                          <div role="dialog" aria-label="Confirm delete" style={{ ...menuStyle, minWidth: '200px', padding: '12px 14px' }}>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: textColor }}>Delete &quot;{item.name}&quot;?</p>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteKey(null)}
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '13px',
+                                  borderRadius: '6px',
+                                  border: `1px solid ${borderColorLight}`,
+                                  background: bgPrimary,
+                                  color: textColor,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteShipment(item.id, item.name)}
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '13px',
+                                  borderRadius: '6px',
+                                  border: 'none',
+                                  background: isDarkMode ? '#dc2626' : '#ef4444',
+                                  color: '#fff',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* In-page viewer modal – same style as Shipment Verification document preview */}
+      {viewingFile && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: isDarkMode ? 'rgba(0,0,0,0.9)' : 'rgba(0,0,0,0.85)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px'
+          }}
+        >
+          {(viewingFile.isExcel && viewingFile.excelHtml) && (
+            <style>{`
+              .file-preview-container .excel-preview table { width: 100%; border-collapse: collapse; font-size: 13px; }
+              .file-preview-container .excel-preview td, .file-preview-container .excel-preview th { border: 1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}; padding: 8px; text-align: left; }
+              .file-preview-container .excel-preview th { background-color: ${isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f5f5f5'}; font-weight: 600; }
+              .file-preview-container .excel-preview tr:nth-child(even) { background-color: ${isDarkMode ? 'rgba(255, 255, 255, 0.02)' : '#f9f9f9'}; }
+            `}</style>
+          )}
+          <div
+            className="file-preview-container"
+            style={{
+              width: '100%',
+              maxWidth: '900px',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+              borderRadius: '8px',
+              overflow: 'hidden',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f9f9f9'
+            }}
+          >
+            {/* Filename header – same as Shipment Verification */}
+            <div style={{
+              padding: '12px 16px',
+              borderBottom: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+              backgroundColor: bgPrimary,
+              fontWeight: 600,
+              fontSize: '14px',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px'
+            }}>
+              <span>{viewingFile.name}</span>
+              <button
+                type="button"
+                onClick={closeViewer}
+                style={{
+                  padding: '6px 10px',
+                  border: `1px solid ${borderColorLight}`,
+                  borderRadius: '6px',
+                  background: bgPrimary,
+                  color: isDarkMode ? '#fff' : '#333',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px'
+                }}
+              >
+                <X size={16} /> Close
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: viewingFile.isPdf ? 0 : '16px' }}>
+              {viewingFile.isPdf ? (
+                <>
+                  {/* Toolbar – same as Shipment Verification */}
+                  <div style={{
+                    padding: '8px 16px',
+                    borderBottom: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#eee'}`,
+                    backgroundColor: bgSecondary,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    flexWrap: 'wrap'
+                  }}>
+                    <span style={{ fontSize: '13px', color: textSecondary }}>
+                      {pdfNumPages != null ? `${pdfNumPages} page${pdfNumPages !== 1 ? 's' : ''}` : 'Loading…'}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        type="button"
+                        aria-label="Zoom out"
+                        onClick={() => setPdfZoom(z => Math.max(50, z - 25))}
+                        style={{
+                          width: '32px',
+                          height: '28px',
+                          padding: 0,
+                          border: `1px solid ${borderColorLight}`,
+                          borderRadius: '6px',
+                          background: bgPrimary,
+                          color: isDarkMode ? '#fff' : '#333',
+                          fontSize: '18px',
+                          lineHeight: 1,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        −
+                      </button>
+                      <span style={{
+                        minWidth: '52px',
+                        fontSize: '13px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        textAlign: 'center'
+                      }}>
+                        {pdfZoom}%
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Zoom in"
+                        onClick={() => setPdfZoom(z => Math.min(200, z + 25))}
+                        style={{
+                          width: '32px',
+                          height: '28px',
+                          padding: 0,
+                          border: `1px solid ${borderColorLight}`,
+                          borderRadius: '6px',
+                          background: bgPrimary,
+                          color: isDarkMode ? '#fff' : '#333',
+                          fontSize: '18px',
+                          lineHeight: 1,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <a
+                      href={viewingFile.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: '13px',
+                        color: `rgba(${themeColorRgb}, 1)`,
+                        textDecoration: 'none',
+                        fontWeight: 500
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        window.open(viewingFile.url, '_blank', 'noopener')
+                      }}
+                    >
+                      Open in new tab
+                    </a>
+                  </div>
+                  {/* PDF viewer area – same as Shipment Verification */}
+                  <div
+                    ref={pdfViewerRef}
+                    style={{
+                      flex: 1,
+                      height: 'calc(90vh - 120px)',
+                      minHeight: '400px',
+                      overflow: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      padding: '16px 0',
+                      backgroundColor: isDarkMode ? '#525252' : '#888',
+                      userSelect: 'text'
+                    }}
+                  >
+                    <Document
+                      file={viewingFile.url}
+                      onLoadSuccess={({ numPages }) => setPdfNumPages(numPages)}
+                      loading={
+                        <div style={{
+                          padding: '40px',
+                          color: isDarkMode ? '#fff' : '#333',
+                          textAlign: 'center'
+                        }}>
+                          Loading document…
+                        </div>
+                      }
+                      error={
+                        <div style={{
+                          padding: '40px',
+                          color: isDarkMode ? '#ff6b6b' : '#c62828',
+                          textAlign: 'center'
+                        }}>
+                          Failed to load PDF. Use &quot;Open in new tab&quot; to view.
+                        </div>
+                      }
+                    >
+                      {Array.from(new Array(pdfNumPages || 0), (_, i) => {
+                        const baseWidth = Math.min(pdfViewerWidth - 32, 800)
+                        const scaledWidth = baseWidth * (pdfZoom / 100)
+                        return (
+                          <Page
+                            key={i}
+                            pageNumber={i + 1}
+                            width={scaledWidth}
+                            renderTextLayer={true}
+                            renderAnnotationLayer={true}
+                            style={{
+                              marginBottom: '16px',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                            }}
+                          />
+                        )
+                      })}
+                    </Document>
+                  </div>
+                </>
+              ) : viewingFile.isExcel && viewingFile.excelHtml ? (
+                <div
+                  dangerouslySetInnerHTML={{ __html: viewingFile.excelHtml }}
+                  style={{
+                    backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                  }}
+                  className="excel-preview"
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '100%',
+                    backgroundColor: bgPrimary,
+                    border: `1px solid ${borderColor}`,
+                    borderRadius: '8px',
+                    overflow: 'auto',
+                    padding: '16px'
+                  }}
+                >
+                  <pre
+                    style={{
+                      margin: 0,
+                      fontSize: '13px',
+                      fontFamily: 'ui-monospace, monospace',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    {viewingFile.csvText || ''}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2136,10 +2742,11 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
 }
 
 // Financial Statements Tab (Income Statement, Balance Sheet, Cash Flow with dropdown)
-function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, themeColorRgb, isDarkMode }) {
+function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, setActiveTab, themeColorRgb, isDarkMode, directoryRefreshRef }) {
   const [reportType, setReportType] = useState('profit-loss')
   const [generateButtonState, setGenerateButtonState] = useState({ loading: false, disabled: true, hasReportData: false })
   const [exportChoice, setExportChoice] = useState('')
+  const [saving, setSaving] = useState(false)
   const generateReportRef = useRef(null)
   const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
 
@@ -2154,6 +2761,9 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
     if (v === 'csv') generateReportRef.current?.exportToCsv()
     else if (v === 'excel') generateReportRef.current?.exportToExcel()
     else if (v === 'print') generateReportRef.current?.print()
+  }
+  const handleSaveToDirectory = () => {
+    generateReportRef.current?.saveToDirectory?.()
   }
 
   return (
@@ -2200,19 +2810,28 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
           disabled={!generateButtonState.hasReportData}
           style={{ marginBottom: 0, width: 'auto' }}
         />
+        <Button
+          type="button"
+          onClick={handleSaveToDirectory}
+          disabled={!generateButtonState.hasReportData || saving}
+          themeColorRgb={themeColorRgb}
+          isDarkMode={isDarkMode}
+        >
+          {saving ? 'Saving...' : 'Save to directory'}
+        </Button>
       </div>
 
       {reportType === 'trial-balance' && (
-        <TrialBalanceTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
+        <TrialBalanceTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} directoryRefreshRef={directoryRefreshRef} setSaving={setSaving} />
       )}
       {reportType === 'profit-loss' && (
-        <ProfitLossTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
+        <ProfitLossTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} directoryRefreshRef={directoryRefreshRef} setSaving={setSaving} />
       )}
       {reportType === 'balance-sheet' && (
-        <BalanceSheetTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
+        <BalanceSheetTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} directoryRefreshRef={directoryRefreshRef} setSaving={setSaving} />
       )}
       {reportType === 'cash-flow' && (
-        <CashFlowTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />
+        <CashFlowTab ref={generateReportRef} onGenerateStateChange={setGenerateButtonState} dateRange={dateRange} formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} setActiveTab={setActiveTab} hideTitle themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} directoryRefreshRef={directoryRefreshRef} setSaving={setSaving} />
       )}
     </div>
   )
@@ -2220,7 +2839,7 @@ function FinancialStatementsTab({ dateRange, formatCurrency, getAuthHeaders, set
 
 // Trial Balance Tab (Financial Statements dropdown)
 const TrialBalanceTab = forwardRef(function TrialBalanceTab(
-  { dateRange, formatCurrency, getAuthHeaders, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange },
+  { dateRange, formatCurrency, getAuthHeaders, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange, directoryRefreshRef, setSaving },
   ref
 ) {
   const { show: showToast } = useToast()
@@ -2333,6 +2952,58 @@ const TrialBalanceTab = forwardRef(function TrialBalanceTab(
     showToast('Report exported to CSV', 'success')
   }
 
+  const handleSaveToDirectory = async () => {
+    if (!reportData) {
+      showToast('No report data to save', 'error')
+      return
+    }
+    setSaving?.(true)
+    try {
+      const payload = reportData?.data ?? reportData
+      const accounts = payload.accounts ?? []
+      const num = (v) => (parseFloat(v) || 0)
+      const totalDebits = num(payload.total_debits)
+      const totalCredits = num(payload.total_credits)
+      const asOfDate = payload.date ? new Date(payload.date).toLocaleDateString() : filters.as_of_date
+      const rows = [
+        ['Trial Balance'],
+        [`As of ${asOfDate}`],
+        [],
+        ['Account #', 'Account Name', 'Type', 'Debits', 'Credits', 'Balance']
+      ]
+      accounts.forEach((row) => {
+        rows.push([
+          row.account_number ?? '',
+          row.account_name ?? '',
+          row.account_type ?? '',
+          num(row.total_debits).toFixed(2),
+          num(row.total_credits).toFixed(2),
+          num(row.balance).toFixed(2)
+        ])
+      })
+      rows.push(['Total', '', '', totalDebits.toFixed(2), totalCredits.toFixed(2), ''])
+      const csv = rows.map((r) => r.map((c) => `"${c}"`).join(',')).join('\n')
+      const res = await fetch('/api/accounting/reports/save', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          report_type: 'trial-balance',
+          name: `trial-balance-${filters.as_of_date}.pdf`,
+          content: csv,
+          format: 'pdf'
+        })
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.message || 'Failed to save')
+      showToast('Report saved to directory', 'success')
+      directoryRefreshRef?.current?.()
+    } catch (e) {
+      showToast(e.message || 'Failed to save report', 'error')
+    } finally {
+      setSaving?.(false)
+    }
+  }
+
   const handleExportExcel = async () => {
     if (!reportData) {
       showToast('No report data to export', 'error')
@@ -2373,8 +3044,9 @@ const TrialBalanceTab = forwardRef(function TrialBalanceTab(
     generateReport: handleGenerateReport,
     exportToCsv: handleExport,
     exportToExcel: handleExportExcel,
-    print: () => window.print()
-  }), [handleGenerateReport, handleExport, handleExportExcel])
+    print: () => window.print(),
+    saveToDirectory: handleSaveToDirectory
+  }), [handleGenerateReport, handleExport, handleExportExcel, handleSaveToDirectory])
 
   const gridStyle = {
     display: 'grid',
@@ -2507,7 +3179,7 @@ const TrialBalanceTab = forwardRef(function TrialBalanceTab(
 
 // Income Statement Tab
 const ProfitLossTab = forwardRef(function ProfitLossTab(
-  { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange },
+  { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange, directoryRefreshRef, setSaving },
   ref
 ) {
   const { show: showToast } = useToast()
@@ -2644,6 +3316,65 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     showToast('Report exported to CSV', 'success')
   }
 
+  const handleSaveToDirectory = async () => {
+    if (!reportData) {
+      showToast('No report data to save', 'error')
+      return
+    }
+    setSaving?.(true)
+    try {
+      const rows = [
+        ['Income Statement'],
+        [`Period: ${new Date(reportData.start_date).toLocaleDateString()} - ${new Date(reportData.end_date).toLocaleDateString()}`],
+        [],
+        ['Account', 'Amount', '% of Revenue'],
+        [],
+        ['REVENUE'],
+      ]
+      const num = (v) => (Number(v) || 0)
+      reportData.revenue.forEach(account => {
+        rows.push([`  ${account.account_number || ''} ${account.account_name}`, num(account.balance).toFixed(2), num(account.percentage_of_revenue).toFixed(1) + '%'])
+      })
+      rows.push(['Total Revenue', num(reportData.total_revenue).toFixed(2), '100.0%'])
+      rows.push([])
+      if (reportData.cost_of_goods_sold?.length > 0) {
+        rows.push(['COST OF GOODS SOLD'])
+        reportData.cost_of_goods_sold.forEach(account => {
+          rows.push([`  ${account.account_number || ''} ${account.account_name}`, num(account.balance).toFixed(2), num(account.percentage_of_revenue).toFixed(1) + '%'])
+        })
+        rows.push(['Total Cost of Goods Sold', num(reportData.total_cogs).toFixed(2), (num(reportData.total_cogs) / num(reportData.total_revenue) * 100).toFixed(1) + '%'])
+        rows.push(['GROSS PROFIT', num(reportData.gross_profit).toFixed(2), (num(reportData.gross_profit) / num(reportData.total_revenue) * 100).toFixed(1) + '%'])
+        rows.push([])
+      }
+      rows.push(['EXPENSES'])
+      reportData.expenses.forEach(account => {
+        rows.push([`  ${account.account_number || ''} ${account.account_name}`, num(account.balance).toFixed(2), num(account.percentage_of_revenue).toFixed(1) + '%'])
+      })
+      rows.push(['Total Expenses', num(reportData.total_expenses).toFixed(2), (num(reportData.total_expenses) / num(reportData.total_revenue) * 100).toFixed(1) + '%'])
+      rows.push([])
+      rows.push(['NET INCOME', num(reportData.net_income).toFixed(2), (num(reportData.net_income) / num(reportData.total_revenue) * 100).toFixed(1) + '%'])
+      const csvContent = rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
+      const res = await fetch('/api/accounting/reports/save', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          report_type: 'profit-loss',
+          name: `income-statement-${filters.start_date}-to-${filters.end_date}.pdf`,
+          content: csvContent,
+          format: 'pdf'
+        })
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.message || 'Failed to save')
+      showToast('Report saved to directory', 'success')
+      directoryRefreshRef?.current?.()
+    } catch (e) {
+      showToast(e.message || 'Failed to save report', 'error')
+    } finally {
+      setSaving?.(false)
+    }
+  }
+
   const handleExportExcel = async () => {
     if (!reportData) {
       showToast('No report data to export', 'error')
@@ -2707,8 +3438,9 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     generateReport: handleGenerateReport,
     exportToCsv: handleExport,
     exportToExcel: handleExportExcel,
-    print: () => window.print()
-  }), [handleGenerateReport, handleExport, handleExportExcel])
+    print: () => window.print(),
+    saveToDirectory: handleSaveToDirectory
+  }), [handleGenerateReport, handleExport, handleExportExcel, handleSaveToDirectory])
 
   return (
     <div>
@@ -2792,7 +3524,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
 
 // Balance Sheet Tab
 const BalanceSheetTab = forwardRef(function BalanceSheetTab(
-  { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange },
+  { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange, directoryRefreshRef, setSaving },
   ref
 ) {
   const { show: showToast } = useToast()
@@ -2905,6 +3637,81 @@ const BalanceSheetTab = forwardRef(function BalanceSheetTab(
     showToast('Report exported to CSV', 'success')
   }
 
+  const handleSaveToDirectory = async () => {
+    if (!reportData) {
+      showToast('No report data to save', 'error')
+      return
+    }
+    setSaving?.(true)
+    try {
+      const rows = [
+        ['Balance Sheet'],
+        [`As of: ${new Date(reportData.as_of_date).toLocaleDateString()}`],
+        [],
+        ['ASSETS']
+      ]
+      const num = (v) => (Number(v) || 0)
+      if (reportData.assets.current_assets?.length > 0) {
+        rows.push(['Current Assets'])
+        reportData.assets.current_assets.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+        rows.push(['Total Current Assets', num(reportData.assets.total_current_assets).toFixed(2)])
+      }
+      if (reportData.assets.fixed_assets?.length > 0) {
+        rows.push(['Fixed Assets'])
+        reportData.assets.fixed_assets.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+        rows.push(['Total Fixed Assets', num(reportData.assets.total_fixed_assets).toFixed(2)])
+      }
+      if (reportData.assets.other_assets?.length > 0) {
+        rows.push(['Other Assets'])
+        reportData.assets.other_assets.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+        rows.push(['Total Other Assets', num(reportData.assets.total_other_assets).toFixed(2)])
+      }
+      rows.push(['TOTAL ASSETS', num(reportData.assets.total_assets).toFixed(2)])
+      rows.push([])
+      rows.push(['LIABILITIES'])
+      if (reportData.liabilities.current_liabilities?.length > 0) {
+        rows.push(['Current Liabilities'])
+        reportData.liabilities.current_liabilities.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+        rows.push(['Total Current Liabilities', num(reportData.liabilities.total_current_liabilities).toFixed(2)])
+      }
+      if (reportData.liabilities.long_term_liabilities?.length > 0) {
+        rows.push(['Long-term Liabilities'])
+        reportData.liabilities.long_term_liabilities.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+        rows.push(['Total Long-term Liabilities', num(reportData.liabilities.total_long_term_liabilities).toFixed(2)])
+      }
+      rows.push(['TOTAL LIABILITIES', num(reportData.liabilities.total_liabilities).toFixed(2)])
+      rows.push([])
+      rows.push(['EQUITY'])
+      reportData.equity.equity_accounts?.forEach((a) => rows.push([`  ${a.account_number || ''} ${a.account_name}`, num(a.balance).toFixed(2)]))
+      if (typeof reportData.equity.inventory_valuation_adjustment === 'number' && Math.abs(reportData.equity.inventory_valuation_adjustment) >= 0.005) {
+        rows.push(['  Inventory valuation adjustment', num(reportData.equity.inventory_valuation_adjustment).toFixed(2)])
+      }
+      rows.push(['Current Year Earnings', num(reportData.equity.current_year_earnings).toFixed(2)])
+      rows.push(['TOTAL EQUITY', num(reportData.equity.total_equity).toFixed(2)])
+      rows.push([])
+      rows.push(['TOTAL LIABILITIES AND EQUITY', (num(reportData.liabilities.total_liabilities) + num(reportData.equity.total_equity)).toFixed(2)])
+      const csv = rows.map((r) => r.map((c) => `"${c}"`).join(',')).join('\n')
+      const res = await fetch('/api/accounting/reports/save', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          report_type: 'balance-sheet',
+          name: `balance-sheet-${filters.as_of_date}.pdf`,
+          content: csv,
+          format: 'pdf'
+        })
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.message || 'Failed to save')
+      showToast('Report saved to directory', 'success')
+      directoryRefreshRef?.current?.()
+    } catch (e) {
+      showToast(e.message || 'Failed to save report', 'error')
+    } finally {
+      setSaving?.(false)
+    }
+  }
+
   const handleExportExcel = async () => {
     if (!reportData) {
       showToast('No report data to export', 'error')
@@ -2978,8 +3785,9 @@ const BalanceSheetTab = forwardRef(function BalanceSheetTab(
     generateReport: handleGenerateReport,
     exportToCsv: handleExport,
     exportToExcel: handleExportExcel,
-    print: () => window.print()
-  }), [handleGenerateReport, handleExport, handleExportExcel])
+    print: () => window.print(),
+    saveToDirectory: handleSaveToDirectory
+  }), [handleGenerateReport, handleExport, handleExportExcel, handleSaveToDirectory])
 
   return (
     <div>
@@ -3039,7 +3847,7 @@ const BalanceSheetTab = forwardRef(function BalanceSheetTab(
 
 // Cash Flow Tab
 const CashFlowTab = forwardRef(function CashFlowTab(
-  { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange },
+  { dateRange, formatCurrency, getAuthHeaders, setActiveTab, hideTitle = false, themeColorRgb, isDarkMode, onGenerateStateChange, directoryRefreshRef, setSaving },
   ref
 ) {
   const { show: showToast } = useToast()
@@ -3140,6 +3948,63 @@ const CashFlowTab = forwardRef(function CashFlowTab(
     showToast('Report exported to CSV', 'success')
   }
 
+  const handleSaveToDirectory = async () => {
+    if (!reportData) {
+      showToast('No report data to save', 'error')
+      return
+    }
+    setSaving?.(true)
+    try {
+      const op = reportData.operating_activities || {}
+      const inv = reportData.investing_activities || {}
+      const fin = reportData.financing_activities || {}
+      const num = (v) => (Number(v) || 0)
+      const rows = [
+        ['Cash Flow Statement'],
+        [`Period: ${new Date(reportData.start_date).toLocaleDateString()} - ${new Date(reportData.end_date).toLocaleDateString()}`],
+        [],
+        ['OPERATING ACTIVITIES'],
+        ['Net Income', num(op.net_income).toFixed(2)]
+      ]
+      ;(op.adjustments || []).forEach((item) => rows.push([`  ${item.description}`, num(item.amount).toFixed(2)]))
+      ;(op.working_capital_changes || []).forEach((item) => rows.push([`  ${item.description}`, num(item.amount).toFixed(2)]))
+      rows.push(['Net Cash from Operating Activities', num(op.net_cash_from_operations).toFixed(2)])
+      rows.push([])
+      rows.push(['INVESTING ACTIVITIES'])
+      if ((inv.items || []).length === 0) rows.push(['  No investing activities'])
+      else (inv.items || []).forEach((item) => rows.push([`  ${item.description}`, num(item.amount).toFixed(2)]))
+      rows.push(['Net Cash from Investing Activities', num(inv.net_cash_from_investing).toFixed(2)])
+      rows.push([])
+      rows.push(['FINANCING ACTIVITIES'])
+      if ((fin.items || []).length === 0) rows.push(['  No financing activities'])
+      else (fin.items || []).forEach((item) => rows.push([`  ${item.description}`, num(item.amount).toFixed(2)]))
+      rows.push(['Net Cash from Financing Activities', num(fin.net_cash_from_financing).toFixed(2)])
+      rows.push([])
+      rows.push(['NET CHANGE IN CASH', num(reportData.net_change_in_cash).toFixed(2)])
+      rows.push(['Beginning Cash', num(reportData.beginning_cash).toFixed(2)])
+      rows.push(['ENDING CASH', num(reportData.ending_cash).toFixed(2)])
+      const csv = rows.map((r) => r.map((c) => `"${c}"`).join(',')).join('\n')
+      const res = await fetch('/api/accounting/reports/save', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          report_type: 'cash-flow',
+          name: `cash-flow-${filters.start_date}-to-${filters.end_date}.pdf`,
+          content: csv,
+          format: 'pdf'
+        })
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.message || 'Failed to save')
+      showToast('Report saved to directory', 'success')
+      directoryRefreshRef?.current?.()
+    } catch (e) {
+      showToast(e.message || 'Failed to save report', 'error')
+    } finally {
+      setSaving?.(false)
+    }
+  }
+
   const handleExportExcel = async () => {
     if (!reportData) {
       showToast('No report data to export', 'error')
@@ -3199,8 +4064,9 @@ const CashFlowTab = forwardRef(function CashFlowTab(
     generateReport: handleGenerateReport,
     exportToCsv: handleExport,
     exportToExcel: handleExportExcel,
-    print: () => window.print()
-  }), [handleGenerateReport, handleExport, handleExportExcel])
+    print: () => window.print(),
+    saveToDirectory: handleSaveToDirectory
+  }), [handleGenerateReport, handleExport, handleExportExcel, handleSaveToDirectory])
 
   return (
     <div>

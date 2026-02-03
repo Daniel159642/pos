@@ -205,7 +205,7 @@ def handle_400_error(e):
     """Handle 400 errors and return JSON"""
     error_msg = str(e) if e else 'Bad request'
     try:
-        return jsonify({'success': False, 'error': error_msg, 'message': 'Bad request'}), 400
+        return make_response(jsonify({'success': False, 'error': error_msg, 'message': 'Bad request'}), 400)
     except Exception as json_err:
         return Response(f'{{"success": false, "error": "{error_msg}", "message": "Bad request"}}', 
                        mimetype='application/json', status=400)
@@ -223,7 +223,7 @@ def handle_500_error(e):
     
     error_msg = str(e) if e else 'Internal server error'
     try:
-        return jsonify({'success': False, 'error': error_msg, 'message': 'Internal server error'}), 500
+        return make_response(jsonify({'success': False, 'error': error_msg, 'message': 'Internal server error'}), 500)
     except Exception as json_err:
         # Last resort - return plain text JSON
         return Response(f'{{"success": false, "error": "{error_msg}", "message": "Internal server error"}}', 
@@ -246,11 +246,11 @@ def after_request(response):
                     existing_data = response.get_data(as_text=True)
                     if existing_data:
                         # If response has data, wrap it in JSON
-                        return jsonify({'success': False, 'error': existing_data, 'message': 'Internal server error'}), response.status_code
+                        return make_response(jsonify({'success': False, 'error': existing_data, 'message': 'Internal server error'}), response.status_code)
                 except:
                     pass
             # If no data or parsing failed, return generic JSON error
-            return jsonify({'success': False, 'error': 'Internal server error', 'message': 'An error occurred'}), response.status_code
+            return make_response(jsonify({'success': False, 'error': 'Internal server error', 'message': 'An error occurred'}), response.status_code)
         except Exception as json_err:
             # Last resort - return plain text JSON
             error_msg = 'Internal server error'
@@ -8503,6 +8503,169 @@ if _ACCOUNTING_BACKEND_AVAILABLE:
     @app.route('/api/accounting/balance-sheet/comparative', methods=['GET'])
     def api_accounting_balance_sheet_comparative():
         return report_controller.get_comparative_balance_sheet()
+
+    ACCOUNTING_REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads', 'accounting_reports')
+
+    @app.route('/api/accounting/directory', methods=['GET'])
+    def api_accounting_directory():
+        """List saved reports and shipment documents for the accounting directory view."""
+        try:
+            saved_reports = []
+            if os.path.isdir(ACCOUNTING_REPORTS_DIR):
+                for fn in sorted(os.listdir(ACCOUNTING_REPORTS_DIR), reverse=True):
+                    fp = os.path.join(ACCOUNTING_REPORTS_DIR, fn)
+                    if os.path.isfile(fp):
+                        try:
+                            mtime = os.path.getmtime(fp)
+                            saved_reports.append({
+                                'name': fn,
+                                'saved_at': datetime.fromtimestamp(mtime).isoformat(),
+                                'type': 'report'
+                            })
+                        except OSError:
+                            pass
+            shipment_documents = []
+            conn, cur = _pg_conn()
+            try:
+                cur.execute("""
+                    SELECT pending_shipment_id, file_path, upload_timestamp
+                    FROM pending_shipments
+                    WHERE file_path IS NOT NULL AND file_path != ''
+                    ORDER BY upload_timestamp DESC NULLS LAST
+                """)
+                rows = cur.fetchall()
+                for r in rows:
+                    row = dict(r)
+                    fp = row.get('file_path') or ''
+                    name = os.path.basename(fp) if fp else "Shipment #%s" % row.get('pending_shipment_id')
+                    ts = row.get('upload_timestamp')
+                    shipment_documents.append({
+                        'id': row.get('pending_shipment_id'),
+                        'name': name,
+                        'saved_at': ts.isoformat() if hasattr(ts, 'isoformat') else str(ts) if ts else None,
+                        'type': 'shipment',
+                        'file_path': fp
+                    })
+            except Exception:
+                pass
+            finally:
+                conn.close()
+            return jsonify({
+                'success': True,
+                'data': {
+                    'saved_reports': saved_reports,
+                    'shipment_documents': shipment_documents
+                }
+            })
+        except Exception as e:
+            return make_response(jsonify({'success': False, 'message': str(e)}), 500)
+
+    @app.route('/api/accounting/reports/save', methods=['POST'])
+    def api_accounting_reports_save():
+        """Save a report file to the accounting directory. Format 'pdf' generates a PDF from CSV content."""
+        try:
+            data = request.get_json() or {}
+            name = (data.get('name') or data.get('filename') or 'report').strip()
+            content = data.get('content') or ''
+            report_type = (data.get('report_type') or 'report').replace('/', '-').replace('\\', '')
+            fmt = (data.get('format') or 'csv').lower()
+            save_as_pdf = (fmt == 'pdf')
+
+            if save_as_pdf:
+                try:
+                    from report_pdf_generator import generate_report_pdf
+                    pdf_bytes = generate_report_pdf(content, report_type)
+                    if not pdf_bytes:
+                        return make_response(jsonify({'success': False, 'message': 'PDF generation failed. Install reportlab: pip install reportlab'}), 500)
+                except Exception as pdf_err:
+                    return make_response(jsonify({'success': False, 'message': str(pdf_err)}), 500)
+                base = name.replace('.csv', '').replace('.xlsx', '').strip()
+                name = secure_filename(base) + '.pdf'
+                if not name or name == '.pdf':
+                    name = secure_filename(report_type) + '-' + datetime.now().strftime('%Y-%m-%d-%H%M') + '.pdf'
+                os.makedirs(ACCOUNTING_REPORTS_DIR, exist_ok=True)
+                file_path = os.path.join(ACCOUNTING_REPORTS_DIR, name)
+                with open(file_path, 'wb') as f:
+                    f.write(pdf_bytes)
+            else:
+                if not name.endswith('.csv'):
+                    name = name + '.csv' if fmt == 'csv' else name + '.xlsx'
+                name = secure_filename(name)
+                if not name:
+                    name = secure_filename(report_type) + '-' + datetime.now().strftime('%Y-%m-%d-%H%M') + '.csv'
+                else:
+                    base, ext = os.path.splitext(name)
+                    if not ext:
+                        name = base + '.csv'
+                os.makedirs(ACCOUNTING_REPORTS_DIR, exist_ok=True)
+                file_path = os.path.join(ACCOUNTING_REPORTS_DIR, name)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            resp = make_response(jsonify({'success': True, 'data': {'name': name, 'path': file_path}}), 200)
+            return resp
+        except Exception as e:
+            return make_response(jsonify({'success': False, 'message': str(e)}), 500)
+
+    @app.route('/api/accounting/directory/report/<path:filename>', methods=['GET', 'DELETE'])
+    def api_accounting_directory_report(filename):
+        """Serve (GET) or delete (DELETE) a saved report file from the accounting directory."""
+        try:
+            filename = secure_filename(os.path.basename(filename))
+            if not filename or filename.startswith('.'):
+                if request.method == 'DELETE':
+                    return make_response(jsonify({'success': False, 'message': 'Invalid filename'}), 400)
+                return make_response(jsonify({'error': 'Invalid filename'}), 400)
+            file_path = os.path.join(ACCOUNTING_REPORTS_DIR, filename)
+            if request.method == 'DELETE':
+                if not os.path.isfile(file_path):
+                    return make_response(jsonify({'success': False, 'message': 'File not found'}), 404)
+                os.remove(file_path)
+                return make_response(jsonify({'success': True, 'message': 'Report deleted'}), 200)
+            return send_from_directory(ACCOUNTING_REPORTS_DIR, filename, as_attachment=False)
+        except Exception as e:
+            if request.method == 'DELETE':
+                return make_response(jsonify({'success': False, 'message': str(e)}), 500)
+            return make_response(jsonify({'error': str(e)}), 404)
+
+    @app.route('/api/accounting/directory/shipment/<int:shipment_id>', methods=['GET', 'DELETE'])
+    def api_accounting_directory_shipment(shipment_id):
+        """Serve (GET) or remove (DELETE) a shipment document from the directory."""
+        try:
+            conn, cur = _pg_conn()
+            cur.execute(
+                "SELECT file_path FROM pending_shipments WHERE pending_shipment_id = %s AND file_path IS NOT NULL",
+                (shipment_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                if request.method == 'DELETE':
+                    return make_response(jsonify({'success': False, 'message': 'Shipment or document not found'}), 404)
+                return make_response(jsonify({'error': 'Shipment or document not found'}), 404)
+            fp = row.get('file_path')
+            if request.method == 'DELETE':
+                cur.execute(
+                    "UPDATE pending_shipments SET file_path = NULL WHERE pending_shipment_id = %s",
+                    (shipment_id,)
+                )
+                conn.commit()
+                if fp and os.path.isfile(fp):
+                    try:
+                        os.remove(fp)
+                    except OSError:
+                        pass
+                conn.close()
+                return make_response(jsonify({'success': True, 'message': 'Document removed'}), 200)
+            conn.close()
+            if not fp or not os.path.isfile(fp):
+                return make_response(jsonify({'error': 'File not found'}), 404)
+            directory = os.path.dirname(fp)
+            filename = os.path.basename(fp)
+            return send_from_directory(directory, filename, as_attachment=False)
+        except Exception as e:
+            if request.method == 'DELETE':
+                return make_response(jsonify({'success': False, 'message': str(e)}), 500)
+            return make_response(jsonify({'error': str(e)}), 404)
 
     @app.route('/api/accounting/cash-flow', methods=['GET'])
     def api_accounting_cash_flow():
