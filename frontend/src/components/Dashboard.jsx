@@ -6,10 +6,27 @@ import Statistics from './Statistics'
 import { ParticleCard } from './MagicBento'
 import './MagicBento.css'
 
+const MOBILE_BREAKPOINT = 768
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT)
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`)
+    const update = () => setIsMobile(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
+  return isMobile
+}
+
 function Dashboard() {
   const navigate = useNavigate()
   const { hasPermission, employee } = usePermissions()
   const { themeColor } = useTheme()
+  const isMobile = useIsMobile()
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
   })
@@ -43,6 +60,7 @@ function Dashboard() {
       description: 'Orders, returns & revenue',
       size: 'large',
       component: Statistics,
+      componentProps: { compact: true },
       isComponent: true,
       onClick: () => navigate('/statistics')
     },
@@ -81,7 +99,7 @@ function Dashboard() {
     },
     {
       id: 'recent-orders',
-      title: 'Recent Orders',
+      title: 'Orders',
       description: 'View recent orders',
       size: 'large',
       onClick: () => navigate('/recent-orders')
@@ -109,12 +127,31 @@ function Dashboard() {
     }
   ]
 
-  const renderBox = (box, isLeftColumn = false) => {
+  // Mobile order: row1 = Statistics (full width); row2 = POS, Orders; rest = two per row
+  const allBoxesById = {}
+  leftBoxes.forEach(b => { allBoxesById[b.id] = { ...b, isLeftColumn: true } })
+  rightBoxes.forEach(b => { allBoxesById[b.id] = { ...b, isLeftColumn: false } })
+  const mobileBoxes = [
+    allBoxesById['statistics'],
+    allBoxesById['pos'],
+    allBoxesById['recent-orders'],
+    allBoxesById['calendar'],
+    allBoxesById['shipment-verification'],
+    allBoxesById['customers'],
+    allBoxesById['inventory'],
+    allBoxesById['tables'],
+    ...(allBoxesById['accounting'] ? [allBoxesById['accounting']] : [])
+  ].filter(Boolean)
+
+  const renderBox = (box, isLeftColumn = false, gridColumnSpan = null) => {
     const Component = box.component
     const isComponentBox = box.isComponent
     const isStatistics = box.id === 'statistics'
     const isPOS = box.id === 'pos'
-    
+    const spanCol = gridColumnSpan ?? (isLeftColumn && isStatistics ? 2 : 1)
+    const spanRow = !isMobile && isLeftColumn && isStatistics ? 2 : 1
+    const isMobileStatsRow = isMobile && isStatistics
+
     const boxContent = (
       <div
         className={`magic-bento-card magic-bento-card--border-glow ${!isComponentBox ? 'magic-bento-card--text-autohide' : ''} ${isPOS || isStatistics ? 'magic-bento-card--lighter' : ''} ${isPOS ? 'magic-bento-card--pos' : ''} ${isStatistics && !isDarkMode ? 'magic-bento-card--white' : ''} ${isStatistics ? 'magic-bento-card--statistics-outline' : ''}`}
@@ -122,8 +159,8 @@ function Dashboard() {
           cursor: 'pointer',
           minHeight: 0,
           height: '100%',
-          gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
-          gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
+          gridColumn: spanCol > 1 ? `span ${spanCol}` : 'span 1',
+          gridRow: spanRow > 1 ? `span ${spanRow}` : 'span 1',
           '--glow-color': themeColorRgb,
           '--theme-color-rgb': themeColorRgb
         }}
@@ -151,7 +188,7 @@ function Dashboard() {
               </div>
             )}
             <div className="magic-bento-card__content" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-              <Component />
+              <Component {...(box.componentProps || {})} />
             </div>
           </>
         ) : (
@@ -189,10 +226,10 @@ function Dashboard() {
         glowColor={themeColorRgb}
         disableAnimations={false}
         style={{
-          minHeight: 0,
+          minHeight: isMobileStatsRow ? 220 : 0,
           height: '100%',
-          gridColumn: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
-          gridRow: isLeftColumn && isStatistics ? 'span 2' : 'span 1',
+          gridColumn: spanCol > 1 ? `span ${spanCol}` : 'span 1',
+          gridRow: spanRow > 1 ? `span ${spanRow}` : 'span 1',
           cursor: 'pointer'
         }}
       >
@@ -201,10 +238,42 @@ function Dashboard() {
     )
   }
 
+  if (isMobile) {
+    return (
+      <div style={{
+        padding: '12px',
+        maxWidth: '100%',
+        margin: '0 auto',
+        boxSizing: 'border-box',
+        minHeight: 'calc(100vh - 80px)',
+        height: 'auto',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: 'var(--bg-primary, white)'
+      }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '10px',
+          gridAutoRows: 'minmax(140px, auto)',
+          alignContent: 'start'
+        }}>
+          {mobileBoxes.map(box => renderBox(
+            box,
+            box.isLeftColumn,
+            box.id === 'statistics' ? 2 : null
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div style={{ 
-      padding: '12px', 
-      maxWidth: '100%', 
+    <div style={{
+      padding: '12px',
+      maxWidth: '100%',
       margin: '0 auto',
       boxSizing: 'border-box',
       height: 'calc(100vh - 80px)',

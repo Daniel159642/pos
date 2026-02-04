@@ -17,7 +17,16 @@ function RecentOrders() {
   const [loadingDetails, setLoadingDetails] = useState({})
   const [searchQuery, setSearchQuery] = useState('')
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
-  const [selectedOrderType, setSelectedOrderType] = useState('all') // 'all', 'pickup', 'delivery', or 'in-person'
+  const [scannerExpanded, setScannerExpanded] = useState(false) // for smooth open/close animation
+  const [selectedStatus, setSelectedStatus] = useState('all') // 'all' | 'in_progress' | 'out_for_delivery' | 'completed'
+  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false)
+  const filterDropdownRef = useRef(null)
+  // Extra filters (sent to API): returns, canceled, order types (Out for delivery is a top chip, delivery-only)
+  const [filterReturns, setFilterReturns] = useState(false)
+  const [filterCanceled, setFilterCanceled] = useState(false)
+  const [filterOrderTypePickup, setFilterOrderTypePickup] = useState(false)
+  const [filterOrderTypeDelivery, setFilterOrderTypeDelivery] = useState(false)
+  const [filterOrderTypeInPerson, setFilterOrderTypeInPerson] = useState(false)
   const [allOrderItems, setAllOrderItems] = useState([]) // Cache all order items for searching
   const [scannedProducts, setScannedProducts] = useState([]) // Array of {product_id, product_name, sku, barcode}
   const [orderItemsMap, setOrderItemsMap] = useState({}) // Map of order_id -> order items
@@ -52,7 +61,17 @@ function RecentOrders() {
   }
   
   const themeColorRgb = hexToRgb(themeColor)
-  
+
+  const MOBILE_BREAKPOINT = 768
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT)
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`)
+    const update = () => setIsMobile(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
   // Determine if dark mode is active
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
@@ -75,10 +94,7 @@ function RecentOrders() {
   }, [themeMode])
 
   useEffect(() => {
-    loadData()
     loadOrderItems()
-    
-    // Get employee ID for returns
     const token = localStorage.getItem('sessionToken')
     if (token) {
       fetch('/api/verify_session', {
@@ -94,7 +110,21 @@ function RecentOrders() {
         })
     }
   }, [])
-  
+
+  useEffect(() => {
+    loadData()
+  }, [filterReturns, filterCanceled, filterOrderTypePickup, filterOrderTypeDelivery, filterOrderTypeInPerson])
+
+  // Smooth scanner open: expand after mount (mobile inline only)
+  useEffect(() => {
+    if (showBarcodeScanner && isMobile) {
+      const id = setTimeout(() => setScannerExpanded(true), 50)
+      return () => clearTimeout(id)
+    } else if (!showBarcodeScanner) {
+      setScannerExpanded(false)
+    }
+  }, [showBarcodeScanner, isMobile])
+
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -103,6 +133,9 @@ function RecentOrders() {
       }
       if (exchangeTimingDropdownRef.current && !exchangeTimingDropdownRef.current.contains(event.target)) {
         setExchangeTimingDropdownOpen(false)
+      }
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) {
+        setFilterDropdownOpen(false)
       }
       // Close condition dropdowns
       Object.keys(conditionDropdownRefs.current).forEach(itemId => {
@@ -200,13 +233,24 @@ function RecentOrders() {
   const loadData = async () => {
     setLoading(true)
     setError(null)
-    
+    const params = new URLSearchParams()
+    params.set('limit', '100')
+    const statusIn = []
+    if (filterReturns) statusIn.push('returned')
+    if (filterCanceled) statusIn.push('voided')
+    if (statusIn.length) params.set('order_status_in', statusIn.join(','))
+    const typeIn = []
+    if (filterOrderTypePickup) typeIn.push('pickup')
+    if (filterOrderTypeDelivery) typeIn.push('delivery')
+    if (filterOrderTypeInPerson) typeIn.push('in-person')
+    if (typeIn.length) params.set('order_type_in', typeIn.join(','))
+    const query = params.toString()
+    const url = query ? `/api/orders?${query}` : '/api/orders?limit=100'
     try {
-      const response = await fetch('/api/orders')
+      const response = await fetch(url)
       const result = await response.json()
-      // Show only recent orders (last 50)
       if (result.data) {
-        result.data = result.data.slice(0, 50)
+        result.data = result.data.slice(0, 100)
       }
       setData(result)
     } catch (err) {
@@ -255,10 +299,6 @@ function RecentOrders() {
       }
 
       setOrder(foundOrder)
-      
-      // Highlight the order in the table
-      setHighlightedOrderId(parseInt(orderId))
-      setTimeout(() => setHighlightedOrderId(null), 5000)
 
       // Get order items
       const itemsResponse = await fetch('/api/order_items')
@@ -708,7 +748,7 @@ function RecentOrders() {
     setHighlightedOrderId(null)
   }
 
-  // Filter data based on search query, order type, scanned order, and scanned products
+  // Filter data based on search query, order status, scanned order, and scanned products
   let filteredData = processedData
 
   // First, filter by scanned order (receipt barcode) - show only that order
@@ -719,21 +759,16 @@ function RecentOrders() {
     })
   }
 
-  // Then filter by order type (skip if 'all' is selected)
-  if (selectedOrderType !== 'all') {
+  // Progress chips: In progress = placed, being_made, ready (before "Start delivery"). Out for delivery = out_for_delivery (delivery orders only). Completed = voided, paid, delivered, returned.
+  const IN_PROGRESS_STATUSES = ['placed', 'being_made', 'ready']
+  const isOrderInProgress = (orderStatus) => IN_PROGRESS_STATUSES.includes((orderStatus || 'completed').toLowerCase())
+  if (selectedStatus !== 'all') {
     filteredData = filteredData.filter(row => {
-      const rowOrderType = row.order_type || row.orderType
-      if (selectedOrderType === 'in-person') {
-        // In-person orders have null or empty order_type
-        if (rowOrderType !== null && rowOrderType !== undefined && rowOrderType !== '') {
-          return false
-        }
-      } else {
-        // Pickup or delivery orders
-        if (rowOrderType !== selectedOrderType) {
-          return false
-        }
-      }
+      const rowStatus = (row.order_status || row.orderStatus || 'completed').toLowerCase()
+      const rowType = (row.order_type || row.orderType || '').toLowerCase()
+      if (selectedStatus === 'in_progress') return isOrderInProgress(rowStatus)
+      if (selectedStatus === 'out_for_delivery') return rowStatus === 'out_for_delivery' && rowType === 'delivery'
+      if (selectedStatus === 'completed') return !isOrderInProgress(rowStatus) && rowStatus !== 'out_for_delivery'
       return true
     })
   }
@@ -935,14 +970,17 @@ function RecentOrders() {
     : ['Status', ...baseVisible]
   const columnsWithActions = [...visibleColumns, 'Actions']
 
+  const pagePadding = isMobile ? '12px' : '40px'
+  const pageMaxWidth = isMobile ? '100%' : '1400px'
+
   return (
-    <div style={{ padding: '40px', maxWidth: '1400px', margin: '0 auto', backgroundColor: '#ffffff', minHeight: '100vh' }}>
-      <div style={{ marginBottom: '20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+    <div style={{ padding: pagePadding, maxWidth: pageMaxWidth, margin: '0 auto', backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#ffffff', minHeight: '100vh', boxSizing: 'border-box' }}>
+      <div style={{ marginBottom: isMobile ? '12px' : '20px', paddingTop: isMobile ? '12px' : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px', flexWrap: 'wrap' }}>
           <div style={{ 
             position: 'relative', 
             flex: 1, 
-            minWidth: '200px',
+            minWidth: isMobile ? '0' : '200px',
             display: 'flex',
             alignItems: 'center'
           }}>
@@ -1156,8 +1194,8 @@ function RecentOrders() {
             onClick={() => setShowBarcodeScanner(true)}
             style={{
               padding: '4px',
-              width: '40px',
-              height: '40px',
+              width: isMobile ? '36px' : '40px',
+              height: isMobile ? '36px' : '40px',
               backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
@@ -1184,125 +1222,255 @@ function RecentOrders() {
             }}
             title="Scan barcode to filter by product or find order by receipt"
           >
-            <ScanBarcode size={24} />
+            <ScanBarcode size={isMobile ? 20 : 24} />
           </button>
         </div>
         
-        {/* Order Type Filters */}
-        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-          <button
-            onClick={() => setSelectedOrderType('all')}
-            style={{
-              padding: '6px 16px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-              backgroundColor: selectedOrderType === 'all' 
-                ? `rgba(${themeColorRgb}, 0.7)` 
-                : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-              border: selectedOrderType === 'all' 
-                ? `1px solid rgba(${themeColorRgb}, 0.5)` 
-                : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: selectedOrderType === 'all' ? 600 : 500,
-              color: selectedOrderType === 'all' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
-              cursor: 'pointer',
-              transition: 'all 0.3s ease',
-              boxShadow: selectedOrderType === 'all' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
-            }}
-          >
-            All
-          </button>
-          <button
-            onClick={() => setSelectedOrderType(selectedOrderType === 'pickup' ? 'all' : 'pickup')}
-            style={{
-              padding: '6px 16px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-              backgroundColor: selectedOrderType === 'pickup' 
-                ? `rgba(${themeColorRgb}, 0.7)` 
-                : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-              border: selectedOrderType === 'pickup' 
-                ? `1px solid rgba(${themeColorRgb}, 0.5)` 
-                : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: selectedOrderType === 'pickup' ? 600 : 500,
-              color: selectedOrderType === 'pickup' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
-              cursor: 'pointer',
-              transition: 'all 0.3s ease',
-              boxShadow: selectedOrderType === 'pickup' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
-            }}
-          >
-            Pickup
-          </button>
-          <button
-            onClick={() => setSelectedOrderType(selectedOrderType === 'delivery' ? 'all' : 'delivery')}
-            style={{
-              padding: '6px 16px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-              backgroundColor: selectedOrderType === 'delivery' 
-                ? `rgba(${themeColorRgb}, 0.7)` 
-                : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-              border: selectedOrderType === 'delivery' 
-                ? `1px solid rgba(${themeColorRgb}, 0.5)` 
-                : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: selectedOrderType === 'delivery' ? 600 : 500,
-              color: selectedOrderType === 'delivery' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
-              cursor: 'pointer',
-              transition: 'all 0.3s ease',
-              boxShadow: selectedOrderType === 'delivery' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
-            }}
-          >
-            Delivery
-          </button>
-          <button
-            onClick={() => setSelectedOrderType(selectedOrderType === 'in-person' ? 'all' : 'in-person')}
-            style={{
-              padding: '6px 16px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              whiteSpace: 'nowrap',
-              backgroundColor: selectedOrderType === 'in-person' 
-                ? `rgba(${themeColorRgb}, 0.7)` 
-                : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-              border: selectedOrderType === 'in-person' 
-                ? `1px solid rgba(${themeColorRgb}, 0.5)` 
-                : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: selectedOrderType === 'in-person' ? 600 : 500,
-              color: selectedOrderType === 'in-person' ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
-              cursor: 'pointer',
-              transition: 'all 0.3s ease',
-              boxShadow: selectedOrderType === 'in-person' ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
-            }}
-          >
-            In-Person
-          </button>
-        </div>
+        {/* Order Status Filters */}
+        {(() => {
+          const statusFilters = [
+            { value: 'all', label: 'All' },
+            { value: 'in_progress', label: 'In progress' },
+            { value: 'out_for_delivery', label: 'Out for delivery' },
+            { value: 'completed', label: 'Completed' }
+          ]
+            return (
+            <div style={{ display: 'flex', gap: isMobile ? '6px' : '8px', marginTop: isMobile ? '8px' : '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+              {statusFilters.map(({ value, label }) => {
+                const isSelected = selectedStatus === value
+                return (
+                  <button
+                    key={value}
+                    onClick={() => setSelectedStatus(value === 'all' ? 'all' : (isSelected ? 'all' : value))}
+                    style={{
+                      padding: isMobile ? '5px 12px' : '6px 16px',
+                      height: isMobile ? '28px' : '32px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                      fontSize: isMobile ? '13px' : '14px',
+                      backgroundColor: isSelected
+                        ? `rgba(${themeColorRgb}, 0.7)`
+                        : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                      border: isSelected
+                        ? `1px solid rgba(${themeColorRgb}, 0.5)`
+                        : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: isSelected ? 600 : 500,
+                      color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                    }}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+              {/* Filter button with dropdown */}
+              <div ref={filterDropdownRef} style={{ position: 'relative', marginLeft: isMobile ? '0' : 'auto' }}>
+                <button
+                  type="button"
+                  onClick={() => setFilterDropdownOpen(prev => !prev)}
+                  style={{
+                    padding: isMobile ? '5px 10px' : '6px 14px',
+                    height: isMobile ? '28px' : '32px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    whiteSpace: 'nowrap',
+                    fontSize: isMobile ? '13px' : '14px',
+                    backgroundColor: (filterReturns || filterCanceled || filterOrderTypePickup || filterOrderTypeDelivery || filterOrderTypeInPerson)
+                      ? `rgba(${themeColorRgb}, 0.5)`
+                      : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Filter
+                </button>
+                {filterDropdownOpen && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      right: 0,
+                      marginTop: '6px',
+                      minWidth: '220px',
+                      padding: '12px',
+                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                      borderRadius: '8px',
+                      boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.1)',
+                      zIndex: 1000
+                    }}
+                  >
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginBottom: '8px', textTransform: 'uppercase' }}>Status</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                      <input type="checkbox" checked={filterReturns} onChange={() => setFilterReturns(v => !v)} />
+                      Returns
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                      <input type="checkbox" checked={filterCanceled} onChange={() => setFilterCanceled(v => !v)} />
+                      Canceled
+                    </label>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginTop: '12px', marginBottom: '8px', textTransform: 'uppercase' }}>Order type</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                      <input type="checkbox" checked={filterOrderTypePickup} onChange={() => setFilterOrderTypePickup(v => !v)} />
+                      Pickup
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                      <input type="checkbox" checked={filterOrderTypeDelivery} onChange={() => setFilterOrderTypeDelivery(v => !v)} />
+                      Delivery
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                      <input type="checkbox" checked={filterOrderTypeInPerson} onChange={() => setFilterOrderTypeInPerson(v => !v)} />
+                      In-person
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()}
       </div>
+
+      {/* Barcode Scanner - inline below filters on mobile only, smooth expand/collapse */}
+      {(showBarcodeScanner || scannerExpanded) && isMobile && (
+        <div
+          style={{
+            maxHeight: scannerExpanded ? '420px' : '0',
+            overflow: 'hidden',
+            transition: 'max-height 0.35s ease-out',
+            marginBottom: scannerExpanded ? '16px' : '0',
+            transitionProperty: 'max-height, margin-bottom'
+          }}
+          onTransitionEnd={() => {
+            if (!scannerExpanded) setShowBarcodeScanner(false)
+          }}
+        >
+          {showBarcodeScanner && (
+            <BarcodeScanner
+              onScan={handleBarcodeScan}
+              onClose={() => setScannerExpanded(false)}
+              themeColor={themeColor}
+              inline
+            />
+          )}
+        </div>
+      )}
+
+      {/* Barcode Scanner - modal overlay on desktop */}
+      {showBarcodeScanner && !isMobile && (
+        <BarcodeScanner
+          onScan={handleBarcodeScan}
+          onClose={() => setShowBarcodeScanner(false)}
+          themeColor={themeColor}
+        />
+      )}
+
       <div style={{ overflowX: 'auto' }}>
-        {loading && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Loading...</div>}
-        {error && <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>{error}</div>}
+        {loading && <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>Loading...</div>}
+        {error && <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#e57373' : '#c62828' }}>{error}</div>}
         {!loading && !error && data && (
           data.data && data.data.length > 0 ? (
+            isMobile ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {filteredData.map((row, idx) => {
+                  const orderId = row.order_id || row.orderId
+                  const normalizedOrderId = parseInt(orderId)
+                  const isExpanded = expandedRow === normalizedOrderId
+                  const details = orderDetails[normalizedOrderId]
+                  const isLoading = loadingDetails[normalizedOrderId]
+                  const isHighlighted = highlightedOrderId === normalizedOrderId
+                  const totalVal = row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0)
+                  const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
+                  return (
+                    <div
+                      key={normalizedOrderId || idx}
+                      onClick={() => handleRowClick(row)}
+                      style={{
+                        backgroundColor: isHighlighted ? `rgba(${themeColorRgb}, 0.2)` : (isDarkMode ? 'var(--bg-secondary)' : '#fff'),
+                        borderRadius: '10px',
+                        padding: '14px',
+                        boxShadow: isDarkMode ? '0 1px 4px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.08)',
+                        border: isHighlighted ? `2px solid rgba(${themeColorRgb}, 0.6)` : (isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee'),
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                        <span style={{ fontWeight: 600, fontSize: '15px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+                          {row.order_number || `#${orderId}`}
+                        </span>
+                        <span style={{ fontSize: '14px', fontWeight: 600, color: `rgba(${themeColorRgb}, 1)` }}>{totalStr}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                        <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
+                          {formatOrderDate(row.order_date || row.orderDate || '')}
+                        </span>
+                        <span style={{ fontSize: '12px', fontWeight: 500, color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>
+                          {getStatusDisplay(row)}
+                        </span>
+                      </div>
+                      {isExpanded && (
+                        <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
+                          {isLoading ? (
+                            <div style={{ textAlign: 'center', padding: '12px', color: isDarkMode ? '#999' : '#999', fontSize: '13px' }}>Loading...</div>
+                          ) : details ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Subtotal</span>
+                                <span>${(parseFloat(details.subtotal) || 0).toFixed(2)}</span>
+                              </div>
+                              {details.items && details.items.length > 0 && (
+                                <div style={{ marginTop: '4px' }}>
+                                  <div style={{ fontWeight: 600, marginBottom: '6px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Items</div>
+                                  {details.items.slice(0, 5).map((item, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                                      <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>{item.product_name || 'Item'}</span>
+                                      <span>×{item.quantity || 0}</span>
+                                    </div>
+                                  ))}
+                                  {details.items.length > 5 && <div style={{ color: isDarkMode ? '#999' : '#888', fontSize: '12px' }}>+{details.items.length - 5} more</div>}
+                                </div>
+                              )}
+                              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); fetchOrderById(normalizedOrderId) }}
+                                  style={{
+                                    width: '100%',
+                                    padding: '10px',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    backgroundColor: `rgba(${themeColorRgb}, 0.8)`,
+                                    color: '#fff',
+                                    fontWeight: 600,
+                                    fontSize: '14px',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Select
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
             <div style={{ 
-              backgroundColor: '#fff', 
+              backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#fff', 
               borderRadius: '4px', 
               overflowX: 'auto',
               overflowY: 'visible',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
               width: '100%'
             }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
@@ -1617,8 +1785,9 @@ function RecentOrders() {
                 </tbody>
               </table>
             </div>
+            )
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#999' }}>No orders found</div>
+            <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>No orders found</div>
           )
         )}
       </div>
@@ -1640,9 +1809,9 @@ function RecentOrders() {
           <div style={{
             backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
             borderRadius: '8px',
-            padding: '30px',
+            padding: isMobile ? '16px' : '30px',
             maxWidth: '800px',
-            width: '90%',
+            width: isMobile ? '95%' : '90%',
             maxHeight: '90vh',
             overflowY: 'auto',
             boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.3)'
@@ -2120,15 +2289,6 @@ function RecentOrders() {
             )}
           </div>
         </div>
-      )}
-
-      {/* Barcode Scanner Modal */}
-      {showBarcodeScanner && (
-        <BarcodeScanner
-          onScan={handleBarcodeScan}
-          onClose={() => setShowBarcodeScanner(false)}
-          themeColor={themeColor}
-        />
       )}
 
       {/* Toast notification */}

@@ -32,7 +32,7 @@ const FORMAT_OPTIONS = {
   ]
 }
 
-function Statistics() {
+function Statistics({ compact = false }) {
   const { themeMode, themeColor } = useTheme()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -182,34 +182,32 @@ function Statistics() {
     )
   }
 
-  const renderWeeklyChart = () => {
+  const renderWeeklyChart = (titleBelowAxis = null) => {
     if (!stats?.weekly_revenue || stats.weekly_revenue.length === 0) {
       return <div style={{ padding: '20px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>No revenue data</div>
     }
 
     const maxRevenue = Math.max(...stats.weekly_revenue.map(d => d.revenue), 1)
-    const chartHeight = 180
-    const svgWidth = 100
-    const barWidth = 12
-    const spacing = 8
-    
+    const isCompact = !!titleBelowAxis
+    const chartHeight = isCompact ? 120 : 180
     const axisColor = isDarkMode ? '#444' : '#ddd'
     const dayLabelColor = isDarkMode ? '#999' : '#666'
-    const revenueLabelColor = isDarkMode ? '#fff' : '#333'
-    const barColor = `rgba(${themeColorRgb}, ${isDarkMode ? '0.7' : '0.6'})`
-
-    // Define two different blue shades for alternating bars
     const barColor1 = `rgba(${themeColorRgb}, ${isDarkMode ? '0.7' : '0.6'})`
     const barColor2 = `rgba(${themeColorRgb}, ${isDarkMode ? '0.5' : '0.4'})`
+    const barScale = titleBelowAxis ? 0.65 : 1
+    const effectiveMax = maxRevenue / barScale
+
+    const containerPadding = isCompact ? '0 12px 4px' : '16px'
+    const titleMarginTop = isCompact ? '4px' : '12px'
 
     return (
-      <div style={{ padding: '16px', height: '100%', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '180px', gap: '4px', overflow: 'hidden' }}>
+      <div style={{ padding: containerPadding, height: '100%', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: `${chartHeight}px`, gap: '4px', overflow: 'hidden' }}>
           {stats.weekly_revenue.map((day, index) => {
-            const barHeight = maxRevenue > 0 ? (day.revenue / maxRevenue) * chartHeight : 0
+            const barHeight = maxRevenue > 0 ? (day.revenue / effectiveMax) * chartHeight : 0
             const isEven = index % 2 === 0
             const currentBarColor = isEven ? barColor1 : barColor2
-            
+
             return (
               <div key={day.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
                 <div style={{
@@ -245,8 +243,8 @@ function Statistics() {
             )
           })}
         </div>
-        <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginTop: '12px', textAlign: 'center' }}>
-          Weekly Revenue (Last 7 Days)
+        <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginTop: titleMarginTop, textAlign: 'center' }}>
+          {titleBelowAxis ?? 'Weekly Revenue (Last 7 Days)'}
         </div>
       </div>
     )
@@ -724,6 +722,84 @@ function Statistics() {
   const cardBg = isDarkMode ? '#2a2a2a' : '#ffffff'
   const borderColor = isDarkMode ? '#3a3a3a' : '#e0e0e0'
 
+  if (compact) {
+    const maxRevenue = Math.max(...(stats?.weekly_revenue || []).map(d => d.revenue), 1)
+    const barScale = 0.65
+    const effectiveMax = maxRevenue / barScale
+    const dayLabelColor = isDarkMode ? '#999' : '#666'
+    const barColor1 = `rgba(${themeColorRgb}, ${isDarkMode ? '0.7' : '0.6'})`
+    const barColor2 = `rgba(${themeColorRgb}, ${isDarkMode ? '0.5' : '0.4'})`
+
+    if (!stats?.weekly_revenue || stats.weekly_revenue.length === 0) {
+      return (
+        <div style={{ padding: '12px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isDarkMode ? '#999' : '#666', fontSize: '14px' }}>
+          No revenue data
+        </div>
+      )
+    }
+
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        padding: '6px 10px 6px'
+      }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'flex-end', gap: '4px' }}>
+          {stats.weekly_revenue.map((day, index) => {
+            const barPct = maxRevenue > 0 ? Math.min(100, (day.revenue / effectiveMax) * 100) : 0
+            const isEven = index % 2 === 0
+            const barColor = isEven ? barColor1 : barColor2
+            return (
+              <div
+                key={day.date}
+                style={{
+                  flex: 1,
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  gap: '4px'
+                }}
+              >
+                <div
+                  style={{
+                    width: '100%',
+                    height: `${barPct}%`,
+                    minHeight: barPct > 0 ? '4px' : 0,
+                    backgroundColor: barColor,
+                    borderRadius: '10px 10px 0 0',
+                    transition: 'height 0.3s ease',
+                    position: 'relative',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden'
+                  }}
+                >
+                  {barPct > 25 && (
+                    <span style={{ fontSize: '9px', fontWeight: 600, color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                      ${Math.round(day.revenue)}
+                    </span>
+                  )}
+                </div>
+                <div style={{ flexShrink: 0, fontSize: '10px', color: dayLabelColor, fontWeight: 500 }}>
+                  {day.day}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ flexShrink: 0, fontSize: '13px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', textAlign: 'center', marginTop: '2px' }}>
+          Last Seven Days
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       display: 'flex',
@@ -773,7 +849,6 @@ function Statistics() {
         </div>
       </div>
 
-      {/* Customizable dashboard */}
       <div style={{
         marginTop: '32px',
         paddingTop: '28px',

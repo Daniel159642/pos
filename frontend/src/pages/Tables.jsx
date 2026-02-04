@@ -11,23 +11,29 @@ import {
   Image,
   Shield,
   Folder,
-  PanelLeft
+  PanelLeft,
+  Bell
 } from 'lucide-react'
 
-// Define table categories
+// Define table categories (all tables assigned; no "Other" tab)
 const TABLE_CATEGORIES = {
   'Inventory & Products': [
-    'inventory', 
+    'inventory',
     'vendors',
     'categories',
     'product_metadata',
     'metadata_extraction_log',
-    'search_history'
+    'search_history',
+    'product_variants',
+    'product_ingredients',
+    'establishments',
+    'stores',
+    'store_location_settings'
   ],
   'Orders & Sales': [
-    'orders', 
-    'order_items', 
-    'payment_transactions', 
+    'orders',
+    'order_items',
+    'payment_transactions',
     'payment_methods',
     'employee_tips',
     'customers',
@@ -38,55 +44,71 @@ const TABLE_CATEGORIES = {
     'payments',
     'receipt_preferences',
     'customer_display_settings',
-    'customer_display_sessions'
+    'customer_display_sessions',
+    'customer_rewards_settings',
+    'cash_register_sessions',
+    'cash_transactions',
+    'register_cash_settings',
+    'daily_cash_counts',
+    'receipt_settings',
+    'receipt_templates',
+    'pos_settings'
   ],
   'Shipments': [
-    'shipments', 
-    'shipment_items', 
+    'shipments',
+    'shipment_items',
     'shipment_discrepancies',
     'shipment_issues',
     'shipment_scan_log',
-    'verification_sessions'
+    'verification_sessions',
+    'approved_shipments',
+    'approved_shipment_items',
+    'pending_shipments',
+    'pending_shipment_items',
+    'shipment_verification_settings'
   ],
   'Employees & Scheduling': [
     'employees',
-    'employee_availability_unified',
-    'scheduled_shifts_unified',
+    'employee_availability',
+    'scheduled_shifts',
     'time_clock',
     'employee_sessions',
     'employee_schedule',
-    'employee_availability',
-    'calendar_events_unified',
     'master_calendar',
-    'Calendar_Subscriptions',
-    'Event_Attendees',
-    'Event_Reminders',
-    'Schedule_Periods',
-    'Schedule_Requirements',
-    'Schedule_Templates',
-    'Time_Off_Requests',
-    'Schedule_Changes',
-    'Schedule_Notifications',
-    'Employee_Positions',
-    'Scheduled_Shifts',
-    'Employee_Shifts',
-    'Calendar_Events',
-    'Shipment_Schedule'
+    'calendar_subscriptions',
+    'schedule_periods',
+    'schedule_changes',
+    'employee_positions'
   ],
   'Accounting': [
-    'chart_of_accounts', 
-    'journal_entries', 
-    'journal_entry_lines', 
-    'fiscal_periods', 
-    'retained_earnings'
+    'chart_of_accounts',
+    'journal_entries',
+    'journal_entry_lines',
+    'fiscal_periods',
+    'retained_earnings',
+    'accounting_customers',
+    'accounting_vendors',
+    'accounts',
+    'items',
+    'tax_rates',
+    'classes',
+    'locations'
+  ],
+  'Notifications': [
+    'schedule_notifications',
+    'sms_messages',
+    'sms_opt_outs',
+    'sms_settings',
+    'sms_templates'
   ],
   'Image Matching': ['image_identifications'],
   'Security & Permissions': [
-    'roles', 
-    'permissions', 
-    'role_permissions', 
+    'roles',
+    'permissions',
+    'role_permissions',
     'employee_permission_overrides',
-    'audit_log'
+    'audit_log',
+    'users'
   ]
 }
 
@@ -183,9 +205,8 @@ function Tables() {
         
         // Organize tables into categories
         const organizedCategories = {}
-        const uncategorized = []
         
-        // First, categorize known tables
+        // Categorize known tables
         Object.entries(TABLE_CATEGORIES).forEach(([categoryName, tableNames]) => {
           const categoryTables = tableNames
             .filter(tableName => result.tables.includes(tableName))
@@ -199,26 +220,7 @@ function Tables() {
           }
         })
         
-        // Find uncategorized tables
-        result.tables.forEach(tableName => {
-          let found = false
-          Object.values(TABLE_CATEGORIES).forEach(categoryTables => {
-            if (categoryTables.includes(tableName)) {
-              found = true
-            }
-          })
-          if (!found) {
-            uncategorized.push({
-              id: tableName,
-              label: formatTableName(tableName)
-            })
-          }
-        })
-        
-        // Add uncategorized category if there are any
-        if (uncategorized.length > 0) {
-          organizedCategories['Other'] = uncategorized
-        }
+        // Tables not in TABLE_CATEGORIES are omitted (no "Other" tab)
         
         // Convert to array format for Tabs component
         const categoryTabs = Object.keys(organizedCategories).map(categoryName => ({
@@ -419,9 +421,9 @@ function Tables() {
     'Shipments': Truck,
     'Employees & Scheduling': Users,
     'Accounting': Calculator,
+    'Notifications': Bell,
     'Image Matching': Image,
-    'Security & Permissions': Shield,
-    'Other': Folder
+    'Security & Permissions': Shield
   }
 
   const categoryTabs = Object.keys(categories).map(categoryName => ({

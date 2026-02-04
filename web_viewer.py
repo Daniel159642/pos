@@ -2312,9 +2312,21 @@ def api_delete_table_rows(table_name):
 # Specialized endpoints with joins
 @app.route('/api/orders')
 def api_orders():
-    """Get orders with employee and customer names"""
+    """Get orders with employee and customer names. Query params: order_status, order_status_in (comma), order_type_in (comma), limit."""
     try:
-        orders = list_orders()
+        order_status = request.args.get('order_status')
+        order_status_in_str = request.args.get('order_status_in')
+        order_type_in_str = request.args.get('order_type_in')
+        limit_str = request.args.get('limit')
+        order_status_in = [s.strip() for s in order_status_in_str.split(',') if s.strip()] if order_status_in_str else None
+        order_type_in = [t.strip() for t in order_type_in_str.split(',') if t.strip()] if order_type_in_str else None
+        limit = int(limit_str) if limit_str and str(limit_str).isdigit() else None
+        orders = list_orders(
+            order_status=order_status or None,
+            order_status_in=order_status_in,
+            order_type_in=order_type_in,
+            limit=limit
+        )
         if not orders:
             return jsonify({'columns': [], 'data': []})
         

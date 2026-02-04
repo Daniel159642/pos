@@ -5759,9 +5759,15 @@ def list_orders(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     employee_id: Optional[int] = None,
-    order_status: Optional[str] = None
+    order_status: Optional[str] = None,
+    order_status_in: Optional[List[str]] = None,
+    order_type_in: Optional[List[str]] = None,
+    limit: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """List orders with optional filters, including receipt preferences"""
+    """List orders with optional filters, including receipt preferences.
+    order_status_in: e.g. ['returned', 'voided', 'out_for_delivery'] (OR).
+    order_type_in: e.g. ['pickup', 'delivery'] or include 'in-person' for null/empty order_type (OR).
+    """
     from psycopg2.extras import RealDictCursor
     
     conn = get_connection()
@@ -5824,7 +5830,30 @@ def list_orders(
             query += " AND o.order_status = %s"
             params.append(order_status)
         
+        if order_status_in:
+            placeholders = ', '.join(['%s'] * len(order_status_in))
+            query += " AND LOWER(COALESCE(o.order_status, '')) IN (" + placeholders + ")"
+            params.extend([s.lower() for s in order_status_in])
+        
+        if order_type_in:
+            in_person = 'in-person' in [t.lower() for t in order_type_in]
+            others = [t for t in order_type_in if (t or '').lower() != 'in-person']
+            in_person_cond = "(o.order_type IS NULL OR TRIM(COALESCE(o.order_type, '')) = '' OR LOWER(o.order_type) = 'in-person')"
+            if in_person and others:
+                placeholders = ', '.join(['%s'] * len(others))
+                query += " AND (" + in_person_cond + " OR LOWER(COALESCE(o.order_type, '')) IN (" + placeholders + "))"
+                params.extend([o.lower() for o in others])
+            elif in_person:
+                query += " AND " + in_person_cond
+            else:
+                placeholders = ', '.join(['%s'] * len(others))
+                query += " AND LOWER(COALESCE(o.order_type, '')) IN (" + placeholders + ")"
+                params.extend([o.lower() for o in others])
+        
         query += " ORDER BY o.order_date DESC"
+        if limit:
+            query += " LIMIT %s"
+            params.append(limit)
         
         cursor.execute(query, params)
         rows = cursor.fetchall()

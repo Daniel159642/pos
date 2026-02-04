@@ -1,0 +1,10 @@
+.app-layout {
+  position: relative;
+  min-height: 100dvh;
+  min-height: 100vh;
+}
+
+.app-layout-main {
+  min-height: 100dvh;
+  min-height: 100vh;
+}
