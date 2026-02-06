@@ -26,7 +26,7 @@ from database import (
     list_products, list_vendors, list_categories, list_shipments, get_sales,
     get_shipment_items, get_shipment_details, get_product,
     employee_login, verify_session, employee_logout,
-    list_employees, get_employee, add_employee, update_employee, delete_employee, list_orders,
+    list_employees, get_employee, add_employee, update_employee, delete_employee, list_orders, count_orders,
     get_employee_by_clerk_user_id, link_clerk_user_to_employee, verify_pin_login, generate_pin,
     get_connection,
     get_discrepancies, get_audit_trail,
@@ -40,6 +40,7 @@ from database import (
     clock_in, clock_out, get_current_clock_status, get_schedule,
     get_store_location_settings, update_store_location_settings,
     get_customer_rewards_settings, update_customer_rewards_settings, calculate_rewards,
+    get_register_cash_settings, get_daily_cash_counts,
     add_customer, get_customer, update_customer, add_customer_points, search_customers, get_customer_rewards_detail,
     # Accounting / store settings
     get_establishment_settings, update_establishment_settings, get_labor_summary,
@@ -72,6 +73,8 @@ except Exception as e:
     print(f"Note: Accounting backend not loaded: {e}")
 import sys
 import json
+import threading
+import time
 from datetime import datetime, time, date
 from decimal import Decimal
 import tempfile
@@ -535,10 +538,40 @@ def api_inventory():
                     sql += " ORDER BY i.item_type NULLS LAST, i.product_name"
                 else:
                     sql += " ORDER BY i.product_name"
+                limit_str = request.args.get('limit')
+                offset_str = request.args.get('offset')
+                limit_val = int(limit_str) if limit_str and str(limit_str).isdigit() else None
+                offset_val = int(offset_str) if offset_str and str(offset_str).isdigit() else None
+                if limit_val is not None:
+                    sql += " LIMIT %s"
+                    params.append(limit_val)
+                if offset_val is not None:
+                    sql += " OFFSET %s"
+                    params.append(offset_val)
                 cursor.execute(sql, params)
                 rows = cursor.fetchall()
                 columns = list(rows[0].keys()) if rows else []
                 data = [dict(r) for r in rows]
+                total = None
+                if limit_val is not None:
+                    try:
+                        count_sql = "SELECT COUNT(*) AS c FROM inventory i WHERE 1=1"
+                        count_params = []
+                        cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'archived'")
+                        if cursor.fetchone():
+                            if archived_only:
+                                count_sql += " AND i.archived = TRUE"
+                            else:
+                                count_sql += " AND (i.archived IS NULL OR i.archived = FALSE)"
+                        if has_item_type and item_type_filter == 'product':
+                            count_sql += " AND (i.item_type = 'product' OR i.item_type IS NULL)"
+                        elif has_item_type and item_type_filter == 'ingredient':
+                            count_sql += " AND i.item_type = 'ingredient'"
+                        cursor.execute(count_sql, count_params)
+                        row = cursor.fetchone()
+                        total = row['c'] if row else len(data)
+                    except Exception:
+                        total = len(data)
                 # Use full category path for each item so master category filter includes subcategories
                 try:
                     cats = list_categories(include_path=True)
@@ -572,7 +605,10 @@ def api_inventory():
                     except Exception:
                         for row in data:
                             row['variants'] = []
-                return jsonify({'columns': columns, 'data': data})
+                out = {'columns': columns, 'data': data}
+                if total is not None:
+                    out['total'] = total
+                return jsonify(out)
             finally:
                 conn.close()
         except Exception as e:
@@ -2061,6 +2097,53 @@ def api_create_order():
         elif order_status_val == 'placed' or pay_status == 'pending':
             pay_status = pay_status or 'pending'
             order_status_val = order_status_val or 'placed'
+        tip_val = float(data.get('tip', 0) or 0)
+        transaction_id = data.get('transaction_id')
+        # When transaction_id is provided (fallback after transaction/start), update existing order instead of creating duplicate
+        if transaction_id:
+            try:
+                pconn, pcur = _pg_conn()
+                try:
+                    pcur.execute("SELECT order_id, subtotal, tax, total FROM transactions WHERE transaction_id = %s", (int(transaction_id),))
+                    txn = pcur.fetchone()
+                    if txn:
+                        order_id = txn.get('order_id') if isinstance(txn, dict) else txn[0]
+                        if order_id:
+                            # Get order's subtotal, tax, discount, transaction_fee
+                            pcur.execute("""
+                                SELECT subtotal, tax_amount, discount, transaction_fee
+                                FROM orders WHERE order_id = %s
+                            """, (order_id,))
+                            ord_row = pcur.fetchone()
+                            if ord_row:
+                                if isinstance(ord_row, dict):
+                                    subtotal = float(ord_row.get('subtotal', 0) or 0)
+                                    tax = float(ord_row.get('tax_amount', ord_row.get('tax', 0)) or 0)
+                                    discount = float(ord_row.get('discount', 0) or 0)
+                                    txn_fee = float(ord_row.get('transaction_fee', 0) or 0)
+                                else:
+                                    subtotal = float(ord_row[0] or 0)
+                                    tax = float(ord_row[1] or 0)
+                                    discount = float(ord_row[2] or 0)
+                                    txn_fee = float(ord_row[3] or 0) if len(ord_row) > 3 else 0
+                                new_total = subtotal + tax - discount + txn_fee + tip_val
+                                pcur.execute("UPDATE orders SET tip = %s, total = %s WHERE order_id = %s", (tip_val, new_total, order_id))
+                                pcur.execute("UPDATE transactions SET tip = %s, total = %s WHERE transaction_id = %s", (tip_val, new_total, int(transaction_id)))
+                                pconn.commit()
+                                pcur.execute("SELECT order_number FROM orders WHERE order_id = %s", (order_id,))
+                                onum = pcur.fetchone()
+                                order_number = (onum.get('order_number') if isinstance(onum, dict) else onum[0]) if onum else None
+                                return jsonify({
+                                    'success': True,
+                                    'order_id': order_id,
+                                    'order_number': order_number or f'ORD-{order_id}'
+                                })
+                finally:
+                    pconn.close()
+            except Exception as ex:
+                print(f"[TIP] update-existing-order failed: {ex}")
+                import traceback
+                traceback.print_exc()
         result = create_order(
             employee_id=employee_id,
             items=data.get('items', []),
@@ -2068,7 +2151,7 @@ def api_create_order():
             tax_rate=tax_rate,
             discount=data.get('discount', 0.0),
             customer_id=data.get('customer_id'),
-            tip=data.get('tip', 0.0),
+            tip=tip_val,
             order_type=data.get('order_type'),
             customer_info=data.get('customer_info'),
             points_used=int(data.get('points_used', 0) or 0),
@@ -2190,9 +2273,10 @@ def api_update_receipt_settings():
                 data.get('store_website', ''),
                 data.get('footer_message', 'Thank you for your business!'),
                 data.get('return_policy', ''),
-                data.get('show_tax_breakdown', 1),
-                data.get('show_payment_method', 1),
-                data.get('show_signature', 0),
+                1 if data.get('show_tax_breakdown', 1) else 0,
+                1 if data.get('show_payment_method', 1) else 0,
+                1 if data.get('show_signature', 0) else 0,
+                1 if data.get('show_tip', 1) else 0,
                 template_preset,
             )
             # Check if template_preset column exists before including it
@@ -2201,6 +2285,11 @@ def api_update_receipt_settings():
                 WHERE table_schema = 'public' AND table_name = 'receipt_settings' AND column_name = 'template_preset'
             """)
             has_template_preset = cursor.fetchone() is not None
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'receipt_settings' AND column_name = 'show_tip'
+            """)
+            has_show_tip = cursor.fetchone() is not None
             # Check if template_styles column exists (stores full receipt template for PDF generation)
             cursor.execute("""
                 SELECT column_name FROM information_schema.columns
@@ -2210,14 +2299,22 @@ def api_update_receipt_settings():
             # Full receipt template from Settings UI - variables inserted at print time
             template_styles = data if isinstance(data, dict) else {}
             if count == 0:
-                if has_template_preset:
+                if has_template_preset and has_show_tip:
+                    cursor.execute("""
+                        INSERT INTO receipt_settings (
+                            store_name, store_address, store_city, store_state, store_zip,
+                            store_phone, store_email, store_website, footer_message, return_policy,
+                            show_tax_breakdown, show_payment_method, show_signature, show_tip, template_preset
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, vals)
+                elif has_template_preset:
                     cursor.execute("""
                         INSERT INTO receipt_settings (
                             store_name, store_address, store_city, store_state, store_zip,
                             store_phone, store_email, store_website, footer_message, return_policy,
                             show_tax_breakdown, show_payment_method, show_signature, template_preset
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, vals)
+                    """, vals[:13] + [vals[-1]])
                 else:
                     cursor.execute("""
                         INSERT INTO receipt_settings (
@@ -2225,14 +2322,24 @@ def api_update_receipt_settings():
                             store_phone, store_email, store_website, footer_message, return_policy,
                             show_tax_breakdown, show_payment_method, show_signature
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, vals[:-1])
+                    """, vals[:13])
                 if has_template_styles:
                     cursor.execute("""
                         UPDATE receipt_settings SET template_styles = %s
                         WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
                     """, (json.dumps(template_styles),))
             else:
-                if has_template_preset:
+                if has_template_preset and has_show_tip:
+                    cursor.execute("""
+                        UPDATE receipt_settings SET
+                            store_name = %s, store_address = %s, store_city = %s, store_state = %s,
+                            store_zip = %s, store_phone = %s, store_email = %s, store_website = %s,
+                            footer_message = %s, return_policy = %s,
+                            show_tax_breakdown = %s, show_payment_method = %s, show_signature = %s,
+                            show_tip = %s, template_preset = %s, updated_at = NOW()
+                        WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
+                    """, vals)
+                elif has_template_preset:
                     cursor.execute("""
                         UPDATE receipt_settings SET
                             store_name = %s, store_address = %s, store_city = %s, store_state = %s,
@@ -2241,7 +2348,7 @@ def api_update_receipt_settings():
                             show_tax_breakdown = %s, show_payment_method = %s, show_signature = %s,
                             template_preset = %s, updated_at = NOW()
                         WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
-                    """, vals)
+                    """, vals[:13] + [vals[-1]])
                 else:
                     cursor.execute("""
                         UPDATE receipt_settings SET
@@ -2251,7 +2358,7 @@ def api_update_receipt_settings():
                             show_tax_breakdown = %s, show_payment_method = %s, show_signature = %s,
                             updated_at = NOW()
                         WHERE id = (SELECT id FROM receipt_settings ORDER BY id DESC LIMIT 1)
-                    """, vals[:-1])
+                    """, vals[:13])
                 if has_template_styles:
                     cursor.execute("""
                         UPDATE receipt_settings SET template_styles = %s, updated_at = NOW()
@@ -2891,26 +2998,37 @@ def api_update_table_row(table_name):
 # Specialized endpoints with joins
 @app.route('/api/orders')
 def api_orders():
-    """Get orders with employee and customer names. Query params: order_status, order_status_in (comma), order_type_in (comma), limit."""
+    """Get orders with employee and customer names. Query params: order_status, order_status_in (comma), order_type_in (comma), limit, offset."""
     try:
         order_status = request.args.get('order_status')
         order_status_in_str = request.args.get('order_status_in')
         order_type_in_str = request.args.get('order_type_in')
         limit_str = request.args.get('limit')
+        offset_str = request.args.get('offset')
         order_status_in = [s.strip() for s in order_status_in_str.split(',') if s.strip()] if order_status_in_str else None
         order_type_in = [t.strip() for t in order_type_in_str.split(',') if t.strip()] if order_type_in_str else None
         limit = int(limit_str) if limit_str and str(limit_str).isdigit() else None
+        offset = int(offset_str) if offset_str and str(offset_str).isdigit() else None
         orders = list_orders(
             order_status=order_status or None,
             order_status_in=order_status_in,
             order_type_in=order_type_in,
-            limit=limit
+            limit=limit,
+            offset=offset
         )
         if not orders:
-            return jsonify({'columns': [], 'data': []})
+            out = {'columns': [], 'data': []}
+            if limit is not None:
+                total = count_orders(order_status=order_status or None, order_status_in=order_status_in, order_type_in=order_type_in)
+                out['total'] = total
+            return jsonify(out)
         
         columns = list(orders[0].keys())
-        return jsonify({'columns': columns, 'data': orders})
+        out = {'columns': columns, 'data': orders}
+        if limit is not None:
+            total = count_orders(order_status=order_status or None, order_status_in=order_status_in, order_type_in=order_type_in)
+            out['total'] = total
+        return jsonify(out)
     except Exception as e:
         print(f"Error in api_orders: {e}")
         import traceback
@@ -3182,6 +3300,27 @@ def api_customers():
             import traceback
             traceback.print_exc()
             return jsonify({'success': False, 'message': str(e)}), 400
+    limit_str = request.args.get('limit')
+    offset_str = request.args.get('offset')
+    limit_val = int(limit_str) if limit_str and str(limit_str).isdigit() else None
+    offset_val = int(offset_str) if offset_str and str(offset_str).isdigit() else None
+    if limit_val is not None or offset_val is not None:
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("SELECT * FROM customers ORDER BY customer_id LIMIT %s OFFSET %s", (limit_val or 1000, offset_val or 0))
+            rows = cursor.fetchall()
+            columns = list(rows[0].keys()) if rows else []
+            data = [dict(r) for r in rows]
+            total = None
+            if limit_val is not None:
+                cursor.execute("SELECT COUNT(*) AS c FROM customers")
+                total = cursor.fetchone()['c']
+            out = {'columns': columns, 'data': data}
+            if total is not None:
+                out['total'] = total
+            return jsonify(out)
+        finally:
+            conn.close()
     columns, data = get_table_data('customers')
     return jsonify({'columns': columns, 'data': data})
 
@@ -7427,6 +7566,8 @@ def process_payment():
             return jsonify({'success': False, 'message': 'Invalid session'}), 401
         
         data = request.json
+        tip_received = data.get('tip', 0)
+        print(f"[TIP DEBUG] /api/payment/process received: tip={tip_received} (type={type(tip_received).__name__}), full body keys={list(data.keys())}")
         
         from customer_display_system import CustomerDisplaySystem
         cds = CustomerDisplaySystem()
@@ -7670,6 +7811,127 @@ def api_add_to_inventory(shipment_id):
         traceback.print_exc()
         if 'conn' in locals():
             conn.close()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/settings-bootstrap', methods=['GET'])
+def api_settings_bootstrap():
+    """Return all settings needed for the Settings page in one response (one round-trip)."""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        session_valid = False
+        employee_id = None
+        if session_token:
+            session_result = verify_session(session_token)
+            session_valid = session_result.get('valid') and session_result.get('employee_id')
+            employee_id = session_result.get('employee_id') if session_valid else None
+
+        out = {'success': True}
+
+        # Receipt settings
+        try:
+            from receipt_generator import get_receipt_settings
+            out['receipt_settings'] = get_receipt_settings()
+        except Exception as e:
+            out['receipt_settings'] = None
+            out['_errors'] = out.get('_errors', []) + [f'receipt_settings: {e}']
+
+        # Store location (may fail if store_hours column missing)
+        try:
+            settings = get_store_location_settings()
+            if settings and 'store_hours' in settings and settings['store_hours'] is not None:
+                if hasattr(settings['store_hours'], 'copy'):
+                    settings = {**settings, 'store_hours': dict(settings['store_hours'])}
+            out['store_location_settings'] = settings
+        except Exception as e:
+            out['store_location_settings'] = None
+            out['_errors'] = out.get('_errors', []) + [f'store_location: {e}']
+
+        # Customer rewards
+        try:
+            out['rewards_settings'] = get_customer_rewards_settings()
+        except Exception as e:
+            out['rewards_settings'] = None
+            out['_errors'] = out.get('_errors', []) + [f'rewards: {e}']
+
+        # POS settings
+        try:
+            conn, cursor = _pg_conn()
+            try:
+                cursor.execute("SELECT * FROM pos_settings ORDER BY id DESC LIMIT 1")
+                row = cursor.fetchone()
+                if row:
+                    row = dict(row) if row else {}
+                    raw_mode = row.get('transaction_fee_mode')
+                    mode = (raw_mode if isinstance(raw_mode, str) and raw_mode else 'additional').strip().lower()
+                    if mode not in ('additional', 'included', 'none'):
+                        mode = 'additional'
+                    out['pos_settings'] = {
+                        'num_registers': row.get('num_registers', 1),
+                        'register_type': row.get('register_type', 'one_screen'),
+                        'return_transaction_fee_take_loss': bool(row.get('return_transaction_fee_take_loss', False)),
+                        'return_tip_refund': bool(row.get('return_tip_refund', False)),
+                        'require_signature_for_return': bool(row.get('require_signature_for_return', False)),
+                        'transaction_fee_mode': mode,
+                        'transaction_fee_charge_cash': bool(row.get('transaction_fee_charge_cash', False))
+                    }
+                else:
+                    out['pos_settings'] = {'num_registers': 1, 'register_type': 'one_screen', 'return_transaction_fee_take_loss': False, 'return_tip_refund': False, 'require_signature_for_return': False, 'transaction_fee_mode': 'additional', 'transaction_fee_charge_cash': False}
+            finally:
+                conn.close()
+        except Exception as e:
+            out['pos_settings'] = None
+            out['_errors'] = out.get('_errors', []) + [f'pos_settings: {e}']
+
+        # Receipt templates
+        try:
+            conn, cursor = _pg_conn()
+            try:
+                cursor.execute("SELECT id, name, settings, created_at FROM receipt_templates ORDER BY created_at DESC")
+                rows = cursor.fetchall()
+                templates = []
+                for r in rows:
+                    templates.append({
+                        'id': r['id'],
+                        'name': r['name'],
+                        'settings': r['settings'] if isinstance(r['settings'], dict) else (json.loads(r['settings']) if isinstance(r['settings'], str) else {}),
+                        'created_at': r['created_at'].isoformat() if hasattr(r['created_at'], 'isoformat') else str(r['created_at'])
+                    })
+                out['receipt_templates'] = templates
+            finally:
+                conn.close()
+        except Exception as e:
+            out['receipt_templates'] = []
+            out['_errors'] = out.get('_errors', []) + [f'receipt_templates: {e}']
+
+        # Customer display settings
+        try:
+            from customer_display_system import CustomerDisplaySystem
+            out['display_settings'] = CustomerDisplaySystem().get_display_settings()
+        except Exception as e:
+            out['display_settings'] = None
+            out['_errors'] = out.get('_errors', []) + [f'display: {e}']
+
+        if session_valid:
+            try:
+                result = get_register_cash_settings(1)
+                out['cash_settings'] = result
+            except Exception as e:
+                out['cash_settings'] = None
+            try:
+                from datetime import datetime
+                today = datetime.now().strftime('%Y-%m-%d')
+                result = get_daily_cash_counts(register_id=1, count_date=today)
+                out['daily_count'] = result
+            except Exception as e:
+                out['daily_count'] = None
+            try:
+                out['accounting_settings'] = get_establishment_settings(None)
+            except Exception as e:
+                out['accounting_settings'] = None
+
+        return jsonify(out)
+    except Exception as e:
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/store-location-settings', methods=['GET'])
@@ -9473,6 +9735,26 @@ if _ACCOUNTING_BACKEND_AVAILABLE:
             print(f"Accounting vendors error: {e}")
         return jsonify({'success': True, 'data': data}), 200
 
+@app.route('/api/order-delivery-settings', methods=['GET'])
+def api_order_delivery_settings():
+    """Get order/delivery flags for POS (allow_pickup, allow_delivery, allow_pay_at_pickup). Any authenticated user."""
+    try:
+        session_token = request.headers.get('X-Session-Token') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Session token required'}), 401
+        session_result = verify_session(session_token)
+        if not session_result.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        settings = get_establishment_settings(None)
+        return jsonify({
+            'success': True,
+            'allow_pickup': bool(settings.get('allow_pickup', True)),
+            'allow_delivery': bool(settings.get('allow_delivery', True)),
+            'allow_pay_at_pickup': bool(settings.get('allow_pay_at_pickup', False)),
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/accounting/settings', methods=['GET', 'PATCH'])
 def api_accounting_settings():
     """Get or update store accounting settings (sales tax %, transaction fee rates)."""
@@ -9498,7 +9780,7 @@ def api_accounting_settings():
             settings = get_establishment_settings(None)
             return jsonify({'success': True, 'data': settings}), 200
 
-        # PATCH
+        # PATCH (manager/admin only, checked above)
         data = request.get_json() or {}
         updates = {}
         if 'default_sales_tax_pct' in data:
@@ -9739,6 +10021,26 @@ if __name__ == '__main__':
             c.close()
     except Exception:
         pass
+
+    # Keep-alive for free-tier DBs (e.g. Supabase) that pause after inactivity – prevents 10–30s cold starts
+    def _db_keepalive():
+        interval = 4 * 60  # 4 minutes
+        while True:
+            time.sleep(interval)
+            try:
+                conn = get_connection()
+                try:
+                    cur = conn.cursor()
+                    cur.execute("SELECT 1")
+                    cur.close()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+    _keepalive_thread = threading.Thread(target=_db_keepalive, daemon=True)
+    _keepalive_thread.start()
+
     print("Starting web viewer...")
     print("Open your browser to: http://localhost:5001")
     if SOCKETIO_AVAILABLE and socketio:

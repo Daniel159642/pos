@@ -1,4 +1,5 @@
 import { useState, useEffect, Fragment, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
@@ -11,9 +12,9 @@ import CustomerDisplayPopup from '../components/CustomerDisplayPopup'
 function RecentOrders() {
   const navigate = useNavigate()
   const { themeColor, themeMode } = useTheme()
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [ordersPage, setOrdersPage] = useState(0)
+  const ORDERS_PAGE_SIZE = 50
+  const queryClient = useQueryClient()
   const [expandedRow, setExpandedRow] = useState(null)
   const [orderDetails, setOrderDetails] = useState({})
   const [loadingDetails, setLoadingDetails] = useState({})
@@ -81,6 +82,33 @@ function RecentOrders() {
   
   const themeColorRgb = hexToRgb(themeColor)
 
+  const ordersQueryKey = ['orders', filterReturns, filterCanceled, filterOrderTypePickup, filterOrderTypeDelivery, filterOrderTypeInPerson, ordersPage]
+  const { data: ordersResponse, isLoading: loading, error: ordersError, refetch: refetchOrders } = useQuery({
+    queryKey: ordersQueryKey,
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('limit', String(ORDERS_PAGE_SIZE))
+      params.set('offset', String(ordersPage * ORDERS_PAGE_SIZE))
+      const statusIn = []
+      if (filterReturns) statusIn.push('returned')
+      if (filterCanceled) statusIn.push('voided')
+      if (statusIn.length) params.set('order_status_in', statusIn.join(','))
+      const typeIn = []
+      if (filterOrderTypePickup) typeIn.push('pickup')
+      if (filterOrderTypeDelivery) typeIn.push('delivery')
+      if (filterOrderTypeInPerson) typeIn.push('in-person')
+      if (typeIn.length) params.set('order_type_in', typeIn.join(','))
+      const res = await fetch(`/api/orders?${params.toString()}`)
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.message || 'Failed to load orders')
+      return result
+    },
+    staleTime: 60 * 1000
+  })
+  const data = ordersResponse ?? { columns: [], data: [] }
+  const error = ordersError?.message ?? null
+  const ordersTotal = ordersResponse?.total ?? 0
+
   const MOBILE_BREAKPOINT = 768
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT)
   useEffect(() => {
@@ -131,7 +159,7 @@ function RecentOrders() {
   }, [])
 
   useEffect(() => {
-    loadData()
+    setOrdersPage(0)
   }, [filterReturns, filterCanceled, filterOrderTypePickup, filterOrderTypeDelivery, filterOrderTypeInPerson])
 
   // Smooth scanner open: expand after mount (mobile inline only)
@@ -309,36 +337,7 @@ function RecentOrders() {
     return () => clearTimeout(t)
   }, [toast])
 
-  const loadData = async () => {
-    setLoading(true)
-    setError(null)
-    const params = new URLSearchParams()
-    params.set('limit', '100')
-    const statusIn = []
-    if (filterReturns) statusIn.push('returned')
-    if (filterCanceled) statusIn.push('voided')
-    if (statusIn.length) params.set('order_status_in', statusIn.join(','))
-    const typeIn = []
-    if (filterOrderTypePickup) typeIn.push('pickup')
-    if (filterOrderTypeDelivery) typeIn.push('delivery')
-    if (filterOrderTypeInPerson) typeIn.push('in-person')
-    if (typeIn.length) params.set('order_type_in', typeIn.join(','))
-    const query = params.toString()
-    const url = query ? `/api/orders?${query}` : '/api/orders?limit=100'
-    try {
-      const response = await fetch(url)
-      const result = await response.json()
-      if (result.data) {
-        result.data = result.data.slice(0, 100)
-      }
-      setData(result)
-    } catch (err) {
-      setError('Error loading data')
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const invalidateOrders = () => queryClient.invalidateQueries({ queryKey: ['orders'] })
 
   const fetchOrderById = async (orderId) => {
     setReturnLoading(true)
@@ -363,10 +362,7 @@ function RecentOrders() {
           if (data && data.data) {
             const orderExists = data.data.some(o => o.order_id === foundOrder.order_id)
             if (!orderExists) {
-              setData(prev => ({
-                ...prev,
-                data: [foundOrder, ...(prev.data || [])]
-              }))
+              queryClient.setQueryData(ordersQueryKey, (prev) => (prev ? { ...prev, data: [foundOrder, ...(prev.data || [])] } : { columns: [], data: [foundOrder] }))
             }
           }
         }
@@ -589,7 +585,7 @@ function RecentOrders() {
           }
         }
         setToast({ message: `Return processed successfully! Return #: ${result.return_number}`, type: 'success' })
-        await loadData()
+        await invalidateOrders()
       } else {
         setToast({ message: result.message || 'Failed to process return', type: 'error' })
       }
@@ -636,7 +632,11 @@ function RecentOrders() {
         return parseInt(itemOrderId) === normalizedOrderId
       })
 
-      // Get order details from the row data
+      // Get order details from the row data (total includes tip when present)
+      const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount || row.tax) || 0) - (parseFloat(row.discount) || 0)
+      const tipAmt = parseFloat(row.tip) || 0
+      const storedTotal = parseFloat(row.total) || 0
+      const displayTotal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : row.subtotal ?? 0)
       const details = {
         employee_id: row.employee_id || row.employeeId || null,
         employee_name: row.employee_name ?? null,
@@ -649,7 +649,8 @@ function RecentOrders() {
         discount_type: row.discount_type ?? null,
         transaction_fee: parseFloat(row.transaction_fee) || 0,
         notes: row.notes || '',
-        tip: parseFloat(row.tip) || 0,
+        tip: tipAmt,
+        total: displayTotal,
         order_status: row.order_status ?? 'completed',
         payment_status: row.payment_status ?? 'completed',
         order_type: row.order_type ?? row.orderType ?? null,
@@ -693,7 +694,7 @@ function RecentOrders() {
       const result = await res.json()
       if (result.success) {
         setToast({ message: 'Status updated', type: 'success' })
-        await loadData()
+        await invalidateOrders()
         setOrderDetails(prev => ({
           ...prev,
           [orderId]: prev[orderId] ? {
@@ -714,11 +715,14 @@ function RecentOrders() {
     }
   }
 
-  // Add Actions column to the data
-  const processedData = data && data.data ? data.data.map(row => ({
-    ...row,
-    _actions: row // Store the full row for actions
-  })) : []
+  // Add Actions column and ensure total includes tip for display
+  const processedData = data && data.data ? data.data.map(row => {
+    const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount) || 0) - (parseFloat(row.discount) || 0)
+    const tipAmt = parseFloat(row.tip) || 0
+    const storedTotal = parseFloat(row.total) || 0
+    const displayTotal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : row.subtotal ?? 0)
+    return { ...row, total: displayTotal, _actions: row }
+  }) : []
 
   const handleBarcodeScan = async (barcode) => {
     try {
@@ -776,11 +780,7 @@ function RecentOrders() {
         if (data && data.data) {
           const orderExists = data.data.some(o => o.order_id === matchingOrder.order_id)
           if (!orderExists) {
-            // Add to the beginning of the list
-            setData(prev => ({
-              ...prev,
-              data: [matchingOrder, ...(prev.data || [])]
-            }))
+            queryClient.setQueryData(ordersQueryKey, (prev) => (prev ? { ...prev, data: [matchingOrder, ...(prev.data || [])] } : { columns: [], data: [matchingOrder] }))
           }
         }
         
@@ -1559,11 +1559,38 @@ function RecentOrders() {
       )}
 
       <div style={{ overflowX: 'auto' }}>
-        {loading && <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>Loading...</div>}
         {error && <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#e57373' : '#c62828' }}>{error}</div>}
+        {loading && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: isMobile ? '24px' : '40px' }} aria-busy="true" aria-label="Loading orders">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: '14px',
+                  borderRadius: '10px',
+                  backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa',
+                  border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ height: '16px', width: '80px', borderRadius: '4px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#e0e0e0' }} />
+                  <div style={{ height: '16px', width: '56px', borderRadius: '4px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#e0e0e0' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                  <div style={{ height: '12px', width: '100px', borderRadius: '4px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#eee' }} />
+                  <div style={{ height: '24px', width: '70px', borderRadius: '6px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#e8e8e8' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {!loading && !error && data && (
           data.data && data.data.length > 0 ? (
-            isMobile ? (
+            <>
+            {isMobile ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {filteredData.map((row, idx) => {
                   const orderId = row.order_id || row.orderId
@@ -1571,7 +1598,11 @@ function RecentOrders() {
                   const isExpanded = expandedRow === normalizedOrderId
                   const details = orderDetails[normalizedOrderId]
                   const isLoading = loadingDetails[normalizedOrderId]
-                  const totalVal = row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0)
+                  // Order total should include tip (updated by process_payment). Fallback: add tip for legacy orders where total wasn't updated
+                  const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount) || 0) - (parseFloat(row.discount) || 0)
+                  const tipAmt = parseFloat(row.tip) || 0
+                  const storedTotal = parseFloat(row.total) || 0
+                  const totalVal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0))
                   const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
                   return (
                     <div
@@ -2105,7 +2136,47 @@ function RecentOrders() {
                 </tbody>
               </table>
             </div>
-            )
+            )}
+            {ordersTotal > ORDERS_PAGE_SIZE && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap', padding: '0 16px 16px' }}>
+                <span style={{ fontSize: '13px', color: isDarkMode ? '#aaa' : '#666' }}>
+                  Page {ordersPage + 1} of {Math.max(1, Math.ceil(ordersTotal / ORDERS_PAGE_SIZE))} ({ordersTotal} orders)
+                </span>
+                <button
+                  type="button"
+                  disabled={ordersPage === 0 || loading}
+                  onClick={() => setOrdersPage((p) => Math.max(0, p - 1))}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
+                    borderRadius: '6px',
+                    background: isDarkMode ? '#333' : '#f5f5f5',
+                    color: (ordersPage === 0 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
+                    cursor: (ordersPage === 0 || loading) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading}
+                  onClick={() => setOrdersPage((p) => p + 1)}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
+                    borderRadius: '6px',
+                    background: isDarkMode ? '#333' : '#f5f5f5',
+                    color: (ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
+                    cursor: (ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
           ) : (
             <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>No orders found</div>
           )
@@ -2138,7 +2209,13 @@ function RecentOrders() {
           }}>
             <div style={{ marginBottom: 0, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', fontSize: '14px' }}>
               <span style={{ marginRight: '16px' }}>Date: {new Date(order.order_date).toLocaleDateString()}</span>
-              <span style={{ marginRight: '16px' }}>Total: ${parseFloat(order.total || 0).toFixed(2)}</span>
+              <span style={{ marginRight: '16px' }}>Total: ${(() => {
+                const base = (parseFloat(order.subtotal) || 0) + (parseFloat(order.tax_amount || order.tax) || 0) - (parseFloat(order.discount) || 0)
+                const tip = parseFloat(order.tip) || 0
+                const stored = parseFloat(order.total) || 0
+                const val = tip > 0 && stored <= base ? base + tip : (order.total != null ? order.total : order.subtotal ?? 0)
+                return parseFloat(val || 0).toFixed(2)
+              })()}</span>
               <span style={{ marginRight: '16px' }}>Payment: {order.payment_method ? (order.payment_method === 'cash' ? 'Cash' : 'Card') : 'N/A'}</span>
               <span style={{ color: isDarkMode ? 'var(--text-tertiary, #666)' : '#999', fontWeight: 400 }}>Order: {order.order_number}</span>
             </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { useToast } from '../contexts/ToastContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -16,8 +17,9 @@ export default function Customers() {
   const { show: showToast } = useToast()
   const { themeColor } = useTheme()
   const themeColorRgb = hexToRgb(themeColor)
-  const [customers, setCustomers] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [customersPage, setCustomersPage] = useState(0)
+  const PAGE_SIZE = 50
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [modal, setModal] = useState(null) // 'edit' | 'points'
@@ -67,30 +69,21 @@ export default function Customers() {
     }
   }, [actionsOpenFor, dropdownAnchor])
 
-  const loadCustomers = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/customers')
+  const { data: customersResponse, isLoading: loading, error: customersError } = useQuery({
+    queryKey: ['customers', customersPage],
+    queryFn: async () => {
+      const res = await fetch(`/api/customers?limit=${PAGE_SIZE}&offset=${customersPage * PAGE_SIZE}`)
       const json = await res.json()
-      if (json.data && Array.isArray(json.data)) {
-        setCustomers(json.data)
-      } else if (json.columns && Array.isArray(json.data)) {
-        setCustomers(json.data)
-      } else {
-        setCustomers([])
-      }
-    } catch (e) {
-      console.error(e)
-      showToast('Failed to load customers', 'error')
-      setCustomers([])
-    } finally {
-      setLoading(false)
-    }
-  }, [showToast])
-
+      if (!res.ok) throw new Error(json.message || 'Failed to load customers')
+      return json
+    },
+    staleTime: 60 * 1000
+  })
+  const customers = customersResponse?.data ?? []
+  const customersTotal = customersResponse?.total ?? 0
   useEffect(() => {
-    loadCustomers()
-  }, [loadCustomers])
+    if (customersError) showToast('Failed to load customers', 'error')
+  }, [customersError, showToast])
 
   const filtered = React.useMemo(() => {
     if (!search.trim()) return customers
@@ -171,7 +164,7 @@ export default function Customers() {
       if (json.success) {
         showToast('Customer updated', 'success')
         closeModal()
-        loadCustomers()
+        queryClient.invalidateQueries({ queryKey: ['customers'] })
       } else {
         showToast(json.message || 'Update failed', 'error')
       }
@@ -205,7 +198,7 @@ export default function Customers() {
           'success'
         )
         closeModal()
-        loadCustomers()
+        queryClient.invalidateQueries({ queryKey: ['customers'] })
       } else {
         showToast(json.message || 'Failed to update points', 'error')
       }
@@ -239,7 +232,7 @@ export default function Customers() {
         showToast('Customer created', 'success')
         setModal(null)
         setEditForm({ customer_name: '', email: '', phone: '', address: '' })
-        loadCustomers()
+        queryClient.invalidateQueries({ queryKey: ['customers'] })
       } else {
         showToast(json.message || 'Create failed', 'error')
       }
@@ -338,9 +331,28 @@ export default function Customers() {
 
       <div ref={tableContainerRef} style={{ backgroundColor: '#fff', borderRadius: '4px', overflowX: 'auto', overflowY: 'visible', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', width: '100%' }}>
         {loading ? (
-          <div style={{ padding: '48px', textAlign: 'center', color: '#6b7280' }}>
-            Loading customers...
-          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }} aria-busy="true" aria-label="Loading customers">
+            <thead>
+              <tr style={{ backgroundColor: '#f8f9fa' }}>
+                <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #dee2e6', color: '#495057', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Name</th>
+                <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #dee2e6', color: '#495057', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Email</th>
+                <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #dee2e6', color: '#495057', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Phone</th>
+                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 600, borderBottom: '2px solid #dee2e6', color: '#495057', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Points</th>
+                <th style={{ padding: '12px', textAlign: 'right', fontWeight: 600, borderBottom: '2px solid #dee2e6', color: '#495057', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px', width: '56px' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 8 }, (_, i) => (
+                <tr key={i}>
+                  <td style={{ padding: '8px 12px', borderBottom: '1px solid #eee' }}><div style={{ height: '14px', width: `${70 + (i % 3) * 10}%`, maxWidth: '140px', borderRadius: '4px', backgroundColor: '#e8e8e8' }} /></td>
+                  <td style={{ padding: '8px 12px', borderBottom: '1px solid #eee' }}><div style={{ height: '14px', width: `${60 + (i % 2) * 15}%`, maxWidth: '160px', borderRadius: '4px', backgroundColor: '#eee' }} /></td>
+                  <td style={{ padding: '8px 12px', borderBottom: '1px solid #eee' }}><div style={{ height: '14px', width: '90px', borderRadius: '4px', backgroundColor: '#eee' }} /></td>
+                  <td style={{ padding: '8px 12px', borderBottom: '1px solid #eee', textAlign: 'right' }}><div style={{ height: '14px', width: '36px', marginLeft: 'auto', borderRadius: '4px', backgroundColor: '#eee' }} /></td>
+                  <td style={{ padding: '8px 12px', borderBottom: '1px solid #eee', textAlign: 'right' }}><div style={{ height: '24px', width: '24px', marginLeft: 'auto', borderRadius: '6px', backgroundColor: '#eee' }} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '48px', textAlign: 'center', color: '#6b7280' }}>
             {customers.length === 0 ? 'No customers yet. Add one to get started.' : 'No customers match your search.'}
@@ -459,6 +471,45 @@ export default function Customers() {
           </table>
         )}
       </div>
+      {customersTotal > PAGE_SIZE && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '13px', color: '#6b7280' }}>
+            Page {customersPage + 1} of {Math.max(1, Math.ceil(customersTotal / PAGE_SIZE))} ({customersTotal} customers)
+          </span>
+          <button
+            type="button"
+            disabled={customersPage === 0 || loading}
+            onClick={() => setCustomersPage((p) => Math.max(0, p - 1))}
+            style={{
+              padding: '6px 12px',
+              fontSize: '13px',
+              border: '1px solid #ccc',
+              borderRadius: '6px',
+              background: '#f5f5f5',
+              color: (customersPage === 0 || loading) ? '#999' : '#333',
+              cursor: (customersPage === 0 || loading) ? 'not-allowed' : 'pointer'
+            }}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            disabled={customersPage >= Math.ceil(customersTotal / PAGE_SIZE) - 1 || loading}
+            onClick={() => setCustomersPage((p) => p + 1)}
+            style={{
+              padding: '6px 12px',
+              fontSize: '13px',
+              border: '1px solid #ccc',
+              borderRadius: '6px',
+              background: '#f5f5f5',
+              color: (customersPage >= Math.ceil(customersTotal / PAGE_SIZE) - 1 || loading) ? '#999' : '#333',
+              cursor: (customersPage >= Math.ceil(customersTotal / PAGE_SIZE) - 1 || loading) ? 'not-allowed' : 'pointer'
+            }}
+          >
+            Next
+          </button>
+        </div>
+      )}
 
       {/* Actions dropdown (portal so it isn't clipped by table overflow) */}
       {actionsOpenFor && dropdownAnchor && (() => {

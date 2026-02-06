@@ -1398,19 +1398,7 @@ function Calendar({ employee }) {
     }
   }
 
-  if (loading) {
-    return (
-      <div style={{ 
-        padding: '40px', 
-        textAlign: 'center', 
-        color: 'var(--text-tertiary)',
-        backgroundColor: 'var(--bg-primary)'
-      }}>
-        Loading calendar...
-      </div>
-    )
-  }
-
+  // Full UI shell (header, nav, sidebar, filters) always renders; only calendar grid shows loading state
   return (
     <div style={{ 
       position: 'relative',
@@ -1548,8 +1536,42 @@ function Calendar({ employee }) {
             </div>
           </div>
           
-          {/* FullCalendar */}
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {/* FullCalendar – skeleton in same area while loading */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            {loading ? (
+              <div style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'grid',
+                gridTemplateRows: 'auto 1fr',
+                gap: '8px',
+                padding: '8px 0'
+              }} aria-busy="true" aria-label="Loading calendar">
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                  {[1, 2, 3].map(i => (
+                    <div key={i} style={{ height: '28px', width: '56px', borderRadius: '6px', backgroundColor: 'var(--border-color, #e0e0e0)' }} />
+                  ))}
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(7, 1fr)',
+                  gridTemplateRows: 'repeat(5, 1fr)',
+                  gap: '4px',
+                  minHeight: 0
+                }}>
+                  {Array.from({ length: 35 }, (_, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        borderRadius: '6px',
+                        backgroundColor: 'var(--border-color, #e0e0e0)',
+                        opacity: 0.6 + (i % 7) * 0.05
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
             <FullCalendar
               key={showScheduleBuilder && isAdmin && !draftSchedule ? `sb-${sbStartDate || ''}-${sbEndDate || ''}` : `default-${draftScheduleVersion}-${draftShiftsFingerprint}`}
               ref={calendarRef}
@@ -1579,6 +1601,7 @@ function Calendar({ employee }) {
                 day: 'Day'
               }}
             />
+            )}
           </div>
         </div>
 

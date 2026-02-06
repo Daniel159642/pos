@@ -374,6 +374,9 @@ class CustomerDisplaySystem:
     def process_payment(self, transaction_id, payment_method_id, amount, 
                        card_info=None, tip=0):
         """Process payment for transaction"""
+        print(f"[TIP DEBUG] process_payment called: tip={tip} (raw), type={type(tip).__name__}")
+        tip = float(tip or 0)
+        print(f"[TIP DEBUG] process_payment after float: tip={tip}")
         conn, cursor = self.get_connection()
         
         try:
@@ -517,6 +520,7 @@ class CustomerDisplaySystem:
             
             # Update order with payment details
             order_id = transaction.get('order_id')
+            print(f"[TIP DEBUG] Updating order {order_id} with tip={tip}")
             if order_id:
                 # Get payment method name/type
                 payment_method_name = 'cash'
@@ -536,14 +540,26 @@ class CustomerDisplaySystem:
                 has_tip = 'tip' in order_columns
                 
                 # Use order_payment_status for orders table (allowed: pending, completed, refunded, partially_refunded)
+                # When tip > 0: update tip AND add tip to order total so Recent Orders and receipts show correct amount
                 if has_tip:
-                    cursor.execute("""
-                        UPDATE orders
-                        SET payment_method = %s,
-                            payment_status = %s,
-                            tip = %s
-                        WHERE order_id = %s
-                    """, (payment_method_name, order_payment_status, tip, order_id))
+                    if tip > 0:
+                        print(f"[TIP DEBUG] Executing UPDATE orders SET tip={tip}, total=total+{tip} WHERE order_id={order_id}")
+                        cursor.execute("""
+                            UPDATE orders
+                            SET payment_method = %s,
+                                payment_status = %s,
+                                tip = %s,
+                                total = COALESCE(total, 0) + %s
+                            WHERE order_id = %s
+                        """, (payment_method_name, order_payment_status, tip, tip, order_id))
+                    else:
+                        cursor.execute("""
+                            UPDATE orders
+                            SET payment_method = %s,
+                                payment_status = %s,
+                                tip = %s
+                            WHERE order_id = %s
+                        """, (payment_method_name, order_payment_status, tip, order_id))
                 else:
                     cursor.execute("""
                         UPDATE orders

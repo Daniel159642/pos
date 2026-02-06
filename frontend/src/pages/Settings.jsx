@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
@@ -189,6 +190,7 @@ const DEFAULT_RECEIPT_TEMPLATE = {
   show_tax_breakdown: true,
   show_payment_method: true,
   show_signature: false,
+  show_tip: true,
   header_alignment: 'center',
   font_family: 'monospace',
   font_size: 12,
@@ -268,6 +270,11 @@ const DEFAULT_RECEIPT_TEMPLATE = {
   tax_italic: false,
   tax_align: 'right',
   tax_font_size: 12,
+  tip_font: 'monospace',
+  tip_bold: false,
+  tip_italic: false,
+  tip_align: 'right',
+  tip_font_size: 12,
   total_font: 'monospace',
   total_bold: true,
   total_italic: false,
@@ -990,6 +997,14 @@ function ReceiptPreview({ settings, id = 'receipt-preview-print', onSectionClick
           fontFamily: settings.tax_font || 'monospace',
           fontSize: `${settings.tax_font_size || fs}px`
         }}>Tax ${tax.toFixed(2)}</div>}
+        {settings.show_tip !== false && <div style={{ 
+          textAlign: textAlign(settings.tip_align || 'right'), 
+          marginBottom: '2px',
+          fontWeight: settings.tip_bold ? 700 : 400,
+          fontStyle: settings.tip_italic ? 'italic' : 'normal',
+          fontFamily: settings.tip_font || 'monospace',
+          fontSize: `${settings.tip_font_size ?? fs}px`
+        }}>Tip $2.00</div>}
         <div style={{ 
           fontWeight: settings.total_bold ?? true ? 700 : 400, 
           textAlign: textAlign(settings.total_align || 'right'), 
@@ -1618,26 +1633,161 @@ function Settings() {
     }
   }
 
+  const {
+    data: bootstrapData,
+    isLoading: bootstrapLoading,
+    isSuccess: bootstrapSuccess,
+    isError: bootstrapError
+  } = useQuery({
+    queryKey: ['settings-bootstrap'],
+    queryFn: async () => {
+      const sessionToken = localStorage.getItem('sessionToken')
+      const res = await fetch('/api/settings-bootstrap', { headers: { 'X-Session-Token': sessionToken || '' } })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.message || 'Failed to load settings')
+      return data
+    },
+    staleTime: 2 * 60 * 1000,
+    retry: 1
+  })
+
   useEffect(() => {
-    const loadAllSettings = async () => {
-      try {
-        await Promise.allSettled([
-          loadReceiptSettings(),
-          loadReceiptTemplates(),
-          loadStoreLocationSettings(),
-          loadDisplaySettings(),
-          loadRewardsSettings(),
-          loadPosSettings(),
-          loadEstablishmentSettings(),
-          loadCashSettings(),
-          loadDailyCounts()
-        ])
-      } finally {
-        setLoading(false)
-      }
+    if (!bootstrapSuccess || !bootstrapData?.success) return
+    const data = bootstrapData
+    if (data.receipt_settings) {
+      const s = data.receipt_settings
+      const templateStyles = (s.template_styles && typeof s.template_styles === 'object') ? s.template_styles : {}
+      const preset = s.template_preset ?? templateStyles.template_preset ?? 'custom'
+      const hasSavedStyles = Object.keys(templateStyles).length > 5
+      const baseStyles = (preset && RECEIPT_PRESETS[preset] && !hasSavedStyles) ? { ...RECEIPT_PRESETS[preset] } : { ...DEFAULT_RECEIPT_TEMPLATE, ...templateStyles }
+      setReceiptSettings({
+        ...baseStyles,
+        receipt_type: s.receipt_type || 'traditional',
+        template_preset: preset,
+        store_name: s.store_name ?? 'Store',
+        store_address: s.store_address ?? '',
+        store_city: s.store_city ?? '',
+        store_state: s.store_state ?? '',
+        store_zip: s.store_zip ?? '',
+        store_phone: s.store_phone ?? '',
+        store_email: s.store_email ?? '',
+        store_website: s.store_website ?? '',
+        footer_message: s.footer_message ?? 'Thank you for your business!',
+        return_policy: s.return_policy ?? '',
+        show_tax_breakdown: s.show_tax_breakdown === 1,
+        show_payment_method: s.show_payment_method === 1,
+        show_signature: s.show_signature === 1,
+        show_tip: s.show_tip !== 0
+      })
     }
-    loadAllSettings()
-  }, [])
+    if (data.receipt_templates && Array.isArray(data.receipt_templates)) setSavedTemplates(data.receipt_templates)
+    if (data.store_location_settings) {
+      const defaultStoreHours = { monday: { open: '09:00', close: '17:00', closed: false }, tuesday: { open: '09:00', close: '17:00', closed: false }, wednesday: { open: '09:00', close: '17:00', closed: false }, thursday: { open: '09:00', close: '17:00', closed: false }, friday: { open: '09:00', close: '17:00', closed: false }, saturday: { open: '09:00', close: '17:00', closed: false }, sunday: { open: '09:00', close: '17:00', closed: false } }
+      const d = data.store_location_settings
+      setStoreLocationSettings({
+        store_name: 'Store', store_type: '', store_logo: '', store_phone: '', store_email: '', store_website: '', address: '', city: '', state: '', country: '', zip: '', latitude: null, longitude: null, allowed_radius_meters: 100.0, require_location: true, store_hours: defaultStoreHours,
+        ...d,
+        require_location: d.require_location === 1 || d.require_location === true,
+        store_hours: d.store_hours ? { ...defaultStoreHours, ...d.store_hours } : defaultStoreHours
+      })
+      storeLocationLoadedRef.current = true
+      setReceiptSettings(prev => ({
+        ...prev,
+        store_name: d.store_name ?? prev.store_name,
+        store_address: d.address ?? prev.store_address,
+        store_city: d.city ?? prev.store_city,
+        store_state: d.state ?? prev.store_state,
+        store_zip: d.zip ?? prev.store_zip,
+        store_phone: d.store_phone ?? prev.store_phone,
+        store_email: d.store_email ?? prev.store_email,
+        store_website: d.store_website ?? prev.store_website
+      }))
+    }
+    if (data.display_settings) {
+      const d = data.display_settings
+      setDisplaySettings(prev => ({
+        ...prev,
+        tip_enabled: d.tip_enabled === 1 || d.tip_enabled === true,
+        tip_after_payment: d.tip_after_payment === 1 || d.tip_after_payment === true,
+        tip_suggestions: (d.tip_suggestions || [15, 18, 20]).slice(0, 3),
+        require_signature: d.signature_required === 1 ? 'required' : 'not_required',
+        tip_custom_in_checkout: d.tip_custom_in_checkout === 1 || d.tip_custom_in_checkout === true,
+        tip_allocation: d.tip_allocation === 'split_all' ? 'split_all' : 'logged_in_employee',
+        tip_refund_from: d.tip_refund_from === 'employee' ? 'employee' : 'store'
+      }))
+      if (d.checkout_ui) setCheckoutUiSettings(mergeCheckoutUiFromApi(d.checkout_ui))
+    }
+    if (data.rewards_settings) {
+      const s = data.rewards_settings
+      setRewardsSettings({
+        enabled: s.enabled === 1 || s.enabled === true,
+        require_email: s.require_email === 1 || s.require_email === true,
+        require_phone: s.require_phone === 1 || s.require_phone === true,
+        require_both: s.require_both === 1 || s.require_both === true,
+        reward_type: s.reward_type || 'points',
+        points_enabled: s.points_enabled === 1 || s.points_enabled === true,
+        percentage_enabled: s.percentage_enabled === 1 || s.percentage_enabled === true,
+        fixed_enabled: s.fixed_enabled === 1 || s.fixed_enabled === true,
+        points_per_dollar: s.points_per_dollar ?? 1.0,
+        points_redemption_value: s.points_redemption_value ?? 0.01,
+        percentage_discount: s.percentage_discount ?? 0.0,
+        fixed_discount: s.fixed_discount ?? 0.0,
+        minimum_spend: s.minimum_spend ?? 0.0
+      })
+    }
+    if (data.pos_settings) {
+      const mode = data.pos_settings.transaction_fee_mode || 'additional'
+      setPosSettings({
+        num_registers: data.pos_settings.num_registers || 1,
+        register_type: data.pos_settings.register_type || 'one_screen',
+        return_transaction_fee_take_loss: !!data.pos_settings.return_transaction_fee_take_loss,
+        return_tip_refund: !!data.pos_settings.return_tip_refund,
+        require_signature_for_return: !!data.pos_settings.require_signature_for_return,
+        transaction_fee_mode: ['additional', 'included', 'none'].includes(mode) ? mode : 'additional',
+        transaction_fee_charge_cash: !!data.pos_settings.transaction_fee_charge_cash
+      })
+    }
+    if (data.cash_settings) {
+      const c = Array.isArray(data.cash_settings) ? data.cash_settings[0] : data.cash_settings
+      if (c) setCashSettings({
+        register_id: c.register_id || 1,
+        cash_mode: c.cash_mode || 'total',
+        total_amount: c.total_amount || 200.00,
+        denominations: c.denominations || { '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0, '0.25': 0, '0.10': 0, '0.05': 0, '0.01': 0 }
+      })
+    }
+    if (data.daily_count != null) setDailyCounts(data.daily_count)
+    if (data.accounting_settings) {
+      const d = data.accounting_settings
+      if ('delivery_pay_on_delivery_cash_only' in d) setDeliveryPayOnDeliveryCashOnly(!!d.delivery_pay_on_delivery_cash_only)
+      if ('allow_delivery' in d) setAllowDelivery(!!d.allow_delivery)
+      if ('allow_pickup' in d) setAllowPickup(!!d.allow_pickup)
+      if ('allow_pay_at_pickup' in d) setAllowPayAtPickup(!!d.allow_pay_at_pickup)
+      if ('delivery_fee_enabled' in d) setDeliveryFeeEnabled(!!d.delivery_fee_enabled)
+      if ('allow_scheduled_pickup' in d) setAllowScheduledPickup(!!d.allow_scheduled_pickup)
+      if ('allow_scheduled_delivery' in d) setAllowScheduledDelivery(!!d.allow_scheduled_delivery)
+    }
+  }, [bootstrapSuccess, bootstrapData])
+
+  useEffect(() => {
+    if (!bootstrapError) return
+    setLoading(true)
+    Promise.allSettled([
+      loadReceiptSettings(),
+      loadReceiptTemplates(),
+      loadStoreLocationSettings(),
+      loadDisplaySettings(),
+      loadRewardsSettings(),
+      loadPosSettings(),
+      loadEstablishmentSettings(),
+      loadCashSettings(),
+      loadDailyCounts()
+    ]).finally(() => setLoading(false))
+  }, [bootstrapError])
+
+  useEffect(() => {
+    setLoading(bootstrapLoading)
+  }, [bootstrapLoading])
 
   useEffect(() => {
     if (activeTab === 'cash') {
@@ -1645,6 +1795,19 @@ function Settings() {
       loadRegisterEvents()
     }
   }, [activeTab, cashSettings.register_id])
+
+  // Refetch register data when user returns to this tab (e.g. after processing a cash sale on POS)
+  useEffect(() => {
+    if (activeTab !== 'cash') return
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadRegisterSessions()
+        loadRegisterEvents()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [activeTab])
   
   // Ensure selected register_id exists in registers list
   useEffect(() => {
@@ -1760,7 +1923,8 @@ function Settings() {
           return_policy: settings.return_policy || '',
           show_tax_breakdown: settings.show_tax_breakdown ? 1 : 0,
           show_payment_method: settings.show_payment_method ? 1 : 0,
-          show_signature: settings.show_signature ? 1 : 0
+          show_signature: settings.show_signature ? 1 : 0,
+          show_tip: settings.show_tip !== false ? 1 : 0
         })
       })
       const data = await res.json()
@@ -2379,19 +2543,18 @@ function Settings() {
 
   const calculateExpectedCash = () => {
     if (!currentSession) return 0
-    
+    // Use backend-computed expected_cash when available (includes cash sales + cash_in - cash_out)
+    if (currentSession.expected_cash != null && currentSession.expected_cash !== undefined) {
+      return parseFloat(currentSession.expected_cash) || 0
+    }
     let expected = parseFloat(currentSession?.starting_cash) || 0
-    
-    // Add cash received from orders (we'd need to fetch this from orders API)
-    // For now, we'll just show starting cash + any cash_in transactions
     registerTransactions.forEach(t => {
       if (t.transaction_type === 'cash_in') {
         expected += parseFloat(t.amount || 0)
-      } else if (t.transaction_type === 'cash_out') {
+      } else if (t.transaction_type === 'cash_out' || t.transaction_type === 'take_out' || t.transaction_type === 'drop') {
         expected -= parseFloat(t.amount || 0)
       }
     })
-    
     return expected
   }
 
@@ -2493,7 +2656,8 @@ function Settings() {
           return_policy: receiptSettings.return_policy || '',
           show_tax_breakdown: receiptSettings.show_tax_breakdown ? 1 : 0,
           show_payment_method: receiptSettings.show_payment_method ? 1 : 0,
-          show_signature: receiptSettings.show_signature ? 1 : 0
+          show_signature: receiptSettings.show_signature ? 1 : 0,
+          show_tip: receiptSettings.show_tip !== false ? 1 : 0  // integer for DB
         })
       })
 
@@ -2696,14 +2860,7 @@ function Settings() {
   }
 
 
-  if (loading) {
-    return (
-      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#333' }}>
-        <div>Loading settings...</div>
-      </div>
-    )
-  }
-
+  // Nav and page shell always visible; only main content area shows loading state
   const settingsSections = [
     { id: 'location', label: 'Store Information', icon: MapPin },
     { id: 'pos', label: 'POS Settings', icon: ShoppingCart },
@@ -2941,8 +3098,17 @@ function Settings() {
           </div>
         )}
 
-        {/* Content */}
+        {/* Content – skeleton when loading so nav and shell are visible immediately */}
         <div>
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} aria-busy="true" aria-label="Loading settings">
+              <div style={{ height: '28px', width: '200px', borderRadius: '6px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#e8e8e8' }} />
+              {Array.from({ length: 8 }, (_, i) => (
+                <div key={i} style={{ height: '48px', borderRadius: '6px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#f0f0f0', width: i % 2 === 0 ? '100%' : `${85 - (i % 3) * 5}%` }} />
+              ))}
+            </div>
+          ) : (
+            <>
           {/* Save Button - Hidden for location, cash, and pos tabs (pos has its own at bottom) */}
           {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
@@ -5760,6 +5926,10 @@ function Settings() {
                           <input type="checkbox" checked={!!receiptSettings.show_payment_method} onChange={(e) => setReceiptSettingsWithUndo({ ...receiptSettings, show_payment_method: e.target.checked })} />
                           <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Show payment method</span>
                         </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={receiptSettings.show_tip !== false} onChange={(e) => setReceiptSettingsWithUndo({ ...receiptSettings, show_tip: e.target.checked })} />
+                          <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>Show tip in totals</span>
+                        </label>
                         <div style={{ borderTop: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`, margin: '8px 0' }} />
                         <FormField>
                           <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px', display: 'block' }}>Subtotal</FormLabel>
@@ -5794,6 +5964,23 @@ function Settings() {
                             onItalicToggle={() => setReceiptSettingsWithUndo({ ...receiptSettings, tax_italic: !receiptSettings.tax_italic })}
                             align={receiptSettings.tax_align}
                             onAlignChange={(align) => setReceiptSettingsWithUndo({ ...receiptSettings, tax_align: align })}
+                            isDarkMode={isDarkMode}
+                            themeColorRgb={themeColorRgb}
+                          />
+                        </FormField>
+                        <FormField>
+                          <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px', display: 'block' }}>Tip (when shown)</FormLabel>
+                          <TextFormattingToolbar
+                            font={receiptSettings.tip_font || 'monospace'}
+                            onFontChange={(e) => setReceiptSettingsWithUndo({ ...receiptSettings, tip_font: e.target.value })}
+                            fontSize={receiptSettings.tip_font_size ?? 12}
+                            onFontSizeChange={(e) => setReceiptSettingsWithUndo({ ...receiptSettings, tip_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })}
+                            bold={receiptSettings.tip_bold}
+                            onBoldToggle={() => setReceiptSettingsWithUndo({ ...receiptSettings, tip_bold: !receiptSettings.tip_bold })}
+                            italic={receiptSettings.tip_italic}
+                            onItalicToggle={() => setReceiptSettingsWithUndo({ ...receiptSettings, tip_italic: !receiptSettings.tip_italic })}
+                            align={receiptSettings.tip_align || 'right'}
+                            onAlignChange={(align) => setReceiptSettingsWithUndo({ ...receiptSettings, tip_align: align })}
                             isDarkMode={isDarkMode}
                             themeColorRgb={themeColorRgb}
                           />
@@ -6587,15 +6774,32 @@ function Settings() {
                     </div>
                   )}
                 </div>
-                <div style={{ textAlign: 'right' }}>
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '12px' }}>
                   {currentSession && (
                     <>
-                      <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666' }}>
-                        Starting Cash: ${(parseFloat(currentSession?.starting_cash) || 0).toFixed(2)}
+                      <div>
+                        <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666' }}>
+                          Starting Cash: ${(parseFloat(currentSession?.starting_cash) || 0).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666', marginTop: '4px' }}>
+                          Expected Cash: ${calculateExpectedCash().toFixed(2)}
+                        </div>
                       </div>
-                      <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666', marginTop: '4px' }}>
-                        Expected Cash: ${calculateExpectedCash().toFixed(2)}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { loadRegisterSessions(); loadRegisterEvents() }}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '13px',
+                          backgroundColor: isDarkMode ? 'var(--bg-tertiary, #333)' : '#eee',
+                          color: isDarkMode ? 'var(--text-primary)' : '#333',
+                          border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`,
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Refresh
+                      </button>
                     </>
                   )}
                   {!currentSession && lastClosedSession && (
@@ -7776,6 +7980,8 @@ function Settings() {
             </div>
           )}
         </div>
+          )}
+            </>
           )}
         </div>
       </div>

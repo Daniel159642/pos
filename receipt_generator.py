@@ -63,7 +63,8 @@ def get_receipt_settings() -> Dict[str, Any]:
                 'return_policy': '',
                 'show_tax_breakdown': 1,
                 'show_payment_method': 1,
-                'show_signature': 1
+                'show_signature': 1,
+                'show_tip': 1
             }
     finally:
         conn.close()
@@ -337,6 +338,9 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list, settings
     
     tax_style = _build_style(ts, 'tax', int(fs) or 8, styles['Normal'], align_fallback='right')
     tax_style.alignment = _to_reportlab_align(ts.get('tax_align', 'right'))
+    
+    tip_style = _build_style(ts, 'tip', int(fs) or 8, styles['Normal'], align_fallback='right')
+    tip_style.alignment = _to_reportlab_align(ts.get('tip_align', ts.get('subtotal_align', 'right')))
     
     total_style = _build_style(ts, 'total', int(fs) + 2 if fs else 10, styles['Normal'], align_fallback='right')
     total_style.alignment = _to_reportlab_align(ts.get('total_align', 'right'))
@@ -629,11 +633,15 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list, settings
     if transaction_fee > 0:
         totals_data.append(['Transaction fee:' if (is_return_receipt or is_store_credit_receipt) and not is_exchange_completion else 'Transaction Fee:', f"${transaction_fee:.2f}"])
     
-    tip = order_data.get('tip', 0.0)
-    if tip > 0:
+    tip = float(order_data.get('tip', 0) or 0)
+    show_tip = settings.get('show_tip', 1) not in (0, '0', False)
+    if tip > 0 and show_tip:
         totals_data.append(['Tip:', f"${tip:.2f}"])
-    
-    total = order_data.get('total', 0.0)
+    total = float(order_data.get('total', 0) or 0)
+    # Transaction receipts: total already includes tip. Order receipts: add tip if shown.
+    total_includes_tip = order_data.get('total_includes_tip', False)
+    if tip > 0 and show_tip and not total_includes_tip:
+        total = total + tip
     if is_store_credit_receipt:
         totals_data.append(['<b>Total Store Credit:</b>', f"<b>${total:.2f}</b>"])
     elif is_return_receipt and not is_exchange_completion:
@@ -641,7 +649,7 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list, settings
     else:
         totals_data.append(['<b>TOTAL:</b>', f"<b>${total:.2f}</b>"])
     
-    # Totals - each line uses its template style (subtotal, tax, total)
+    # Totals - each line uses its template style (subtotal, tax, tip, total)
     for label, value in totals_data:
         clean_label = label.replace('<b>', '').replace('</b>', '')
         clean_value = value.replace('<b>', '').replace('</b>', '')
@@ -650,6 +658,8 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list, settings
             story.append(Paragraph(f"<b>{line}</b>", total_style))
         elif 'Tax' in clean_label:
             story.append(Paragraph(line, tax_style))
+        elif 'Tip' in clean_label:
+            story.append(Paragraph(line, tip_style))
         else:
             story.append(Paragraph(line, subtotal_style))
     
@@ -933,6 +943,8 @@ def generate_receipt_with_barcode(order_id: int) -> Optional[bytes]:
         order_data['amount_paid'] = amount_paid
         order_data['change'] = change if change > 0 else 0
         order_data['signature'] = signature
+        # Order total includes tip when process_payment ran with tip > 0
+        order_data['total_includes_tip'] = True
         # If we found a payment record, always show as paid (normal receipt). Only show NOT PAID when no payment and order is pay-later.
         if amount_paid is not None:
             order_data['payment_status'] = 'completed'
@@ -1104,10 +1116,11 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
         if change == 0 and amount_paid and (payment_method_type == 'cash' or (payment_method and 'cash' in payment_method.lower())):
             change = float(amount_paid) - float(transaction['total'])
         
-        # Get discount, discount_type, order_type from the linked order
+        # Get discount, discount_type, order_type, tip from the linked order
         order_discount = 0
         order_discount_type = None
         order_type = None
+        order_tip = 0
         order_id = transaction.get('order_id')
         if order_id:
             try:
@@ -1119,6 +1132,14 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
                     order_discount = float(order_row.get('discount', 0) or 0)
                     order_discount_type = order_row.get('discount_type')
                     order_type = order_row.get('order_type')
+                # Fallback: get tip from orders when transactions.tip is 0 (e.g. different payment path)
+                try:
+                    cursor.execute("SELECT tip FROM orders WHERE order_id = %s", (order_id,))
+                    ot_row = cursor.fetchone()
+                    if ot_row and (ot_row.get('tip') or 0):
+                        order_tip = float(ot_row.get('tip') or 0)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"Note: Could not get order details: {e}")
 
@@ -1168,8 +1189,9 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
             'tax_rate': transaction['tax'] / transaction['subtotal'] if transaction['subtotal'] > 0 else 0,
             'discount': order_discount,
             'discount_type': order_discount_type or '',
-            'tip': transaction.get('tip', 0),
+            'tip': float(transaction.get('tip') or 0) or order_tip,
             'total': transaction['total'],
+            'total_includes_tip': True,
             'payment_method': payment_method,
             'payment_method_type': payment_method_type,
             'amount_paid': amount_paid,

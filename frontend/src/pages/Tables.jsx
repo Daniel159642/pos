@@ -488,23 +488,7 @@ function Tables() {
   }
 
 
-  if (loadingTables) {
-    return (
-      <div style={{ 
-        display: 'flex',
-        minHeight: '100vh',
-        width: '100%',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
-        <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-          Loading tables...
-        </div>
-      </div>
-    )
-  }
-
-  if (Object.keys(categories).length === 0) {
+  if (!loadingTables && Object.keys(categories).length === 0) {
     return (
       <div style={{ 
         display: 'flex',
@@ -531,12 +515,16 @@ function Tables() {
     'Security & Permissions': Shield
   }
 
-  const categoryTabs = Object.keys(categories).map(categoryName => ({
+  // Use static category list so nav tab list is visible immediately (no wait for API)
+  const staticCategoryTabs = Object.keys(TABLE_CATEGORIES).map(categoryName => ({
     id: categoryName,
     label: categoryName
   }))
+  const categoryTabs = loadingTables
+    ? staticCategoryTabs
+    : Object.keys(categories).map(categoryName => ({ id: categoryName, label: categoryName }))
 
-  const currentCategoryTables = activeCategory ? categories[activeCategory] : []
+  const currentCategoryTables = activeCategory ? (categories[activeCategory] || []) : []
 
   return (
     <div style={{ 
@@ -675,7 +663,7 @@ function Tables() {
               {sidebarMinimized ? 'Open sidebar' : 'Close sidebar'}
             </div>
           )}
-          {/* Category Navigation */}
+          {/* Category Navigation – nav shell is always visible; categories fill in when loaded */}
           {categoryTabs.map((category) => {
             const Icon = categoryIcons[category.id] || Folder
             const isActive = activeCategory === category.id
@@ -751,7 +739,7 @@ function Tables() {
           transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
         }}
       >
-        {activeCategory && currentCategoryTables.length > 0 && (
+        {(loadingTables || (activeCategory && currentCategoryTables.length > 0)) && (
           <div style={{ marginBottom: '24px', borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', paddingBottom: '16px' }}>
             <div style={{ position: 'relative' }}>
               <div 
@@ -766,7 +754,11 @@ function Tables() {
                   msOverflowStyle: 'none'
                 }}
               >
-                {currentCategoryTables.map(table => {
+                {loadingTables ? (
+                  Array.from({ length: 5 }, (_, i) => (
+                    <div key={i} style={{ height: '28px', width: `${80 + (i % 3) * 20}px`, borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#e8e8e8', flexShrink: 0 }} />
+                  ))
+                ) : currentCategoryTables.map(table => {
                 const isActive = activeTab === table.id
                 
                 return (
@@ -826,9 +818,15 @@ function Tables() {
         )}
       
       <div style={{ overflowX: 'auto' }}>
-        {loading && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>Loading...</div>}
         {error && <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>{error}</div>}
-        {!loading && !error && data && (
+        {(loadingTables || loading) && (
+          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '8px' }} aria-busy="true" aria-label="Loading table data">
+            {Array.from({ length: 10 }, (_, i) => (
+              <div key={i} style={{ height: '40px', borderRadius: '6px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#f0f0f0', width: i % 2 === 0 ? '100%' : `${90 - (i % 3) * 5}%` }} />
+            ))}
+          </div>
+        )}
+        {!loadingTables && !loading && !error && data && (
           data.data && data.data.length > 0 ? (
             <>
               <div>

@@ -6145,7 +6145,8 @@ def list_orders(
     order_status: Optional[str] = None,
     order_status_in: Optional[List[str]] = None,
     order_type_in: Optional[List[str]] = None,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
+    offset: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """List orders with optional filters, including receipt preferences.
     order_status_in: e.g. ['returned', 'voided', 'out_for_delivery'] (OR).
@@ -6234,9 +6235,12 @@ def list_orders(
                 params.extend([o.lower() for o in others])
         
         query += " ORDER BY o.order_date DESC"
-        if limit:
+        if limit is not None:
             query += " LIMIT %s"
             params.append(limit)
+        if offset is not None:
+            query += " OFFSET %s"
+            params.append(offset)
         
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -6245,6 +6249,58 @@ def list_orders(
         return [dict(row) for row in rows]
     finally:
         conn.close()
+
+
+def count_orders(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    employee_id: Optional[int] = None,
+    order_status: Optional[str] = None,
+    order_status_in: Optional[List[str]] = None,
+    order_type_in: Optional[List[str]] = None
+) -> int:
+    """Count orders with the same filters as list_orders (no limit/offset)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        query = "SELECT COUNT(*) AS c FROM orders o WHERE 1=1"
+        params = []
+        if start_date:
+            query += " AND DATE(o.order_date) >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND DATE(o.order_date) <= %s"
+            params.append(end_date)
+        if employee_id:
+            query += " AND o.employee_id = %s"
+            params.append(employee_id)
+        if order_status:
+            query += " AND o.order_status = %s"
+            params.append(order_status)
+        if order_status_in:
+            placeholders = ', '.join(['%s'] * len(order_status_in))
+            query += " AND LOWER(COALESCE(o.order_status, '')) IN (" + placeholders + ")"
+            params.extend([s.lower() for s in order_status_in])
+        if order_type_in:
+            in_person = 'in-person' in [t.lower() for t in order_type_in]
+            others = [t for t in order_type_in if (t or '').lower() != 'in-person']
+            in_person_cond = "(o.order_type IS NULL OR TRIM(COALESCE(o.order_type, '')) = '' OR LOWER(o.order_type) = 'in-person')"
+            if in_person and others:
+                placeholders = ', '.join(['%s'] * len(others))
+                query += " AND (" + in_person_cond + " OR LOWER(COALESCE(o.order_type, '')) IN (" + placeholders + "))"
+                params.extend([o.lower() for o in others])
+            elif in_person:
+                query += " AND " + in_person_cond
+            else:
+                placeholders = ', '.join(['%s'] * len(others))
+                query += " AND LOWER(COALESCE(o.order_type, '')) IN (" + placeholders + ")"
+                params.extend([o.lower() for o in others])
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
 
 def get_tips_by_employee(
     employee_id: Optional[int] = None,
@@ -6678,27 +6734,37 @@ def get_schedule(
     return [dict(row) for row in rows]
 
 def get_current_clock_status(employee_id: int) -> Optional[Dict[str, Any]]:
-    """Get current clock status for an employee"""
+    """Get current clock status for an employee (uses time_clock table; clock_in_time alias for API compatibility)."""
     conn = get_connection()
     cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT 
-            es.*,
-            e.first_name || ' ' || e.last_name as employee_name
-        FROM employee_schedule es
-        JOIN employees e ON es.employee_id = e.employee_id
-        WHERE es.employee_id = %s 
-          AND es.status = 'clocked_in'
-          AND DATE(es.clock_in_time) = DATE('now')
-        ORDER BY es.clock_in_time DESC
-        LIMIT 1
-    """, (employee_id,))
-    
-    row = cursor.fetchone()
-    conn.close()
-    
-    return dict(row) if row else None
+    try:
+        cursor.execute("""
+            SELECT 
+                tc.time_entry_id,
+                tc.employee_id,
+                tc.clock_in,
+                tc.clock_out,
+                tc.status,
+                e.first_name || ' ' || e.last_name as employee_name
+            FROM time_clock tc
+            JOIN employees e ON tc.employee_id = e.employee_id
+            WHERE tc.employee_id = %s 
+              AND tc.clock_out IS NULL
+            ORDER BY tc.clock_in DESC
+            LIMIT 1
+        """, (employee_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d['clock_in_time'] = d.get('clock_in')
+        d['schedule_id'] = None
+        d['schedule_date'] = d['clock_in'].date().isoformat() if hasattr(d.get('clock_in'), 'date') else None
+        d['start_time'] = None
+        d['end_time'] = None
+        return d
+    finally:
+        conn.close()
 
 # ============================================================================
 # MASTER CALENDAR FUNCTIONS
@@ -9501,6 +9567,13 @@ def update_store_location_settings(
                 require_location if require_location is not None else 1
             ))
         else:
+            # Only update extended columns if they exist (migration add_store_location_settings_extended may not have been run)
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'store_location_settings'
+            """)
+            existing_columns = {row[0] for row in cursor.fetchall()}
+
             updates = []
             params = []
             if store_name is not None:
@@ -9521,34 +9594,34 @@ def update_store_location_settings(
             if require_location is not None:
                 updates.append("require_location = %s")
                 params.append(require_location)
-            if city is not None:
+            if city is not None and "city" in existing_columns:
                 updates.append("city = %s")
                 params.append(city)
-            if state is not None:
+            if state is not None and "state" in existing_columns:
                 updates.append("state = %s")
                 params.append(state)
-            if zip_code is not None:
+            if zip_code is not None and "zip" in existing_columns:
                 updates.append("zip = %s")
                 params.append(zip_code)
-            if country is not None:
+            if country is not None and "country" in existing_columns:
                 updates.append("country = %s")
                 params.append(country)
-            if store_phone is not None:
+            if store_phone is not None and "store_phone" in existing_columns:
                 updates.append("store_phone = %s")
                 params.append(store_phone)
-            if store_email is not None:
+            if store_email is not None and "store_email" in existing_columns:
                 updates.append("store_email = %s")
                 params.append(store_email)
-            if store_website is not None:
+            if store_website is not None and "store_website" in existing_columns:
                 updates.append("store_website = %s")
                 params.append(store_website)
-            if store_type is not None:
+            if store_type is not None and "store_type" in existing_columns:
                 updates.append("store_type = %s")
                 params.append(store_type)
-            if store_logo is not None:
+            if store_logo is not None and "store_logo" in existing_columns:
                 updates.append("store_logo = %s")
                 params.append(store_logo)
-            if store_hours is not None:
+            if store_hours is not None and "store_hours" in existing_columns:
                 updates.append("store_hours = %s::jsonb")
                 params.append(json.dumps(store_hours))
 
@@ -10967,6 +11040,59 @@ def add_cash_transaction(session_id: Optional[int], employee_id: int, transactio
         traceback.print_exc()
         return {'success': False, 'message': str(e)}
 
+def _enrich_session_expected_cash(conn, cursor, session: Dict[str, Any]) -> Dict[str, Any]:
+    """Add expected_cash and cash_sales to an open session for display."""
+    s = dict(session)
+    if s.get('status') != 'open':
+        return s
+    sid = s.get('register_session_id') or s.get('session_id')
+    opened_at = s.get('opened_at')
+    establishment_id = s.get('establishment_id')
+    if not sid or not opened_at:
+        return s
+    try:
+        # Cash sales from orders (payment_method=cash, non-voided) since session opened
+        if establishment_id is not None:
+            cursor.execute("""
+                SELECT COALESCE(SUM(CASE WHEN o.order_status != 'voided' THEN o.total ELSE 0 END), 0) as cash_sales
+                FROM orders o
+                WHERE o.payment_method = 'cash'
+                AND o.order_date >= %s
+                AND o.establishment_id = %s
+            """, (opened_at, establishment_id))
+        else:
+            cursor.execute("""
+                SELECT COALESCE(SUM(CASE WHEN o.order_status != 'voided' THEN o.total ELSE 0 END), 0) as cash_sales
+                FROM orders o
+                WHERE o.payment_method = 'cash'
+                AND o.order_date >= %s
+            """, (opened_at,))
+        sales_row = cursor.fetchone()
+        cash_sales = float((sales_row or {}).get('cash_sales') or 0)
+
+        # Cash in/out from cash_transactions for this session
+        cursor.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN transaction_type = 'cash_in' THEN amount ELSE 0 END), 0) as cash_in,
+                COALESCE(SUM(CASE WHEN transaction_type = 'cash_out' THEN amount ELSE 0 END), 0) as cash_out
+            FROM cash_transactions
+            WHERE session_id = %s
+        """, (sid,))
+        tx_row = cursor.fetchone()
+        tx = tx_row if isinstance(tx_row, dict) else {}
+        cash_in = float(tx.get('cash_in') or 0)
+        cash_out = float(tx.get('cash_out') or 0)
+
+        starting = float(s.get('starting_cash') or 0)
+        s['cash_sales'] = cash_sales
+        s['expected_cash'] = starting + cash_sales + cash_in - cash_out
+    except Exception as ex:
+        # Fallback so UI still shows something
+        s['expected_cash'] = float(s.get('starting_cash') or 0)
+        s['cash_sales'] = 0
+    return s
+
+
 def get_register_session(session_id: Optional[int] = None, register_id: Optional[int] = None, status: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Get cash register session(s)
@@ -10999,8 +11125,12 @@ def get_register_session(session_id: Optional[int] = None, register_id: Optional
             """, (session_id,))
             
             row = cursor.fetchone()
+            if row:
+                result = _enrich_session_expected_cash(conn, cursor, dict(row))
+                conn.close()
+                return result
             conn.close()
-            return dict(row) if row else None
+            return None
         else:
             query = """
                 SELECT crs.*,
@@ -11028,8 +11158,9 @@ def get_register_session(session_id: Optional[int] = None, register_id: Optional
             
             cursor.execute(query, params)
             rows = cursor.fetchall()
+            result = [_enrich_session_expected_cash(conn, cursor, dict(row)) for row in rows] if rows else []
             conn.close()
-            return [dict(row) for row in rows] if rows else []
+            return result
             
     except Exception as e:
         conn.close()

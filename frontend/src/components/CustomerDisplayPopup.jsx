@@ -56,9 +56,11 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
   const [customTipAmount, setCustomTipAmount] = useState('')
   const [signatureData, setSignatureData] = useState(null)
   const [isDrawing, setIsDrawing] = useState(false)
-  // When opening for return receipt with initialCheckoutUi, set from first render so background/colors match API immediately
+  // Initialize with defaults to avoid blue flash when opening; use API/initialCheckoutUi when available
   const [checkoutUi, setCheckoutUi] = useState(() =>
-    (returnId != null && initialCheckoutUi != null) ? mergeCheckoutUiFromApi(initialCheckoutUi) : null
+    (returnId != null && initialCheckoutUi != null)
+      ? mergeCheckoutUiFromApi(initialCheckoutUi)
+      : mergeCheckoutUiFromApi(null)
   )
   // When user picks Cash/Card and tip is enabled, we show tip screen first; this holds the method until they pick a tip
   const [pendingPaymentMethod, setPendingPaymentMethod] = useState(null)
@@ -434,6 +436,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
   const selectTip = (percent) => {
     const tipAmount = (total * percent / 100).toFixed(2)
     const amount = parseFloat(tipAmount)
+    console.log('[TIP DEBUG] CustomerDisplayPopup selectTip:', { percent, total, amount })
     setSelectedTip(amount)
     setAmountDue(total + amount)
     setShowCustomTip(false)
@@ -451,6 +454,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
   }
 
   const skipTip = () => {
+    console.log('[TIP DEBUG] CustomerDisplayPopup skipTip (no tip)')
     setSelectedTip(0)
     setAmountDue(total)
     setShowCustomTip(false)
@@ -483,6 +487,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
 
   const applyCustomTip = () => {
     const tipValue = parseFloat(customTipAmount) || 0
+    console.log('[TIP DEBUG] CustomerDisplayPopup applyCustomTip:', { customTipAmount, tipValue })
     setSelectedTip(tipValue)
     setAmountDue(total + tipValue)
     setShowCustomTip(false)
@@ -613,11 +618,11 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
       const creditInfo = exchangeCreditUsed ? (() => { try { return JSON.parse(exchangeCreditUsed) } catch { return null } })() : null
       const exchangeOrderId = creditInfo?.order_id
 
-      const generateReceiptForId = async (id, isOrder = false) => {
+      const generateReceiptForId = async (id, isOrder = false, forceRegularOrder = false) => {
         try {
-          // Prefer exchange completion receipt when this order used exchange credit
+          // Prefer exchange completion receipt when this order used exchange credit (unless fallback from 404)
           let endpoint = isOrder ? `/api/receipt/${id}` : `/api/receipt/transaction/${id}`
-          if (isOrder && exchangeOrderId && parseInt(id, 10) === parseInt(exchangeOrderId, 10)) {
+          if (isOrder && exchangeOrderId && parseInt(id, 10) === parseInt(exchangeOrderId, 10) && !forceRegularOrder) {
             endpoint = `/api/receipt/exchange_completion/${exchangeOrderId}`
           }
           console.log('Generating receipt for:', endpoint, 'ID:', id, 'isOrder:', isOrder)
@@ -675,38 +680,19 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
         }
       }
       
-      // When order used exchange credit, use exchange completion receipt (one PDF). Otherwise transaction then order fallback.
-      if (exchangeOrderId) {
-        const success = await generateReceiptForId(exchangeOrderId, true)
-        if (success) {
-          await submitReceiptPreference(type)
-          return
-        }
-      }
+      // Try transaction receipt first (includes tip), then exchange completion if applicable, then order receipt
+      let success = false
       if (transactionId) {
-        const success = await generateReceiptForId(transactionId, false)
-        if (success) {
-          await submitReceiptPreference(type)
-          return
-        }
-        if (orderId && orderId !== exchangeOrderId) {
-          const success2 = await generateReceiptForId(orderId, true)
-          if (success2) {
-            await submitReceiptPreference(type)
-            return
-          }
-        }
-        await submitReceiptPreference(type)
-      } else if (orderId) {
-        const success = await generateReceiptForId(orderId, true)
-        if (success) {
-          await submitReceiptPreference(type)
-        } else {
-          await submitReceiptPreference(type)
-        }
-      } else {
-        submitReceiptPreference(type)
+        success = await generateReceiptForId(transactionId, false)
       }
+      if (!success && exchangeOrderId) {
+        success = await generateReceiptForId(exchangeOrderId, true)
+        if (!success) success = await generateReceiptForId(exchangeOrderId, true, true)
+      }
+      if (!success && orderId) {
+        success = await generateReceiptForId(orderId, true)
+      }
+      await submitReceiptPreference(type)
     } else if (type === 'email' || type === 'sms') {
       // Show input field (handled in render)
     } else {

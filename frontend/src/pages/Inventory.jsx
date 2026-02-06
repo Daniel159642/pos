@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTheme } from '../contexts/ThemeContext'
 import Table from '../components/Table'
 import BarcodeScanner from '../components/BarcodeScanner'
@@ -26,13 +27,10 @@ function Inventory() {
   
   const themeColorRgb = hexToRgb(themeColor)
   
-  const [inventory, setInventory] = useState([])
   const [allVendors, setAllVendors] = useState([])
   const [allCategories, setAllCategories] = useState([])
   const [categoryColumns, setCategoryColumns] = useState([])
   const [vendorColumns, setVendorColumns] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterView, setFilterView] = useState('category') // 'category', 'vendor', 'all'
   const [selectedCategory, setSelectedCategory] = useState(null)
@@ -78,6 +76,8 @@ function Inventory() {
     unit: ''
   })
   const [inventoryFilter, setInventoryFilter] = useState('all') // 'all' | 'product' | 'ingredient' | 'archived'
+  const [inventoryPage, setInventoryPage] = useState(0)
+  const queryClient = useQueryClient()
   const [editingVariants, setEditingVariants] = useState([])
   const [editingIngredients, setEditingIngredients] = useState([])
   const [newVariant, setNewVariant] = useState({ variant_name: '', price: '', cost: '0' })
@@ -147,16 +147,35 @@ function Inventory() {
     setSessionToken(localStorage.getItem('sessionToken'))
   }, [])
 
+  const PAGE_SIZE = 50
+  const { data: inventoryResponse, isLoading: inventoryLoading, error: inventoryError, refetch: refetchInventory } = useQuery({
+    queryKey: ['inventory', inventoryFilter, inventoryPage],
+    queryFn: async () => {
+      let url = '/api/inventory?limit=' + PAGE_SIZE + '&offset=' + inventoryPage * PAGE_SIZE
+      if (inventoryFilter === 'archived') url += '&archived=1'
+      else if (inventoryFilter && inventoryFilter !== 'all') url += '&item_type=' + inventoryFilter
+      const res = await fetch(url)
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.message || 'Failed to load inventory')
+      return result
+    },
+    staleTime: 60 * 1000,
+    placeholderData: keepPreviousData
+  })
+  const inventory = inventoryResponse?.data ?? []
+  const inventoryTotal = inventoryResponse?.total ?? 0
+  const loading = inventoryLoading
+  const error = inventoryError?.message ?? null
+
   useEffect(() => {
     const archived = inventoryFilter === 'archived'
     if (archived) {
       setSelectedCategory(null)
       setSelectedVendor(null)
-      setInventory([])
       setAllCategories([])
       setAllVendors([])
     }
-    loadInventory(inventoryFilter)
+    setInventoryPage(0)
     loadVendors(archived)
     loadCategories(archived)
   }, [inventoryFilter])
@@ -196,28 +215,7 @@ function Inventory() {
     // Optionally, you could also filter the inventory immediately
   }
 
-  const loadInventory = async (filter = inventoryFilter) => {
-    setLoading(true)
-    setError(null)
-    try {
-      let url = '/api/inventory'
-      if (filter === 'archived') {
-        url += '?archived=1'
-      } else if (filter && filter !== 'all') {
-        url += `?item_type=${filter}`
-      }
-      const response = await fetch(url)
-      const result = await response.json()
-      if (result.data) {
-        setInventory(result.data)
-      }
-    } catch (err) {
-      setError('Error loading inventory')
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const invalidateInventory = () => queryClient.invalidateQueries({ queryKey: ['inventory'] })
 
   const loadVendors = async (archivedOnly) => {
     try {
@@ -345,21 +343,21 @@ function Inventory() {
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.message || 'Archive failed')
     setEditingProduct((prev) => (prev?.product_id === item.product_id ? null : prev))
-    loadInventory(inventoryFilter)
+    invalidateInventory()
   }
   const doUnarchiveProduct = async (item) => {
     const res = await fetch(`/api/inventory/${item.product_id}/unarchive`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.message || 'Unarchive failed')
     setEditingProduct((prev) => (prev?.product_id === item.product_id ? null : prev))
-    loadInventory(inventoryFilter)
+    invalidateInventory()
   }
   const doDeleteProduct = async (item) => {
     const res = await fetch(`/api/inventory/${item.product_id}`, { method: 'DELETE' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.message || 'Delete failed')
     setEditingProduct((prev) => (prev?.product_id === item.product_id ? null : prev))
-    loadInventory(inventoryFilter)
+    invalidateInventory()
   }
   const doArchiveCategory = async (item) => {
     const res = await fetch(`/api/categories/${item.category_id}/archive`, { method: 'POST' })
@@ -443,7 +441,7 @@ function Inventory() {
       barcodeObjectUrlRef.current = url
       setBarcodePreview({ product, imageDataUrl: url, blob })
       // Backend may have saved the barcode to the product when it had none; refresh table so the row updates
-      loadInventory(inventoryFilter)
+      invalidateInventory()
     } catch (e) {
       setBarcodeError(e.message || 'Failed to generate barcode')
     } finally {
@@ -823,7 +821,7 @@ function Inventory() {
 
       setEditSuccess(true)
       setTimeout(() => {
-        loadInventory() // Reload inventory after save
+        invalidateInventory()
         handleCloseEdit()
       }, 1000)
     } catch (err) {
@@ -913,7 +911,7 @@ function Inventory() {
       setCreateNewRecipeRow({ ingredient_id: '', quantity_required: '', unit: '' })
       setPhotoPreview(null)
       setTimeout(() => {
-        loadInventory()
+        invalidateInventory()
         setShowCreateProduct(false)
         setCreateSuccess(false)
       }, 1000)
@@ -1210,7 +1208,7 @@ function Inventory() {
       setCreateCategoryData({ parent_path: '', category_name: '' })
       setEditingCategory(null)
       setTimeout(() => {
-        loadInventory()
+        invalidateInventory()
         loadCategories()
         setShowCreateCategory(false)
         setCreateSuccess(false)
@@ -1772,6 +1770,8 @@ function Inventory() {
       )
     }
 
+    const totalPages = Math.max(1, Math.ceil(inventoryTotal / PAGE_SIZE))
+    const hasPagination = inventoryTotal > PAGE_SIZE
     return (
       <div style={{ marginTop: '20px' }}>
         <Table 
@@ -1787,26 +1787,50 @@ function Inventory() {
             { label: 'Delete', onClick: wrapAction(doDeleteProduct), confirm: true, confirmDanger: true, confirmMessage: (r) => `Delete "${r.product_name || 'this product'}"? This cannot be undone.`, confirmButtonLabel: 'Delete' }
           ]}
         />
+        {hasPagination && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', color: isDarkMode ? '#aaa' : '#666' }}>
+              Page {inventoryPage + 1} of {totalPages} ({inventoryTotal} items)
+            </span>
+            <button
+              type="button"
+              disabled={inventoryPage === 0 || loading}
+              onClick={() => setInventoryPage(p => Math.max(0, p - 1))}
+              style={{
+                padding: '6px 12px',
+                fontSize: '13px',
+                border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
+                borderRadius: '6px',
+                background: isDarkMode ? '#333' : '#f5f5f5',
+                color: (inventoryPage === 0 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
+                cursor: (inventoryPage === 0 || loading) ? 'not-allowed' : 'pointer'
+              }}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={inventoryPage >= totalPages - 1 || loading}
+              onClick={() => setInventoryPage(p => p + 1)}
+              style={{
+                padding: '6px 12px',
+                fontSize: '13px',
+                border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
+                borderRadius: '6px',
+                background: isDarkMode ? '#333' : '#f5f5f5',
+                color: (inventoryPage >= totalPages - 1 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
+                cursor: (inventoryPage >= totalPages - 1 || loading) ? 'not-allowed' : 'pointer'
+              }}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
     )
   }
 
-  if (loading) {
-    return (
-      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-        Loading...
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div style={{ padding: '40px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999' }}>
-        {error}
-      </div>
-    )
-  }
-
+  // Full UI shell (search, filters, category/vendor sections) always renders; only content area shows loading/error
   return (
     <div style={{
       padding: '20px 40px 40px 40px',
@@ -3325,15 +3349,37 @@ function Inventory() {
             </div>
           </div>
 
-          {/* Content Area */}
+          {/* Content Area – shell always visible; loading/error only here */}
           <div style={{ 
             flex: 1, 
             overflowY: 'auto',
             overflowX: 'hidden'
           }}>
-            {filterView === 'category' && renderCategoryGrid()}
-            {filterView === 'vendor' && renderVendorGrid()}
-            {filterView === 'all' && renderAllItems()}
+            {error ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: isDarkMode ? '#ef5350' : '#c33', fontSize: '14px' }}>
+                {error}
+              </div>
+            ) : loading ? (
+              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '8px' }} aria-busy="true" aria-label="Loading inventory">
+                {Array.from({ length: 8 }, (_, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      height: '48px',
+                      borderRadius: '6px',
+                      backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#f0f0f0',
+                      width: i % 2 === 0 ? '100%' : `${85 - (i % 3) * 10}%`
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <>
+                {filterView === 'category' && renderCategoryGrid()}
+                {filterView === 'vendor' && renderVendorGrid()}
+                {filterView === 'all' && renderAllItems()}
+              </>
+            )}
           </div>
         </div>
       </div>

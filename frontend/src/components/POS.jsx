@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { usePermissions, ProtectedComponent } from '../contexts/PermissionContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -49,7 +50,6 @@ function POS({ employeeId, employeeName }) {
   const [categories, setCategories] = useState([])
   const [selectedCategory, setSelectedCategory] = useState(null)
   const [categoryProducts, setCategoryProducts] = useState([])
-  const [loading, setLoading] = useState(false)
   const [taxRate, setTaxRate] = useState(0.08) // Default 8% tax
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [processing, setProcessing] = useState(false)
@@ -65,9 +65,11 @@ function POS({ employeeId, employeeName }) {
   const [showCustomerDisplay, setShowCustomerDisplay] = useState(false)
   const [showSummary, setShowSummary] = useState(false) // Show transaction summary before payment
   const [selectedTip, setSelectedTip] = useState(0) // Tip amount selected by customer
+  const selectedTipRef = useRef(0) // Ref to avoid stale closure when processOrder runs
   const [orderType, setOrderType] = useState(null) // 'pickup', 'delivery', or null
   const [customerInfoConfirmed, setCustomerInfoConfirmed] = useState(false) // when true, hide pickup/delivery form and show summary only
   const [payAtPickupOrDelivery, setPayAtPickupOrDelivery] = useState(false) // true = pay when pickup/delivery (order placed with payment pending)
+  const [allowPayAtPickupEnabled, setAllowPayAtPickupEnabled] = useState(false) // from Settings: "Allow pay at pickup" — when false, only "Pay now" is valid
   const [orderPlacedPayLater, setOrderPlacedPayLater] = useState(null) // { orderId, orderNumber, total } after placing pay-later order
   const [orderToPayFromScan, setOrderToPayFromScan] = useState(null) // legacy: modal "Mark as paid (cash)" only
   const [payingForOrderId, setPayingForOrderId] = useState(null) // when set: order loaded in POS for payment (cart + customer); complete via checkout UI
@@ -196,70 +198,70 @@ function POS({ employeeId, employeeName }) {
     }
   }, [])
 
-  // Single bootstrap request for POS load (products, categories, filters, rewards) – one round-trip instead of 4
-  const loadBootstrap = async () => {
-    setLoading(true)
-    try {
-      const response = await fetch('/api/pos-bootstrap')
-      const data = await response.json()
-      if (data.success) {
-        if (data.inventory?.data) {
-          setAllProducts(data.inventory.data)
-          const rawPaths = (data.inventory.data || [])
-            .map(p => p.category)
-            .filter(cat => cat && cat.trim() !== '')
-          const pathPrefixes = (path) => {
-            if (!path || typeof path !== 'string') return []
-            const parts = path.split(' > ').map(p => p.trim()).filter(Boolean)
-            const out = []
-            for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join(' > '))
-            return out
-          }
-          setCategories([...new Set(rawPaths.flatMap(pathPrefixes))].sort())
-        }
-        if (data.posSearchFilters) setPosSearchFilters(data.posSearchFilters)
-        if (data.rewardsSettings) {
-          setRewardsSettings(prev => ({
-            ...prev,
-            enabled: data.rewardsSettings.enabled === 1 || data.rewardsSettings.enabled === true,
-            require_email: data.rewardsSettings.require_email === 1 || data.rewardsSettings.require_email === true,
-            require_phone: data.rewardsSettings.require_phone === 1 || data.rewardsSettings.require_phone === true,
-            require_both: data.rewardsSettings.require_both === 1 || data.rewardsSettings.require_both === true,
-            reward_type: data.rewardsSettings.reward_type || 'points',
-            points_per_dollar: parseFloat(data.rewardsSettings.points_per_dollar) || 1.0,
-            points_redemption_value: parseFloat(data.rewardsSettings.points_redemption_value) || 0.01
-          }))
-        }
-        if (data.posSettings) {
-          setTransactionFeeSettings(prev => ({
-            ...prev,
-            mode: (data.posSettings.transaction_fee_mode || 'additional').toLowerCase(),
-            charge_cash: !!data.posSettings.transaction_fee_charge_cash
-          }))
-        }
-      }
-    } catch (err) {
-      console.error('Error loading POS bootstrap:', err)
-      // Fallback to separate requests if bootstrap fails
-      fetchAllProducts()
-      loadRewardsSettings()
-      fetch('/api/pos-search-filters').then(res => res.json()).then(d => { if (d.success && d.data) setPosSearchFilters(d.data) }).catch(() => {})
-    } finally {
-      setLoading(false)
-    }
-  }
+  // React Query: cache POS bootstrap; refetch on window focus for fresh products
+  const {
+    data: bootstrapData,
+    isLoading: bootstrapLoading,
+    isSuccess: bootstrapSuccess,
+    refetch: refetchBootstrap
+  } = useQuery({
+    queryKey: ['pos-bootstrap'],
+    queryFn: async () => {
+      const res = await fetch('/api/pos-bootstrap')
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.message || 'Failed to load')
+      return json
+    },
+    staleTime: 2 * 60 * 1000,
+    retry: 1
+  })
 
-  // Fetch bootstrap on mount and refresh products on window focus
   useEffect(() => {
-    loadBootstrap()
-
-    const handleFocus = () => {
-      fetchAllProducts()
+    if (!bootstrapSuccess || !bootstrapData?.success) return
+    const data = bootstrapData
+    if (data.inventory?.data) {
+      setAllProducts(data.inventory.data)
+      const rawPaths = (data.inventory.data || []).map(p => p.category).filter(cat => cat && cat.trim() !== '')
+      const pathPrefixes = (path) => {
+        if (!path || typeof path !== 'string') return []
+        const parts = path.split(' > ').map(p => p.trim()).filter(Boolean)
+        const out = []
+        for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join(' > '))
+        return out
+      }
+      setCategories([...new Set(rawPaths.flatMap(pathPrefixes))].sort())
     }
+    if (data.posSearchFilters) setPosSearchFilters(data.posSearchFilters)
+    if (data.rewardsSettings) {
+      setRewardsSettings(prev => ({
+        ...prev,
+        enabled: data.rewardsSettings.enabled === 1 || data.rewardsSettings.enabled === true,
+        require_email: data.rewardsSettings.require_email === 1 || data.rewardsSettings.require_email === true,
+        require_phone: data.rewardsSettings.require_phone === 1 || data.rewardsSettings.require_phone === true,
+        require_both: data.rewardsSettings.require_both === 1 || data.rewardsSettings.require_both === true,
+        reward_type: data.rewardsSettings.reward_type || 'points',
+        points_per_dollar: parseFloat(data.rewardsSettings.points_per_dollar) || 1.0,
+        points_redemption_value: parseFloat(data.rewardsSettings.points_redemption_value) || 0.01
+      }))
+    }
+    if (data.posSettings) {
+      setTransactionFeeSettings(prev => ({
+        ...prev,
+        mode: (data.posSettings.transaction_fee_mode || 'additional').toLowerCase(),
+        charge_cash: !!data.posSettings.transaction_fee_charge_cash
+      }))
+    }
+  }, [bootstrapSuccess, bootstrapData])
 
+  const loading = bootstrapLoading
+
+  useEffect(() => {
+    const handleFocus = () => {
+      refetchBootstrap()
+    }
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
-  }, [])
+  }, [refetchBootstrap])
 
   // Hide scrollbar for POS category buttons
   useEffect(() => {
@@ -295,6 +297,30 @@ function POS({ employeeId, employeeName }) {
         setTransactionFeeSettings(prev => ({ ...prev, rates }))
       } catch (e) {
         if (!cancelled) setTransactionFeeSettings(prev => ({ ...prev }))
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  // Load order/delivery settings so "Pay at pickup" option is only shown when enabled in Settings
+  useEffect(() => {
+    let cancelled = false
+    const token = localStorage.getItem('sessionToken')
+    const load = async () => {
+      try {
+        if (!token) return
+        const res = await fetch('/api/order-delivery-settings', { headers: { 'X-Session-Token': token } })
+        const data = res.ok ? await res.json() : {}
+        if (cancelled) return
+        const enabled = !!data.allow_pay_at_pickup
+        setAllowPayAtPickupEnabled(enabled)
+        if (!enabled) setPayAtPickupOrDelivery(false) // ensure pay-later is off when setting is disabled
+      } catch (e) {
+        if (!cancelled) {
+          setAllowPayAtPickupEnabled(false)
+          setPayAtPickupOrDelivery(false)
+        }
       }
     }
     load()
@@ -384,7 +410,6 @@ function POS({ employeeId, employeeName }) {
   }, [selectedCategory, allProducts, searchTerm])
 
   const fetchAllProducts = async () => {
-    setLoading(true)
     try {
       const response = await fetch(`/api/inventory?item_type=product&include_variants=1`)
       const data = await response.json()
@@ -408,7 +433,6 @@ function POS({ employeeId, employeeName }) {
     } catch (err) {
       console.error('Error fetching products:', err)
     } finally {
-      setLoading(false)
     }
   }
 
@@ -465,7 +489,6 @@ function POS({ employeeId, employeeName }) {
   }
 
   const searchProducts = async (term) => {
-    setLoading(true)
     try {
       // Always fetch fresh data from API to include newly created products
       const response = await fetch(`/api/inventory?item_type=product&include_variants=1`)
@@ -581,7 +604,6 @@ function POS({ employeeId, employeeName }) {
     } catch (err) {
       console.error('Search error:', err)
     } finally {
-      setLoading(false)
     }
   }
 
@@ -671,7 +693,6 @@ function POS({ employeeId, employeeName }) {
   }
 
   const handleBarcodeScan = async (barcode) => {
-    setLoading(true)
     
     try {
       // Always fetch fresh data from API to include newly created products
@@ -934,12 +955,10 @@ function POS({ employeeId, employeeName }) {
       console.error('Barcode scan error:', err)
       showToast('Error looking up product. Please try again.', 'error')
     } finally {
-      setLoading(false)
     }
   }
 
   const handleImageScan = async (imageFile) => {
-    setLoading(true)
     
     try {
       const formData = new FormData()
@@ -981,7 +1000,6 @@ function POS({ employeeId, employeeName }) {
       console.error('Image scan error:', err)
       showToast('Error identifying product. Please try again.', 'error')
     } finally {
-      setLoading(false)
     }
   }
 
@@ -1157,8 +1175,14 @@ function POS({ employeeId, employeeName }) {
   }
 
   const handleTipSelect = (tip) => {
-    setSelectedTip(tip)
+    const amt = typeof tip === 'number' ? tip : parseFloat(tip) || 0
+    console.log('[TIP DEBUG] handleTipSelect called:', { raw: tip, parsed: amt })
+    setSelectedTip(amt)
+    selectedTipRef.current = amt
   }
+  useEffect(() => {
+    selectedTipRef.current = selectedTip
+  }, [selectedTip])
 
   const generateReceipt = async (orderId, orderNumber) => {
     try {
@@ -1422,7 +1446,7 @@ function POS({ employeeId, employeeName }) {
     setEditCustomerForm({
       customer_name: selectedCustomer.customer_name || customerInfo.name || '',
       email: selectedCustomer.email || customerInfo.email || '',
-      phone: selectedCustomer.phone || customerInfo.phone || '',
+      phone: (selectedCustomer.phone || customerInfo.phone || '').replace(/\D/g, '').slice(0, 10),
       address: selectedCustomer.address || customerInfo.address || ''
     })
     setShowEditCustomerModal(true)
@@ -1715,9 +1739,8 @@ function POS({ employeeId, employeeName }) {
         
         if (paymentMethodObj) {
           const totalWithTipVal = calculateTotalWithTip()
-          const paid = totalWithTipVal <= 0 ? 0 : (paymentMethod === 'cash' ? parseFloat(amountPaid) || 0 : (calculateTotal() + selectedTip))
-          const tipAmount = selectedTip || 0
-          
+          const tipAmount = selectedTipRef.current || selectedTip || 0
+          const paid = totalWithTipVal <= 0 ? 0 : (paymentMethod === 'cash' ? parseFloat(amountPaid) || 0 : (calculateTotal() + tipAmount))
           response = await fetch('/api/payment/process', {
             method: 'POST',
             headers: { 
@@ -1728,7 +1751,7 @@ function POS({ employeeId, employeeName }) {
               transaction_id: transactionId,
               payment_method_id: paymentMethodObj.payment_method_id,
               amount: paid,
-              tip: tipAmount
+              tip: Math.max(0, Number(tipAmount) || 0)
             })
           })
           
@@ -1818,7 +1841,9 @@ function POS({ employeeId, employeeName }) {
             showToast(result.data?.error || 'Failed to process payment', 'error')
           }
         } else {
-          // Fall back to old system
+          // Fall back to old system (no matching payment method - use create_order)
+          // Pass transaction_id so backend updates existing order instead of creating duplicate
+          const tipForCreate = selectedTipRef.current || selectedTip || 0
           response = await fetch('/api/create_order', {
             method: 'POST',
             headers: {
@@ -1826,11 +1851,12 @@ function POS({ employeeId, employeeName }) {
               ...(localStorage.getItem('sessionToken') && { Authorization: `Bearer ${localStorage.getItem('sessionToken')}` })
             },
             body: JSON.stringify({
+              transaction_id: transactionId,
               employee_id: employeeId,
               items: items,
               payment_method: paymentMethod,
               tax_rate: taxRate,
-              tip: selectedTip || 0,
+              tip: tipForCreate,
               discount: (orderDiscount || 0) + (exchangeCreditAmount || 0),
               discount_type: orderDiscountType || null,
               order_type: orderTypeToSave,
@@ -1897,6 +1923,7 @@ function POS({ employeeId, employeeName }) {
         }
       } else {
         // Transaction/start failed or unavailable – fall back to create_order
+        const tipForCreate = selectedTipRef.current || selectedTip || 0
         response = await fetch('/api/create_order', {
           method: 'POST',
           headers: {
@@ -1908,7 +1935,7 @@ function POS({ employeeId, employeeName }) {
             items: items,
             payment_method: paymentMethod,
             tax_rate: taxRate,
-            tip: selectedTip || 0,
+            tip: tipForCreate,
             discount: (orderDiscount || 0) + (exchangeCreditAmount || 0),
             discount_type: orderDiscountType || null,
             order_type: orderTypeToSave,
@@ -2516,7 +2543,7 @@ function POS({ employeeId, employeeName }) {
                         setCustomerInfo(prev => ({
                           ...prev,
                           name: selectedCustomer.customer_name || prev.name,
-                          phone: selectedCustomer.phone || prev.phone,
+                          phone: (selectedCustomer.phone || prev.phone || '').replace(/\D/g, '').slice(0, 10),
                           email: selectedCustomer.email || prev.email
                         }))
                       }
@@ -2553,9 +2580,10 @@ function POS({ employeeId, employeeName }) {
                       setOrderType('delivery')
                       setCustomerInfoConfirmed(false)
                       if (selectedCustomer) {
+                        const sanitizePhone = (v) => (v || '').replace(/\D/g, '').slice(0, 10)
                         let info = {
                           name: selectedCustomer.customer_name || customerInfo.name,
-                          phone: selectedCustomer.phone || customerInfo.phone,
+                          phone: sanitizePhone(selectedCustomer.phone || customerInfo.phone),
                           email: selectedCustomer.email || customerInfo.email,
                           address: selectedCustomer.address ?? customerInfo.address ?? ''
                         }
@@ -2567,7 +2595,7 @@ function POS({ employeeId, employeeName }) {
                               const c = data.data
                               info = {
                                 name: c.customer_name ?? info.name,
-                                phone: c.phone ?? info.phone,
+                                phone: sanitizePhone(c.phone ?? info.phone),
                                 email: c.email ?? info.email,
                                 address: (c.address != null && c.address !== '') ? c.address : info.address
                               }
@@ -2628,8 +2656,10 @@ function POS({ employeeId, employeeName }) {
                 <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <input
                     type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
                     value={customerInfo.phone}
-                    onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                    onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
                     placeholder="Phone number"
                     disabled={showPaymentForm}
                     style={{
@@ -2679,8 +2709,10 @@ function POS({ employeeId, employeeName }) {
                   <div style={{ marginBottom: '16px' }}>
                     <input
                       type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
                       value={customerInfo.phone}
-                      onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                      onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
                       placeholder="Phone number"
                       disabled={showPaymentForm}
                       style={{
@@ -2792,42 +2824,46 @@ function POS({ employeeId, employeeName }) {
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      onClick={() => !showPaymentForm && setPayAtPickupOrDelivery(false)}
-                      disabled={showPaymentForm}
-                      style={{
-                        padding: '4px 12px',
-                        border: '1px solid ' + (!payAtPickupOrDelivery ? themeColor : '#ccc'),
-                        borderRadius: '999px',
-                        fontSize: '12px',
-                        fontWeight: !payAtPickupOrDelivery ? 600 : 400,
-                        backgroundColor: !payAtPickupOrDelivery ? themeColor : 'transparent',
-                        color: !payAtPickupOrDelivery ? '#fff' : '#666',
-                        cursor: showPaymentForm ? 'not-allowed' : 'pointer',
-                        opacity: showPaymentForm ? 0.3 : 1
-                      }}
-                    >
-                      Pay now
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => !showPaymentForm && setPayAtPickupOrDelivery(true)}
-                      disabled={showPaymentForm}
-                      style={{
-                        padding: '4px 12px',
-                        border: '1px solid ' + (payAtPickupOrDelivery ? themeColor : '#ccc'),
-                        borderRadius: '999px',
-                        fontSize: '12px',
-                        fontWeight: payAtPickupOrDelivery ? 600 : 400,
-                        backgroundColor: payAtPickupOrDelivery ? themeColor : 'transparent',
-                        color: payAtPickupOrDelivery ? '#fff' : '#666',
-                        cursor: showPaymentForm ? 'not-allowed' : 'pointer',
-                        opacity: showPaymentForm ? 0.3 : 1
-                      }}
-                    >
-                      {orderType === 'pickup' ? 'Pay at pickup' : 'Pay on delivery'}
-                    </button>
+                    {allowPayAtPickupEnabled ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => !showPaymentForm && setPayAtPickupOrDelivery(false)}
+                          disabled={showPaymentForm}
+                          style={{
+                            padding: '4px 12px',
+                            border: '1px solid ' + (!payAtPickupOrDelivery ? themeColor : '#ccc'),
+                            borderRadius: '999px',
+                            fontSize: '12px',
+                            fontWeight: !payAtPickupOrDelivery ? 600 : 400,
+                            backgroundColor: !payAtPickupOrDelivery ? themeColor : 'transparent',
+                            color: !payAtPickupOrDelivery ? '#fff' : '#666',
+                            cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                            opacity: showPaymentForm ? 0.3 : 1
+                          }}
+                        >
+                          Pay now
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => !showPaymentForm && setPayAtPickupOrDelivery(true)}
+                          disabled={showPaymentForm}
+                          style={{
+                            padding: '4px 12px',
+                            border: '1px solid ' + (payAtPickupOrDelivery ? themeColor : '#ccc'),
+                            borderRadius: '999px',
+                            fontSize: '12px',
+                            fontWeight: payAtPickupOrDelivery ? 600 : 400,
+                            backgroundColor: payAtPickupOrDelivery ? themeColor : 'transparent',
+                            color: payAtPickupOrDelivery ? '#fff' : '#666',
+                            cursor: showPaymentForm ? 'not-allowed' : 'pointer',
+                            opacity: showPaymentForm ? 0.3 : 1
+                          }}
+                        >
+                          {orderType === 'pickup' ? 'Pay at pickup' : 'Pay on delivery'}
+                        </button>
+                      </>
+                    ) : null}
                     {selectedCustomer ? (
                       <>
                         <button
@@ -2878,18 +2914,21 @@ function POS({ employeeId, employeeName }) {
                         type="button"
                         onClick={() => !showPaymentForm && setCustomerInfoConfirmed(false)}
                         disabled={showPaymentForm}
+                        title="Edit customer details"
                         style={{
-                          padding: '4px 8px',
-                          fontSize: '11px',
+                          padding: '4px',
                           backgroundColor: 'transparent',
-                          border: '1px solid #999',
-                          borderRadius: '4px',
+                          border: 'none',
                           color: '#666',
                           cursor: showPaymentForm ? 'not-allowed' : 'pointer',
-                          opacity: showPaymentForm ? 0.3 : 1
+                          opacity: showPaymentForm ? 0.3 : 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          lineHeight: 1
                         }}
                       >
-                        Change
+                        <Pencil size={18} />
                       </button>
                     )}
                   </div>
@@ -3792,11 +3831,54 @@ function POS({ employeeId, employeeName }) {
               </div>
             </div>
 
-            {/* Product List / Search Results */}
+            {/* Product List / Search Results – shell always visible; skeletons while data loads */}
             <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 400px)' }}>
               {loading ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-                  Loading...
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }} aria-busy="true" aria-label="Loading products">
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        padding: '8px 12px',
+                        border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#eee'}`,
+                        borderRadius: '4px',
+                        display: 'flex',
+                        gap: '12px',
+                        alignItems: 'center',
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#fafafa'
+                      }}
+                    >
+                      <div style={{
+                        width: '50px',
+                        height: '50px',
+                        minWidth: '50px',
+                        borderRadius: '4px',
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#e8e8e8'
+                      }} />
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{
+                          height: '14px',
+                          width: `${60 + (i % 3) * 15}%`,
+                          maxWidth: '200px',
+                          borderRadius: '4px',
+                          backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#e0e0e0'
+                        }} />
+                        <div style={{
+                          height: '11px',
+                          width: `${40 + (i % 2) * 20}%`,
+                          maxWidth: '120px',
+                          borderRadius: '4px',
+                          backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#eee'
+                        }} />
+                      </div>
+                      <div style={{
+                        height: '16px',
+                        width: '48px',
+                        borderRadius: '4px',
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#e0e0e0'
+                      }} />
+                    </div>
+                  ))}
                 </div>
               ) : searchTerm.length >= 2 ? (
                 // Show search results
@@ -4107,8 +4189,10 @@ function POS({ employeeId, employeeName }) {
                 </label>
                 <input
                   type="tel"
+                  inputMode="numeric"
+                  maxLength={10}
                   value={customerInfo.phone}
-                  onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                  onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
                   placeholder="Phone number"
                   style={inputBaseStyle(isDarkMode, themeColorRgb)}
                   {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
@@ -4410,8 +4494,10 @@ function POS({ employeeId, employeeName }) {
               <label style={formLabelStyle(isDarkMode)}>Phone Number</label>
               <input
                 type="tel"
+                inputMode="numeric"
+                maxLength={10}
                 value={editCustomerForm.phone}
-                onChange={e => setEditCustomerForm(prev => ({ ...prev, phone: e.target.value }))}
+                onChange={e => setEditCustomerForm(prev => ({ ...prev, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
                 placeholder="Phone number"
                 style={inputBaseStyle(isDarkMode, themeColorRgb)}
                 {...getInputFocusHandlers(themeColorRgb, isDarkMode)}

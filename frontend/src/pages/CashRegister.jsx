@@ -286,6 +286,9 @@ function CashRegister() {
               <div>
                 <strong>Starting Cash:</strong> {formatCurrency(currentSession.starting_cash)}
               </div>
+              <div>
+                <strong>Amount in Drawer:</strong> {formatCurrency(currentSession.expected_cash ?? currentSession.starting_cash)}
+              </div>
             </div>
             
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
