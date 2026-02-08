@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { usePermissions } from '../contexts/PermissionContext'
 import { useTheme } from '../contexts/ThemeContext'
-import AdminDashboard from '../components/AdminDashboard'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -9,7 +7,6 @@ import interactionPlugin from '@fullcalendar/interaction'
 import { 
   User, 
   Settings as SettingsIcon, 
-  Shield,
   Clock,
   Pencil,
   Trash2,
@@ -19,7 +16,6 @@ import { FormLabel, FormField, inputBaseStyle, getInputFocusHandlers } from '../
 import CustomDropdown from '../components/common/CustomDropdown'
 
 function Profile({ employeeId, employeeName }) {
-  const { hasPermission, employee } = usePermissions()
   const { themeColor, setThemeColor, themeMode, setThemeMode } = useTheme()
   const [activeTab, setActiveTab] = useState('profile')
   const [sidebarMinimized, setSidebarMinimized] = useState(false)
@@ -101,7 +97,6 @@ function Profile({ employeeId, employeeName }) {
   const [clockStatus, setClockStatus] = useState(null)
   const [clockLoading, setClockLoading] = useState(false)
   const [clockMessage, setClockMessage] = useState(null)
-  const hasAdminAccess = hasPermission('manage_permissions') || hasPermission('add_employee') || employee?.position?.toLowerCase() === 'admin'
 
   useEffect(() => {
     if (!employeeId) return
@@ -572,16 +567,13 @@ function Profile({ employeeId, employeeName }) {
 
   const profileSections = [
     { id: 'profile', label: 'My Hours', icon: Clock },
-    { id: 'settings', label: 'App Settings', icon: SettingsIcon },
-    ...(hasAdminAccess ? [
-      { id: 'admin', label: 'Admin', icon: Shield }
-    ] : [])
+    { id: 'settings', label: 'App Settings', icon: SettingsIcon }
   ]
 
   return (
     <div style={{ 
       display: 'flex',
-      height: (activeTab === 'admin' && hasAdminAccess) || activeTab === 'settings' ? '100%' : '100vh',
+      height: activeTab === 'settings' ? '100%' : '100vh',
       minHeight: 0,
       width: '100%',
       overflow: 'hidden'
@@ -1422,11 +1414,6 @@ function Profile({ employeeId, employeeName }) {
         </div>
       )}
 
-      {activeTab === 'admin' && hasAdminAccess && (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <AdminDashboard />
-        </div>
-      )}
       </div>
     </div>
   )

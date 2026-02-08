@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Plus } from 'lucide-react';
 import { usePermissions } from '../contexts/PermissionContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
+import { getEmployeesCache, setEmployeesCache, getRolesCache, setRolesCache } from '../services/employeeRolesCache';
 import EmployeeForm from './EmployeeForm';
 import PermissionManager from './PermissionManager';
 import Table from './Table';
@@ -9,6 +11,7 @@ import Table from './Table';
 function AdminDashboard() {
   const { hasPermission } = usePermissions();
   const { themeColor, themeMode } = useTheme();
+  const { show: showToast } = useToast();
   
   // Convert hex to RGB for rgba usage
   const hexToRgb = (hex) => {
@@ -52,11 +55,19 @@ function AdminDashboard() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  // Load employees and roles in parallel on mount; defer schedules until Schedules tab
+  // Load employees and roles: show from local cache first (instant), then fetch in background
   useEffect(() => {
+    const forOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const cachedEmployees = getEmployeesCache(forOffline);
+    const cachedRoles = getRolesCache(forOffline);
+    const hasCache = cachedEmployees != null && cachedRoles != null;
+    if (cachedEmployees != null) setEmployees(cachedEmployees);
+    if (cachedRoles != null) setRoles(cachedRoles);
+    if (hasCache) setEmployeesLoading(false);
+
     let cancelled = false;
     const run = async () => {
-      setEmployeesLoading(true);
+      if (!hasCache) setEmployeesLoading(true);
       try {
         const [empRes, rolesRes] = await Promise.all([
           fetch('/api/employees'),
@@ -65,8 +76,12 @@ function AdminDashboard() {
         if (cancelled) return;
         const empData = await empRes.json();
         const rolesData = await rolesRes.json();
-        setEmployees(empData.data || []);
-        setRoles(rolesData.roles || []);
+        const empList = empData.data || [];
+        const roleList = rolesData.roles || [];
+        setEmployees(empList);
+        setRoles(roleList);
+        setEmployeesCache(empList);
+        setRolesCache(roleList);
       } catch (err) {
         if (!cancelled) setError('Failed to load employees');
       } finally {
@@ -88,7 +103,9 @@ function AdminDashboard() {
     try {
       const response = await fetch('/api/employees');
       const data = await response.json();
-      setEmployees(data.data || []);
+      const list = data.data || [];
+      setEmployees(list);
+      setEmployeesCache(list);
     } catch (err) {
       setError('Failed to load employees');
     } finally {
@@ -144,26 +161,78 @@ function AdminDashboard() {
   };
 
   const handleDeleteEmployee = async (employeeId) => {
-    if (!window.confirm('Are you sure you want to deactivate this employee?')) {
-      return;
-    }
-
+    setError(null);
     try {
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionToken') : null;
+      const headers = {};
+      if (token && token !== 'offline') {
+        headers['X-Session-Token'] = token;
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       const response = await fetch(`/api/admin/employees/${employeeId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers
       });
 
-      const data = await response.json();
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = { success: false, error: response.status === 401 ? 'Session expired. Please sign in again.' : 'Request failed.' };
+      }
 
-      if (data.success) {
-        setSuccess('Employee deactivated successfully');
+      if (response.ok && data.success) {
+        showToast('Employee deactivated successfully', 'success');
         loadEmployees();
-        setTimeout(() => setSuccess(null), 3000);
       } else {
-        setError(data.error || 'Failed to deactivate employee');
+        setError(data.error || `Failed to deactivate employee${response.status ? ` (${response.status})` : ''}`);
       }
     } catch (err) {
-      setError('Failed to deactivate employee');
+      setError(err.message || 'Failed to deactivate employee');
+    }
+  };
+
+  const handleReactivateEmployee = async (employeeId) => {
+    setError(null);
+    try {
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionToken') : null;
+      const headers = { 'Content-Type': 'application/json' };
+      if (token && token !== 'offline') {
+        headers['X-Session-Token'] = token;
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(`/api/admin/employees/${employeeId}/reactivate`, { method: 'POST', headers });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success) {
+        showToast('Employee reactivated successfully', 'success');
+        loadEmployees();
+      } else {
+        setError(data.error || 'Failed to reactivate employee');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to reactivate employee');
+    }
+  };
+
+  const handlePermanentDeleteEmployee = async (employeeId) => {
+    setError(null);
+    try {
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionToken') : null;
+      const headers = { 'Content-Type': 'application/json' };
+      if (token && token !== 'offline') {
+        headers['X-Session-Token'] = token;
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(`/api/admin/employees/${employeeId}/permanent-delete`, { method: 'POST', headers });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success) {
+        showToast('Employee permanently deleted', 'success');
+        loadEmployees();
+      } else {
+        setError(data.error || 'Failed to delete employee');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to delete employee');
     }
   };
 
@@ -181,7 +250,8 @@ function AdminDashboard() {
   };
 
   const getRoleName = (roleId) => {
-    const role = roles.find(r => r.role_id === roleId);
+    if (roleId == null || roleId === '') return 'No Role';
+    const role = roles.find(r => Number(r.role_id) === Number(roleId) || String(r.role_id) === String(roleId));
     return role ? role.role_name : 'No Role';
   };
 
@@ -350,34 +420,54 @@ function AdminDashboard() {
           <Table
             stickyHeader
             columns={['employee_id', 'name', 'username', 'email', 'position', 'role', 'status', 'actions']}
-            data={employeesLoading ? [] : employees.map((emp) => ({
-              ...emp,
-              name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
-              username: emp.username || emp.employee_code || 'N/A',
-              email: emp.email || 'N/A',
-              role: getRoleName(emp.role_id),
-              status: emp.active ? 'Active' : 'Inactive'
-            }))}
+            data={employeesLoading ? [] : [...employees]
+              .sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0))
+              .map((emp) => ({
+                ...emp,
+                name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
+                username: emp.username || emp.employee_code || 'N/A',
+                email: emp.email || 'N/A',
+                role: getRoleName(emp.role_id),
+                status: emp.active ? 'Active' : 'Inactive'
+              }))}
             getRowId={(row) => row.employee_id}
             actionsAsEllipsis
             themeColorRgb={themeColorRgb}
             ellipsisMenuItems={(row) => {
               const items = [];
-              if (hasPermission('edit_employee')) {
+              if (hasPermission('edit_employee') && row.active) {
                 items.push({ label: 'Edit', onClick: () => handleEditEmployee(row) });
               }
               if (hasPermission('manage_permissions')) {
                 items.push({ label: 'Permissions', onClick: () => handleManagePermissions(row.employee_id) });
               }
-              if (hasPermission('delete_employee') && row.active) {
-                items.push({
-                  label: 'Deactivate',
-                  onClick: () => handleDeleteEmployee(row.employee_id),
-                  confirm: true,
-                  confirmMessage: 'Are you sure you want to deactivate this employee?',
-                  confirmButtonLabel: 'Deactivate',
-                  confirmDanger: true
-                });
+              if (hasPermission('delete_employee')) {
+                if (row.active) {
+                  items.push({
+                    label: 'Deactivate',
+                    onClick: () => handleDeleteEmployee(row.employee_id),
+                    confirm: true,
+                    confirmMessage: 'Are you sure you want to deactivate this employee?',
+                    confirmButtonLabel: 'Deactivate',
+                    confirmDanger: true
+                  });
+                } else {
+                  items.push({
+                    label: 'Reactivate',
+                    onClick: () => handleReactivateEmployee(row.employee_id),
+                    confirm: true,
+                    confirmMessage: 'Are you sure you want to reactivate this employee?',
+                    confirmButtonLabel: 'Reactivate'
+                  });
+                  items.push({
+                    label: 'Delete',
+                    onClick: () => handlePermanentDeleteEmployee(row.employee_id),
+                    confirm: true,
+                    confirmMessage: 'Permanently delete this employee? This cannot be undone and may fail if they have orders or schedule data.',
+                    confirmButtonLabel: 'Delete',
+                    confirmDanger: true
+                  });
+                }
               }
               return items;
             }}

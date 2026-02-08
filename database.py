@@ -4002,6 +4002,31 @@ def delete_employee(employee_id: int) -> bool:
     
     return success
 
+
+def reactivate_employee(employee_id: int) -> bool:
+    """Reactivate a deactivated employee"""
+    return update_employee(employee_id, active=1, date_terminated=None)
+
+
+def permanently_delete_employee(employee_id: int) -> tuple[bool, str]:
+    """Permanently delete an employee record. Returns (success, error_message)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM employees WHERE employee_id = %s", (employee_id,))
+        conn.commit()
+        success = cursor.rowcount > 0
+        return (success, "" if success else "Employee not found")
+    except Exception as e:
+        conn.rollback()
+        err = str(e).lower()
+        if "foreign key" in err or "violates foreign key" in err or "referential" in err:
+            return (False, "Cannot delete employee: they have related records (orders, schedule, etc.). Deactivate instead.")
+        return (False, str(e))
+    finally:
+        conn.close()
+
+
 # ============================================================================
 # CUSTOMER MANAGEMENT FUNCTIONS
 # ============================================================================

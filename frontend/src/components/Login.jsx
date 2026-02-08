@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import { ChevronDown } from 'lucide-react'
+import {
+  getEmployeesCache,
+  setEmployeesCache,
+  getOfflinePinHashes,
+  setOfflinePinHash,
+  hashPin,
+  getPermissionsCache
+} from '../services/employeeRolesCache'
 import '../index.css'
 
 function Login({ onLogin }) {
@@ -119,6 +127,12 @@ function Login({ onLogin }) {
   }
 
   useEffect(() => {
+    // Show cached employees immediately so login screen is quick
+    const cached = getEmployeesCache()
+    if (cached && cached.length > 0) {
+      setEmployees(cached)
+      setLoadingEmployees(false)
+    }
     fetchEmployees()
   }, [])
 
@@ -145,13 +159,19 @@ function Login({ onLogin }) {
       const response = await fetch('/api/employees')
       if (!response.ok) {
         console.error('Error fetching employees: HTTP', response.status)
+        const cached = getEmployeesCache()
+        if (cached) return
         setEmployees([])
         return
       }
       const data = await response.json()
-      setEmployees(data.data || [])
+      const list = data.data || []
+      setEmployees(list)
+      setEmployeesCache(list)
     } catch (err) {
       console.error('Error fetching employees:', err)
+      const cached = getEmployeesCache()
+      if (cached) return
       setEmployees([])
     } finally {
       setLoadingEmployees(false)
@@ -205,10 +225,64 @@ function Login({ onLogin }) {
     }
   }, [handleNumpadClick])
 
+  const tryOfflineLogin = async () => {
+    const list = getEmployeesCache(true)
+    if (!list || !employeeCode.trim() || !password) return false
+    const emp = list.find(
+      (e) =>
+        String(e.username || '').toLowerCase() === String(employeeCode).trim().toLowerCase() ||
+        String(e.employee_code || '') === String(employeeCode).trim()
+    )
+    if (!emp) return false
+    const hashes = getOfflinePinHashes()
+    const storedHash = hashes[String(emp.employee_id)]
+    if (!storedHash) return false
+    const inputHash = await hashPin(password)
+    if (!inputHash) return false
+    let diff = 0
+    if (inputHash.length !== storedHash.length) return false
+    for (let i = 0; i < inputHash.length; i++) diff |= inputHash.charCodeAt(i) ^ storedHash.charCodeAt(i)
+    if (diff !== 0) return false
+    const permissions = getPermissionsCache(emp.employee_id, true) || {}
+    const employee = {
+      employee_id: emp.employee_id,
+      employee_name: emp.employee_name || [emp.first_name, emp.last_name].filter(Boolean).join(' ') || emp.username || String(emp.employee_id),
+      position: emp.position || 'employee'
+    }
+    onLogin({
+      success: true,
+      offline: true,
+      employee,
+      permissions,
+      session_token: 'offline'
+    })
+    return true
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setLoading(true)
+
+    // Instant path: if we can verify PIN locally, show app immediately then get real session in background
+    if (employeeCode.trim() && password) {
+      const didLocal = await tryOfflineLogin()
+      if (didLocal) {
+        setLoading(false)
+        if (navigator.onLine) {
+          fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: employeeCode, employee_code: employeeCode, password })
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((result) => { if (result?.success) onLogin(result) })
+            .catch(() => {})
+        }
+        return
+      }
+    }
+
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 10000)
 
@@ -233,7 +307,6 @@ function Login({ onLogin }) {
         } catch {
           setError(`Server error: ${response.status} - ${errorText}`)
         }
-        // Trigger jitter animation and clear password after animation
         setError('')
         setPasswordJitter(true)
         setTimeout(() => {
@@ -246,9 +319,12 @@ function Login({ onLogin }) {
 
       const result = await response.json()
       if (result.success) {
+        try {
+          const pinHash = await hashPin(password)
+          if (pinHash) setOfflinePinHash(result.employee_id, pinHash)
+        } catch (_) {}
         onLogin(result)
       } else {
-        // Trigger jitter animation and clear password after animation
         setError('')
         setPasswordJitter(true)
         setTimeout(() => {
@@ -258,12 +334,22 @@ function Login({ onLogin }) {
       }
     } catch (err) {
       clearTimeout(timeoutId)
-      if (err.name === 'AbortError') {
-        setError('Request timed out. Please check if the backend server is running on port 5001.')
+      const isOffline = !navigator.onLine || err.name === 'TypeError' || err.name === 'AbortError'
+      if (isOffline) {
+        const didOffline = await tryOfflineLogin()
+        if (didOffline) {
+          setLoading(false)
+          return
+        }
+        setError("Can't sign in offline. Use this device online first, then try again when offline.")
       } else {
-        setError('Connection error. Please make sure the backend server is running on port 5001.')
+        if (err.name === 'AbortError') {
+          setError('Request timed out. Please check if the backend server is running on port 5001.')
+        } else {
+          setError('Connection error. Please make sure the backend server is running on port 5001.')
+        }
       }
-      setPassword('') // Clear password on error
+      setPassword('')
       console.error('Login error:', err)
     } finally {
       setLoading(false)

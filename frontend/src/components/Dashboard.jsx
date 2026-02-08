@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { usePermissions } from '../contexts/PermissionContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { useToast } from '../contexts/ToastContext'
 import Statistics from './Statistics'
 import { ParticleCard } from './MagicBento'
 import './MagicBento.css'
@@ -22,9 +23,12 @@ function useIsMobile() {
   return isMobile
 }
 
+const NO_PERMISSION_MSG = "You don't have permission"
+
 function Dashboard() {
   const navigate = useNavigate()
-  const { hasPermission, employee } = usePermissions()
+  const { isAdmin } = usePermissions()
+  const { show: showToast } = useToast()
   const { themeColor } = useTheme()
   const isMobile = useIsMobile()
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -52,7 +56,7 @@ function Dashboard() {
   
   const themeColorRgb = hexToRgb(themeColor)
 
-  // Left column boxes
+  // Left column boxes (Accounting visible to all; Employee gets toast on click)
   const leftBoxes = [
     {
       id: 'statistics',
@@ -71,14 +75,19 @@ function Dashboard() {
       size: 'large',
       onClick: () => navigate('/shipment-verification')
     },
-    // Admin-only boxes
-    ...(hasPermission('manage_permissions') || hasPermission('add_employee') || employee?.position?.toLowerCase() === 'admin' ? [{
+    {
       id: 'accounting',
       title: 'Accounting',
       description: 'Financial reports and accounting',
       size: 'large',
-      onClick: () => navigate('/accounting')
-    }] : [])
+      onClick: () => {
+        if (!isAdmin) {
+          showToast(NO_PERMISSION_MSG, 'error')
+          return
+        }
+        navigate('/accounting')
+      }
+    }
   ]
 
   // Right column boxes
@@ -123,7 +132,13 @@ function Dashboard() {
       title: 'Tables',
       description: 'View all tables',
       size: 'medium',
-      onClick: () => navigate('/tables')
+      onClick: () => {
+        if (!isAdmin) {
+          showToast(NO_PERMISSION_MSG, 'error')
+          return
+        }
+        navigate('/tables')
+      }
     }
   ]
 
@@ -140,7 +155,7 @@ function Dashboard() {
     allBoxesById['customers'],
     allBoxesById['inventory'],
     allBoxesById['tables'],
-    ...(allBoxesById['accounting'] ? [allBoxesById['accounting']] : [])
+    allBoxesById['accounting']
   ].filter(Boolean)
 
   const renderBox = (box, isLeftColumn = false, gridColumnSpan = null) => {
@@ -238,14 +253,19 @@ function Dashboard() {
     )
   }
 
+  const pad = 12
+  const padTop = 20
   if (isMobile) {
     return (
       <div style={{
-        padding: '12px',
+        paddingTop: padTop,
+        paddingRight: pad,
+        paddingBottom: pad,
+        paddingLeft: pad,
         maxWidth: '100%',
         margin: '0 auto',
         boxSizing: 'border-box',
-        minHeight: 'calc(100vh - 80px)',
+        minHeight: '100%',
         height: 'auto',
         overflowY: 'auto',
         overflowX: 'hidden',
@@ -272,11 +292,15 @@ function Dashboard() {
 
   return (
     <div style={{
-      padding: '12px',
+      paddingTop: padTop,
+      paddingRight: pad,
+      paddingBottom: pad,
+      paddingLeft: pad,
       maxWidth: '100%',
       margin: '0 auto',
       boxSizing: 'border-box',
-      height: 'calc(100vh - 80px)',
+      height: '100%',
+      minHeight: '100%',
       overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column',

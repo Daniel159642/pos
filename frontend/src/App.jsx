@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { PermissionProvider, usePermissions } from './contexts/PermissionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
-import { ToastProvider } from './contexts/ToastContext'
+import { ToastProvider, useToast } from './contexts/ToastContext'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Settings, User, LogOut } from 'lucide-react'
 import Login from './components/Login'
@@ -25,6 +25,7 @@ import Customers from './pages/Customers'
 import OfflineBanner from './components/OfflineBanner'
 import { useOffline } from './contexts/OfflineContext'
 import { cachedFetch } from './services/offlineSync'
+import { getPermissionsCache } from './services/employeeRolesCache'
 import './index.css'
 
 function ProtectedRoute({ children, sessionToken, employee, sessionVerifying }) {
@@ -44,6 +45,20 @@ function ProtectedRoute({ children, sessionToken, employee, sessionVerifying }) 
   return children
 }
 
+function AdminOnlyRedirect({ children }) {
+  const { isAdmin } = usePermissions()
+  const navigate = useNavigate()
+  const { show: showToast } = useToast()
+  useEffect(() => {
+    if (!isAdmin) {
+      showToast("You don't have permission", 'error')
+      navigate('/dashboard', { replace: true })
+    }
+  }, [isAdmin, navigate, showToast])
+  if (!isAdmin) return null
+  return children
+}
+
 const EMPLOYEE_STORAGE_KEY = 'pos_employee'
 
 function getStoredEmployee() {
@@ -60,31 +75,43 @@ function setStoredEmployee(employee) {
   else localStorage.removeItem(EMPLOYEE_STORAGE_KEY)
 }
 
-const loginSuccessHandler = (result, setSessionToken, setEmployee) => {
-  if (result.success) {
-    const emp = {
-      employee_id: result.employee_id,
-      employee_name: result.employee_name,
-      position: result.position
-    }
-    setSessionToken(result.session_token)
+const loginSuccessHandler = (result, setSessionToken, setEmployee, restoreOfflineSession) => {
+  if (!result.success) return
+  if (result.offline) {
+    const emp = result.employee || { employee_id: result.employee_id, employee_name: result.employee_name, position: result.position }
+    setSessionToken('offline')
     setEmployee(emp)
-    localStorage.setItem('sessionToken', result.session_token)
+    localStorage.setItem('sessionToken', 'offline')
     setStoredEmployee(emp)
+    if (restoreOfflineSession) restoreOfflineSession(emp, result.permissions)
+    return
   }
+  const emp = {
+    employee_id: result.employee_id,
+    employee_name: result.employee_name,
+    position: result.position
+  }
+  setSessionToken(result.session_token)
+  setEmployee(emp)
+  localStorage.setItem('sessionToken', result.session_token)
+  setStoredEmployee(emp)
 }
 
 function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLogout, sessionVerifying }) {
-  const { fetchPermissions, setEmployee: setPermissionEmployee } = usePermissions()
+  const { fetchPermissions, setEmployee: setPermissionEmployee, restoreOfflineSession } = usePermissions()
 
   useEffect(() => {
-    if (employee?.employee_id) {
-      fetchPermissions(employee.employee_id)
-      setPermissionEmployee(employee)
+    if (!employee?.employee_id) return
+    if (sessionToken === 'offline') {
+      const permissions = getPermissionsCache(employee.employee_id, true) || {}
+      restoreOfflineSession(employee, permissions)
+      return
     }
-  }, [employee?.employee_id])
+    fetchPermissions(employee.employee_id)
+    setPermissionEmployee(employee)
+  }, [employee?.employee_id, sessionToken])
 
-  const onLogin = (result) => loginSuccessHandler(result, setSessionToken, setEmployee)
+  const onLogin = (result) => loginSuccessHandler(result, setSessionToken, setEmployee, restoreOfflineSession)
 
   return (
     <Routes>
@@ -124,7 +151,9 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       <Route path="/tables" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} sessionVerifying={sessionVerifying}>
           <Layout employee={employee} onLogout={onLogout}>
-            <Tables />
+            <AdminOnlyRedirect>
+              <Tables />
+            </AdminOnlyRedirect>
           </Layout>
         </ProtectedRoute>
       } />
@@ -201,9 +230,11 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
       <Route path="/accounting" element={
         <ProtectedRoute sessionToken={sessionToken} employee={employee} sessionVerifying={sessionVerifying}>
           <Layout employee={employee} onLogout={onLogout}>
-            <Suspense fallback={<div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary, #666)' }}>Loading…</div>}>
-              <Accounting />
-            </Suspense>
+            <AdminOnlyRedirect>
+              <Suspense fallback={<div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary, #666)' }}>Loading…</div>}>
+                <Accounting />
+              </Suspense>
+            </AdminOnlyRedirect>
           </Layout>
         </ProtectedRoute>
       } />
@@ -349,7 +380,7 @@ function Layout({ children, employee, onLogout }) {
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {(hasPermission('manage_settings') || employee?.position?.toLowerCase() === 'admin') && (
+          {employee && (
             <button
               type="button"
               className="button-26 button-26--header"
@@ -411,10 +442,15 @@ function Layout({ children, employee, onLogout }) {
 function App() {
   const [sessionToken, setSessionToken] = useState(localStorage.getItem('sessionToken'))
   const [employee, setEmployee] = useState(() => (localStorage.getItem('sessionToken') ? getStoredEmployee() : null))
-  const [sessionVerifying, setSessionVerifying] = useState(!!localStorage.getItem('sessionToken'))
+  // Only show "Loading session..." when we have a token but no cached employee; otherwise show app immediately
+  const [sessionVerifying, setSessionVerifying] = useState(() => {
+    const token = localStorage.getItem('sessionToken')
+    const emp = token ? getStoredEmployee() : null
+    return !!(token && !emp)
+  })
 
   const handleLogout = () => {
-    if (sessionToken) {
+    if (sessionToken && sessionToken !== 'offline') {
       fetch('/api/logout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -433,6 +469,12 @@ function App() {
       setSessionVerifying(false)
       return
     }
+    if (sessionToken === 'offline') {
+      const cached = getStoredEmployee()
+      if (cached) setEmployee(cached)
+      setSessionVerifying(false)
+      return
+    }
     if (!navigator.onLine) {
       const cached = getStoredEmployee()
       if (cached) {
@@ -443,7 +485,7 @@ function App() {
       setSessionVerifying(false)
       return
     }
-    setSessionVerifying(true)
+    // Verify in background; don't set sessionVerifying(true) so UI stays visible when we have cached employee
     try {
       const response = await fetch('/api/verify_session', {
         method: 'POST',

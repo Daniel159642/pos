@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from functools import wraps
 from database import get_connection
+from psycopg2.extras import RealDictCursor
 
 
 class PermissionManager:
@@ -382,32 +383,30 @@ class PermissionManager:
             conn.close()
     
     def get_all_roles(self) -> List[Dict[str, Any]]:
-        """Get all roles"""
+        """Get all roles (returns list of dicts with role_id, role_name, etc.)"""
         conn = self.get_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         try:
             cursor.execute("""
                 SELECT * FROM roles
                 ORDER BY role_name
             """)
-            
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
         finally:
             conn.close()
     
     def get_all_permissions(self) -> List[Dict[str, Any]]:
-        """Get all permissions"""
+        """Get all permissions (returns list of dicts with permission_id, permission_name, etc.)"""
         conn = self.get_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         try:
             cursor.execute("""
                 SELECT * FROM permissions
                 ORDER BY permission_category, permission_name
             """)
-            
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
         finally:

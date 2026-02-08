@@ -26,7 +26,7 @@ from database import (
     list_products, list_vendors, list_categories, list_shipments, get_sales,
     get_shipment_items, get_shipment_details, get_product,
     employee_login, verify_session, employee_logout,
-    list_employees, get_employee, add_employee, update_employee, delete_employee, list_orders, count_orders,
+    list_employees, get_employee, add_employee, update_employee, delete_employee, reactivate_employee, permanently_delete_employee, list_orders, count_orders,
     get_employee_by_clerk_user_id, link_clerk_user_to_employee, verify_pin_login, generate_pin,
     get_connection,
     get_discrepancies, get_audit_trail,
@@ -6424,6 +6424,33 @@ def api_delete_employee(employee_id):
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/employees/<int:employee_id>/reactivate', methods=['POST'])
+def api_reactivate_employee(employee_id):
+    """Reactivate a deactivated employee (Admin only)"""
+    try:
+        success = reactivate_employee(employee_id)
+        if not success:
+            return jsonify({'success': False, 'error': 'Employee not found'}), 404
+        return jsonify({'success': True, 'message': 'Employee reactivated successfully'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/employees/<int:employee_id>/permanent-delete', methods=['POST'])
+def api_permanent_delete_employee(employee_id):
+    """Permanently delete an employee record (Admin only). Fails if employee has related records."""
+    try:
+        success, error_message = permanently_delete_employee(employee_id)
+        if not success:
+            return jsonify({'success': False, 'error': error_message or 'Employee not found'}), 400 if error_message else 404
+        return jsonify({'success': True, 'message': 'Employee permanently deleted'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/admin/employees/<int:employee_id>', methods=['GET'])
 def api_get_employee(employee_id):

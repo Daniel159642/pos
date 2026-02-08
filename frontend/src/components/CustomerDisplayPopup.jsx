@@ -378,7 +378,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
       setSignatureData(null)
       setIsDrawing(false)
     }
-  }, [currentScreen, receiptSigBg, receiptSigInk])
+  }, [currentScreen, receiptType, receiptSigBg, receiptSigInk])
 
 
   const loadDisplaySettings = async () => {
@@ -1358,10 +1358,16 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
               </div>
             )}
             <div className="screen-header" style={{ width: '100%', marginBottom: '30px' }}>
-              <h2 style={titleStyle}>{returnId != null ? 'Sign below for return receipt' : 'Sign Below'}</h2>
+              <h2 style={titleStyle}>
+                {receiptType === 'email'
+                  ? 'Enter your email'
+                  : returnId != null
+                    ? 'Sign below for return receipt'
+                    : 'Sign Below'}
+              </h2>
             </div>
             
-            {/* Signature Area */}
+            {/* Signature Area or Email Input - when Email is chosen, this becomes the email input */}
             <div style={{
               width: '100%',
               height: '250px',
@@ -1371,15 +1377,38 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
               marginBottom: '30px',
               position: 'relative'
             }}>
-              <canvas
-                id="signatureCanvas"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  borderRadius: '6px',
-                  cursor: 'crosshair'
-                }}
-              />
+              {receiptType === 'email' ? (
+                <input
+                  type="email"
+                  placeholder="Enter your email"
+                  value={receiptContact}
+                  onChange={(e) => setReceiptContact(e.target.value)}
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    padding: '16px 20px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: 'clamp(28px, 6vw, 42px)',
+                    fontFamily: popupFontFamily,
+                    color: popupColor,
+                    backgroundColor: 'transparent',
+                    boxSizing: 'border-box',
+                    textAlign: 'center'
+                  }}
+                />
+              ) : (
+                <canvas
+                  id="signatureCanvas"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    borderRadius: '6px',
+                    cursor: 'crosshair'
+                  }}
+                />
+              )}
             </div>
             
             {/* Receipt Options - when requireSignature is on, must sign before Print/No receipt/Email */}
@@ -1390,8 +1419,8 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
                 gap: '20px',
                 width: '100%',
                 marginTop: '20px',
-                opacity: requireSignature && !signatureData ? 0.5 : 1,
-                pointerEvents: requireSignature && !signatureData ? 'none' : 'auto'
+                opacity: requireSignature && !signatureData && receiptType !== 'email' ? 0.5 : 1,
+                pointerEvents: requireSignature && !signatureData && receiptType !== 'email' ? 'none' : 'auto'
               }}
             >
               {(() => {
@@ -1400,6 +1429,7 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
                 const showEmail = opts.email !== false
                 const showNoReceipt = opts.no_receipt !== false
                 const hasAnyOption = showPrint || showEmail || showNoReceipt
+                const isEmailMode = receiptType === 'email'
                 if (!hasAnyOption) {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
@@ -1416,51 +1446,15 @@ function CustomerDisplayPopup({ cart, subtotal, tax, discount = 0, transactionFe
                       {showPrint && renderCheckoutButton('Print', () => selectReceipt('print'))}
                       {showNoReceipt && renderCheckoutButton('No Receipt', () => selectReceipt('none'))}
                     </div>
-                    {showEmail && renderCheckoutButton('Email', () => selectReceipt('email'), true)}
+                    {showEmail && renderCheckoutButton(
+                      isEmailMode ? 'Continue' : 'Email',
+                      () => isEmailMode ? submitReceiptPreference() : selectReceipt('email'),
+                      true
+                    )}
                   </>
                 )
               })()}
             </div>
-            
-            {receiptType === 'email' && (
-              <div style={{ marginTop: '20px', width: '100%' }}>
-                <input
-                  type="email"
-                  placeholder="Enter your email"
-                  value={receiptContact}
-                  onChange={(e) => setReceiptContact(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '1px solid #ddd',
-                    borderRadius: '8px',
-                    fontSize: '16px',
-                    marginBottom: '12px'
-                  }}
-                />
-                <button
-                  onClick={() => submitReceiptPreference()}
-                  style={{
-                    width: '100%',
-                    padding: '24px 16px',
-                    minHeight: '70px',
-                    backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
-                    color: '#fff',
-                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                    borderRadius: '8px',
-                    fontSize: '28px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-                    transition: 'all 0.3s ease'
-                  }}
-                >
-                  Submit
-                </button>
-              </div>
-            )}
           </div>
         )}
 

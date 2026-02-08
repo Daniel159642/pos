@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
+import { usePermissions } from '../contexts/PermissionContext'
+import { useToast } from '../contexts/ToastContext'
 import { cachedFetch } from '../services/offlineSync'
 import { 
   Settings as SettingsIcon, 
@@ -32,9 +34,11 @@ import {
   ScanBarcode,
   Package,
   MoreVertical,
-  RefreshCw
+  RefreshCw,
+  Shield
 } from 'lucide-react'
 import BarcodeScanner from '../components/BarcodeScanner'
+import AdminDashboard from '../components/AdminDashboard'
 import { FormTitle, FormLabel, FormField, inputBaseStyle, getInputFocusHandlers, compactCancelButtonStyle, compactPrimaryButtonStyle } from '../components/FormStyles'
 import Table from '../components/Table'
 import '../components/CustomerDisplay.css'
@@ -1179,21 +1183,28 @@ function ReceiptPreview({ settings, id = 'receipt-preview-print', onSectionClick
   )
 }
 
-const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards']
+const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'admin']
+
+const NO_PERMISSION_MSG = "You don't have permission"
+const EMPLOYEE_ALLOWED_SETTINGS_TABS = ['cash', 'location'] // Employee can only open Cash Register and Store Information (location read-only)
 
 function Settings() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { themeMode, themeColor } = useTheme()
+  const { hasPermission, employee } = usePermissions()
+  const { show: showToast } = useToast()
+  const hasAdminAccess = hasPermission('manage_permissions') || hasPermission('add_employee') || employee?.position?.toLowerCase() === 'admin'
   const [receiptSettings, setReceiptSettings] = useState(() => ({ ...DEFAULT_RECEIPT_TEMPLATE }))
-  const [activeTab, setActiveTab] = useState('location') // 'location', 'pos', 'cash', 'notifications', or 'rewards'
+  const [activeTab, setActiveTab] = useState('location') // 'location', 'pos', 'cash', 'notifications', 'rewards', or 'admin'
 
   // Open tab from URL ?tab=cash (e.g. from POS "Open Register" toast)
   useEffect(() => {
     const tab = searchParams.get('tab')
     if (tab && SETTINGS_TAB_IDS.includes(tab)) {
-      setActiveTab(tab)
+      const allowed = hasAdminAccess || EMPLOYEE_ALLOWED_SETTINGS_TABS.includes(tab)
+      setActiveTab(allowed ? tab : 'location')
     }
-  }, [searchParams])
+  }, [searchParams, hasAdminAccess])
   const [posSettings, setPosSettings] = useState({
     num_registers: 1,
     register_type: 'one_screen',
@@ -2973,16 +2984,17 @@ function Settings() {
     { id: 'pos', label: 'POS Settings', icon: ShoppingCart },
     { id: 'cash', label: 'Cash Register', icon: DollarSign },
     { id: 'notifications', label: 'Notifications', icon: MessageSquare },
-    { id: 'rewards', label: 'Customer Rewards', icon: Gift }
+    { id: 'rewards', label: 'Customer Rewards', icon: Gift },
+    ...(hasAdminAccess ? [{ id: 'admin', label: 'Admin', icon: Shield }] : [])
   ]
 
   return (
     <div style={{ 
       display: 'flex',
-      minHeight: activeTab === 'cash' ? 0 : '100vh',
-      height: activeTab === 'cash' ? '100%' : undefined,
+      minHeight: (activeTab === 'cash' || activeTab === 'admin') ? 0 : '100vh',
+      height: (activeTab === 'cash' || activeTab === 'admin') ? '100%' : undefined,
       width: '100%',
-      ...(activeTab === 'cash' ? { overflow: 'hidden' } : {})
+      ...((activeTab === 'cash' || activeTab === 'admin') ? { overflow: 'hidden' } : {})
     }}>
       {/* Sidebar Navigation - 1/4 of page */}
       <div 
@@ -3118,10 +3130,17 @@ function Settings() {
           {settingsSections.map((section) => {
             const Icon = section.icon
             const isActive = activeTab === section.id
+            const employeeCanAccessTab = EMPLOYEE_ALLOWED_SETTINGS_TABS.includes(section.id)
             return (
               <button
                 key={section.id}
-                onClick={() => setActiveTab(section.id)}
+                onClick={() => {
+                  if (!hasAdminAccess && !employeeCanAccessTab) {
+                    showToast(NO_PERMISSION_MSG, 'error')
+                    return
+                  }
+                  setActiveTab(section.id)
+                }}
                 style={{
                   width: isInitialMount ? '100%' : (sidebarMinimized ? '40px' : '100%'),
                   height: '40px',
@@ -3189,7 +3208,7 @@ function Settings() {
           backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
           maxWidth: isInitialMount ? '1200px' : (sidebarMinimized ? 'none' : '1200px'),
           transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-          ...(activeTab === 'cash' ? { height: 'calc(100vh - 56px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {})
+          ...((activeTab === 'cash' || activeTab === 'admin') ? { height: 'calc(100vh - 56px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {})
         }}
       >
         {message && (
@@ -3209,7 +3228,7 @@ function Settings() {
         )}
 
         {/* Content – skeleton when loading so nav and shell are visible immediately */}
-        <div style={activeTab === 'cash' ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } : undefined}>
+        <div style={(activeTab === 'cash' || activeTab === 'admin') ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } : undefined}>
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} aria-busy="true" aria-label="Loading settings">
               <div style={{ height: '28px', width: '200px', borderRadius: '6px', backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#e8e8e8' }} />
@@ -3220,7 +3239,7 @@ function Settings() {
           ) : (
             <>
           {/* Save Button - Hidden for location, cash, and pos tabs (pos has its own at bottom) */}
-          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && (
+          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'admin' && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               <button
                 type="button"
@@ -3248,7 +3267,12 @@ function Settings() {
           <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '12px' }}>
             Store Information
           </FormTitle>
-
+          {!hasAdminAccess && (
+            <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(255,193,7,0.15)' : 'rgba(255,193,7,0.2)', color: isDarkMode ? '#ffc107' : '#b38600', fontSize: '14px' }}>
+              View only — you don't have permission to edit.
+            </div>
+          )}
+          <fieldset disabled={!hasAdminAccess} style={{ border: 'none', margin: 0, padding: 0 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {/* Store Name, Type, and Logo */}
             <FormField style={{ marginBottom: '8px' }}>
@@ -3525,6 +3549,7 @@ function Settings() {
               </button>
             </div>
           </div>
+          </fieldset>
         </div>
       )}
 
@@ -6591,6 +6616,13 @@ function Settings() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {/* Blank tab - content can be added later */}
           </div>
+        </div>
+      )}
+
+      {/* Admin Tab */}
+      {activeTab === 'admin' && hasAdminAccess && (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <AdminDashboard />
         </div>
       )}
 

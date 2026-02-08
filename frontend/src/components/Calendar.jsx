@@ -5,6 +5,8 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { useTheme } from '../contexts/ThemeContext'
+import { usePermissions } from '../contexts/PermissionContext'
+import { useToast } from '../contexts/ToastContext'
 import { Calendar as CalendarIcon, Download, User, ChevronLeft, ChevronRight, ChevronDown, Plus, CalendarClock, X, FileText, Pencil, CheckCircle, AlertCircle, Link2 } from 'lucide-react'
 import { FormLabel, FormField, FormTitle, inputBaseStyle, getInputFocusHandlers } from './FormStyles'
 
@@ -205,8 +207,10 @@ function Calendar({ employee }) {
     default_shift_length: 8
   })
 
-  // Check if user is admin
-  const isAdmin = employee?.position?.toLowerCase() === 'admin' || employee?.position?.toLowerCase() === 'manager'
+  // Check if user is admin (full access; Employee = restricted)
+  const { isAdmin } = usePermissions()
+  const { show: showToast } = useToast()
+  const NO_PERMISSION_MSG = "You don't have permission"
   
   // Fetch employees when event modal or schedule builder opens
   useEffect(() => {
@@ -1801,14 +1805,17 @@ function Calendar({ employee }) {
                   Event
                 </button>
               )}
-              {isAdmin && (
-                <div ref={scheduleDropdownRef} style={{ position: 'relative' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowFilterDropdown(false)
-                      setShowScheduleDropdown(!showScheduleDropdown)
-                    }}
+              <div ref={scheduleDropdownRef} style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isAdmin) {
+                      showToast(NO_PERMISSION_MSG, 'error')
+                      return
+                    }
+                    setShowFilterDropdown(false)
+                    setShowScheduleDropdown(!showScheduleDropdown)
+                  }}
                     style={{
                       padding: '8px 12px',
                       margin: 0,
@@ -1970,7 +1977,6 @@ function Calendar({ employee }) {
                     </div>
                   )}
                 </div>
-              )}
               <button
                 type="button"
                 onClick={() => changeView('dayGridMonth')}

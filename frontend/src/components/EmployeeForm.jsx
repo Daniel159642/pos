@@ -19,6 +19,20 @@ function hexToRgb(hex) {
   return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255';
 }
 
+// Two main positions: Admin (full access) and Employee (restricted). Role dropdown uses these.
+function getAdminAndEmployeeRoles(roles) {
+  if (!roles || !Array.isArray(roles)) return { adminRole: null, employeeRole: null, roleOptions: [] };
+  const adminRole = roles.find((r) => (r.role_name || '').toLowerCase() === 'admin') || null;
+  const employeeRole = roles.find((r) => (r.role_name || '').toLowerCase() === 'employee') || null;
+  const cashierRole = roles.find((r) => (r.role_name || '').toLowerCase() === 'cashier') || null;
+  const effectiveEmployee = employeeRole || cashierRole; // fallback to Cashier if no Employee role yet
+  const roleOptions = [
+    ...(adminRole ? [{ value: String(adminRole.role_id), label: 'Admin' }] : []),
+    ...(effectiveEmployee ? [{ value: String(effectiveEmployee.role_id), label: 'Employee' }] : []),
+  ];
+  return { adminRole, employeeRole: effectiveEmployee, roleOptions };
+}
+
 function EmployeeForm({ employee, roles, onSave, onCancel }) {
   const { themeColor } = useTheme();
   const themeColorRgb = hexToRgb(themeColor || '#8400ff');
@@ -29,6 +43,8 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => obs.disconnect();
   }, []);
+
+  const { roleOptions, adminRole, employeeRole } = getAdminAndEmployeeRoles(roles);
 
   const [formData, setFormData] = useState({
     username: '',
@@ -56,13 +72,15 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
 
   useEffect(() => {
     if (employee) {
+      const rid = employee.role_id ?? employee.role?.role_id ?? '';
+      const pos = employee.position || '';
       setFormData({
         username: employee.username || employee.employee_code || '',
         first_name: employee.first_name || '',
         last_name: employee.last_name || '',
         email: employee.email || '',
         phone: employee.phone || '',
-        position: employee.position || '',
+        position: pos,
         department: employee.department || '',
         date_started: employee.date_started || '',
         password: '',
@@ -74,7 +92,7 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
         emergency_contact_name: employee.emergency_contact_name || '',
         emergency_contact_phone: employee.emergency_contact_phone || '',
         notes: employee.notes || '',
-        role_id: employee.role_id || '',
+        role_id: rid ? String(rid) : '',
         pin_code: employee.pin_code || ''
       });
     }
@@ -82,10 +100,15 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    setFormData(prev => {
+      const next = { ...prev, [name]: value };
+      // Keep position in sync with role: Admin -> 'admin', Employee -> 'employee'
+      if (name === 'role_id' && adminRole && employeeRole) {
+        if (value === String(adminRole.role_id)) next.position = 'admin';
+        else if (value === String(employeeRole.role_id)) next.position = 'employee';
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -93,8 +116,16 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
     setError(null);
 
     // Validation
-    if (!formData.first_name || !formData.last_name || !formData.position || !formData.date_started) {
-      setError('First name, last name, position, and date started are required');
+    if (!formData.first_name || !formData.last_name || !formData.date_started) {
+      setError('First name, last name, and date started are required');
+      return;
+    }
+    if (!formData.role_id && roleOptions.length > 0) {
+      setError('Please select a role (Admin or Employee)');
+      return;
+    }
+    if (!formData.position && roleOptions.length > 0) {
+      setError('Position is required (select Admin or Employee role)');
       return;
     }
 
@@ -111,13 +142,19 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
     setLoading(true);
 
     try {
+      // Derive position from role so two-position model (Admin/Employee) stays in sync
+      let position = formData.position;
+      if (formData.role_id && adminRole && employeeRole) {
+        if (formData.role_id === String(adminRole.role_id)) position = 'admin';
+        else if (formData.role_id === String(employeeRole.role_id)) position = 'employee';
+      }
       const payload = {
         username: formData.username,
         first_name: formData.first_name,
         last_name: formData.last_name,
         email: formData.email || null,
         phone: formData.phone || null,
-        position: formData.position,
+        position: position || formData.position,
         department: formData.department || null,
         date_started: formData.date_started,
         password: formData.password || null,
@@ -128,7 +165,7 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
         emergency_contact_name: formData.emergency_contact_name || null,
         emergency_contact_phone: formData.emergency_contact_phone || null,
         notes: formData.notes || null,
-        role_id: formData.role_id ? parseInt(formData.role_id) : null,
+        role_id: formData.role_id ? parseInt(formData.role_id, 10) : null,
         pin_code: formData.pin_code || null
       };
 
@@ -282,15 +319,16 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
               />
             </FormField>
             <FormField style={compactFormFieldStyleTight}>
-              <label style={compactFormLabelStyle(isDarkMode)}>Position <span style={requiredIndicatorStyle}>*</span></label>
+              <label style={compactFormLabelStyle(isDarkMode)}>Position</label>
               <input
                 type="text"
                 name="position"
                 value={formData.position}
                 onChange={handleChange}
-                required
-                style={inputStyle()}
+                readOnly={roleOptions.length > 0}
+                style={{ ...inputStyle(), ...(roleOptions.length > 0 ? { opacity: 0.9, cursor: 'default' } : {}) }}
                 {...focusHandlers}
+                title={roleOptions.length > 0 ? 'Set by Role (Admin or Employee)' : ''}
               />
             </FormField>
             <FormField style={compactFormFieldStyleTight}>
@@ -342,16 +380,13 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
               </FormField>
             ) : <div />}
             <FormField style={compactFormFieldStyleTight}>
-              <label style={compactFormLabelStyle(isDarkMode)}>Role</label>
+              <label style={compactFormLabelStyle(isDarkMode)}>Role <span style={requiredIndicatorStyle}>*</span></label>
               <CustomDropdown
                 name="role_id"
                 value={formData.role_id ? String(formData.role_id) : ''}
                 onChange={handleChange}
-                options={[
-                  { value: '', label: 'No Role' },
-                  ...(roles || []).map((r) => ({ value: String(r.role_id), label: r.role_name }))
-                ]}
-                placeholder="No Role"
+                options={roleOptions.length > 0 ? [{ value: '', label: 'Select role…' }, ...roleOptions] : [{ value: '', label: 'No Role' }]}
+                placeholder={roleOptions.length > 0 ? 'Select role…' : 'No Role'}
                 isDarkMode={isDarkMode}
                 themeColorRgb={themeColorRgb}
                 compactTrigger

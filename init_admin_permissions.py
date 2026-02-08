@@ -32,6 +32,7 @@ def init_rbac_data():
     print("\n1. Inserting default roles...")
     roles = [
         ('Admin', 'Full system access - can do everything', 1),
+        ('Employee', 'Standard employee - POS, calendar, limited settings (no accounting/tables)', 0),
         ('Manager', 'Can manage inventory, view reports, manage employees', 0),
         ('Cashier', 'Can process sales and returns, basic inventory view', 0),
         ('Stock Clerk', 'Can manage inventory, receive shipments, no sales access', 0),
@@ -144,6 +145,27 @@ def init_rbac_data():
                 pass
         print(f"  ✓ Admin: {len(permission_ids)} permissions")
     
+    # Assign permissions to Employee role (restricted: no accounting, tables, schedule edit, manage_permissions, add_employee)
+    employee_perms = [
+        'process_sale', 'process_return', 'apply_discount', 'view_sales', 'void_transaction',
+        'view_inventory', 'view_employees',
+        'view_sales_reports', 'view_inventory_reports', 'export_reports',
+        'manage_vendors', 'manage_customers', 'modify_settings', 'view_audit_logs'
+    ]
+    if 'Employee' in role_ids:
+        employee_role_id = role_ids['Employee']
+        for perm_name in employee_perms:
+            if perm_name in permission_ids:
+                try:
+                    cursor.execute("""
+                        INSERT INTO role_permissions (role_id, permission_id, granted)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                    """, (employee_role_id, permission_ids[perm_name], 1))
+                except Exception as e:
+                    pass
+        print(f"  ✓ Employee: {len(employee_perms)} permissions")
+
     # Assign permissions to Manager role
     manager_perms = [
         'process_sale', 'process_return', 'apply_discount', 'view_sales',
@@ -223,12 +245,71 @@ def assign_admin_role_to_admin():
     print(f"  ✓ Assigned Admin role (ID: {admin_role_id}) to admin employee (ID: {admin_employee_id})")
     return True
 
+
+def migrate_current_employees_to_roles():
+    """Assign Admin or Employee role (and position) to all existing employees."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    print("\n6. Migrating current employees to Admin/Employee roles...")
+    try:
+        # Allow 'employee' in position check constraint if it exists
+        try:
+            cursor.execute("ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_position_check")
+            cursor.execute("""
+                ALTER TABLE employees ADD CONSTRAINT employees_position_check
+                CHECK (position = ANY (ARRAY['cashier', 'stock_clerk', 'manager', 'admin', 'supervisor', 'assistant_manager', 'employee']))
+            """)
+            conn.commit()
+            print("  ✓ Updated position constraint to include 'employee'")
+        except Exception as e:
+            conn.rollback()
+            print(f"  - Position constraint update: {e}")
+
+        cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Admin' LIMIT 1")
+        admin_row = cursor.fetchone()
+        cursor.execute("SELECT role_id FROM roles WHERE role_name = 'Employee' LIMIT 1")
+        employee_row = cursor.fetchone()
+        if not admin_row or not employee_row:
+            print("  ✗ Admin or Employee role not found; skip migration")
+            conn.close()
+            return
+        admin_role_id = admin_row[0] if isinstance(admin_row, tuple) else admin_row['role_id']
+        employee_role_id = employee_row[0] if isinstance(employee_row, tuple) else employee_row['role_id']
+
+        # Everyone with position = admin (case-insensitive) -> Admin role, position 'admin'
+        cursor.execute("""
+            UPDATE employees
+            SET role_id = %s, position = 'admin', updated_at = CURRENT_TIMESTAMP
+            WHERE LOWER(TRIM(COALESCE(position, ''))) = 'admin'
+        """, (admin_role_id,))
+        admin_count = cursor.rowcount
+
+        # Everyone else -> Employee role, position 'employee'
+        cursor.execute("""
+            UPDATE employees
+            SET role_id = %s, position = 'employee', updated_at = CURRENT_TIMESTAMP
+            WHERE LOWER(TRIM(COALESCE(position, ''))) != 'admin' OR position IS NULL
+        """, (employee_role_id,))
+        employee_count = cursor.rowcount
+
+        conn.commit()
+        print(f"  ✓ Set Admin role + position 'admin' for {admin_count} employee(s)")
+        print(f"  ✓ Set Employee role + position 'employee' for {employee_count} employee(s)")
+    except Exception as e:
+        conn.rollback()
+        print(f"  ✗ Migration error: {e}")
+        raise
+    finally:
+        conn.close()
+
+
 if __name__ == '__main__':
     try:
         role_ids = init_rbac_data()
         assign_admin_role_to_admin()
-        print("\n✓ RBAC initialization completed!")
-        print("\nAdmin account should now have access to the Management bento box.")
+        migrate_current_employees_to_roles()
+        print("\n✓ RBAC initialization and migration completed!")
+        print("  Admin/Employee roles are assigned; positions set to 'admin' or 'employee'.")
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback

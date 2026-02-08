@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
+import { getPermissionsCache, setPermissionsCache } from '../services/employeeRolesCache'
 
 const PermissionContext = createContext()
 
@@ -9,7 +10,13 @@ export const PermissionProvider = ({ children }) => {
 
   const fetchPermissions = async (employeeId) => {
     if (!employeeId) return
-    
+
+    // Restore from local cache immediately so UI is ready without waiting
+    const cached = getPermissionsCache(employeeId)
+    if (cached && typeof cached === 'object') {
+      setPermissions(cached)
+    }
+
     setLoading(true)
     try {
       const response = await fetch('/api/my/permissions', {
@@ -17,11 +24,13 @@ export const PermissionProvider = ({ children }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employee_id: employeeId })
       })
-      
+
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
-          setPermissions(data.permissions || {})
+          const perms = data.permissions || {}
+          setPermissions(perms)
+          setPermissionsCache(employeeId, perms)
         }
       }
     } catch (err) {
@@ -43,6 +52,13 @@ export const PermissionProvider = ({ children }) => {
     }
     return false
   }
+
+  // Admin = full access; Employee = restricted (two main positions)
+  const isAdmin = Boolean(
+    employee?.position?.toLowerCase() === 'admin' ||
+    hasPermission('manage_permissions') ||
+    hasPermission('add_employee')
+  )
 
   const checkPermission = async (employeeId, permissionName) => {
     try {
@@ -66,14 +82,22 @@ export const PermissionProvider = ({ children }) => {
     }
   }
 
+  /** Restore employee + permissions from local cache (e.g. after offline login). No API call. */
+  const restoreOfflineSession = (emp, perms) => {
+    if (emp) setEmployee(emp)
+    if (perms != null) setPermissions(perms)
+  }
+
   return (
     <PermissionContext.Provider value={{ 
       permissions, 
       hasPermission,
+      isAdmin,
       checkPermission,
       employee,
       setEmployee,
       fetchPermissions,
+      restoreOfflineSession,
       loading
     }}>
       {children}
