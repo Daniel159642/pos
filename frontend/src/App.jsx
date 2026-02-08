@@ -566,7 +566,7 @@ function App() {
     <BrowserRouter>
       <ThemeProvider>
         <ToastProvider>
-          <PermissionProvider>
+          <PermissionProvider initialEmployee={employee}>
             <AppContent
             sessionToken={sessionToken}
             setSessionToken={setSessionToken}

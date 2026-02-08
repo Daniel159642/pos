@@ -4245,6 +4245,19 @@ function Settings() {
                           placeholder="Search by name, SKU, or barcode"
                           value={pickerSearch}
                           onChange={(e) => setPickerSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && pickerSearch.trim()) {
+                              const p = pickerProducts.find(x =>
+                                (x.barcode || '').toString().trim() === pickerSearch.trim() ||
+                                (x.sku || '').toString().trim() === pickerSearch.trim()
+                              )
+                              if (p && p.product_id) {
+                                setPickerIncludeIds(prev => prev.includes(p.product_id) ? prev : [...prev, p.product_id])
+                                setPickerExcludeIds(prev => prev.filter(x => x !== p.product_id))
+                                setPickerSearch('')
+                              }
+                            }
+                          }}
                           style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), flex: 1 }}
                           {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
                         />
@@ -4277,7 +4290,7 @@ function Settings() {
                                 setPickerIncludeIds(prev => prev.includes(p.product_id) ? prev : [...prev, p.product_id])
                                 setPickerExcludeIds(prev => prev.filter(x => x !== p.product_id))
                               }
-                              setShowBarcodeInPicker(false)
+                              // Keep scanner open for multiple scans; user closes when done
                             }}
                             onClose={() => setShowBarcodeInPicker(false)}
                             themeColor={themeColor}

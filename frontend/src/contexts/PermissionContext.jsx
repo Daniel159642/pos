@@ -3,10 +3,15 @@ import { getPermissionsCache, setPermissionsCache } from '../services/employeeRo
 
 const PermissionContext = createContext()
 
-export const PermissionProvider = ({ children }) => {
+export const PermissionProvider = ({ children, initialEmployee = null }) => {
   const [permissions, setPermissions] = useState({})
-  const [employee, setEmployee] = useState(null)
+  const [employee, setEmployee] = useState(initialEmployee)
   const [loading, setLoading] = useState(false)
+
+  // Keep context employee in sync with app-level employee so isAdmin is correct on first render (e.g. /accounting)
+  useEffect(() => {
+    setEmployee(initialEmployee ?? null)
+  }, [initialEmployee])
 
   const fetchPermissions = async (employeeId) => {
     if (!employeeId) return

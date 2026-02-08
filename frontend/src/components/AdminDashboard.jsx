@@ -53,7 +53,6 @@ function AdminDashboard() {
   const [showPermissions, setShowPermissions] = useState(false);
   const [permissionEmployeeId, setPermissionEmployeeId] = useState(null);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
 
   // Load employees and roles: show from local cache first (instant), then fetch in background
   useEffect(() => {
@@ -245,8 +244,7 @@ function AdminDashboard() {
     setShowEmployeeForm(false);
     setSelectedEmployee(null);
     loadEmployees();
-    setSuccess('Employee saved successfully');
-    setTimeout(() => setSuccess(null), 3000);
+    showToast('Employee saved successfully', 'success');
   };
 
   const getRoleName = (roleId) => {
@@ -393,25 +391,6 @@ function AdminDashboard() {
           }}
         >
           {error}
-        </div>
-      )}
-
-      {success && (
-        <div 
-          onClick={() => setSuccess(null)}
-          style={{
-            padding: '12px 16px',
-            backgroundColor: isDarkMode ? 'rgba(46, 125, 50, 0.2)' : '#efe',
-            border: isDarkMode ? '1px solid rgba(46, 125, 50, 0.4)' : '1px solid #cfc',
-            borderRadius: '8px',
-            color: isDarkMode ? '#81c784' : '#3c3',
-            marginBottom: '16px',
-            fontSize: '14px',
-            cursor: 'pointer',
-            flexShrink: 0
-          }}
-        >
-          {success}
         </div>
       )}
 

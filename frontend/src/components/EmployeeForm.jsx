@@ -139,6 +139,12 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
       return;
     }
 
+    const trimmedUsername = (formData.username || '').trim();
+    if (!employee && !trimmedUsername) {
+      setError('Username or employee code is required for new employees');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -149,7 +155,8 @@ function EmployeeForm({ employee, roles, onSave, onCancel }) {
         else if (formData.role_id === String(employeeRole.role_id)) position = 'employee';
       }
       const payload = {
-        username: formData.username,
+        username: trimmedUsername,
+        employee_code: trimmedUsername,
         first_name: formData.first_name,
         last_name: formData.last_name,
         email: formData.email || null,

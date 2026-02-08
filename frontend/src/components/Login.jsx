@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import { ChevronDown } from 'lucide-react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   getEmployeesCache,
   setEmployeesCache,
@@ -52,6 +53,7 @@ function Login({ onLogin }) {
           onClick={() => setIsOpen(!isOpen)}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen((o) => !o) } }}
           style={{
+            position: 'relative',
             width: '100%',
             padding: '14px 16px',
             border: isOpen ? `2px solid rgba(${themeColorRgb}, 0.7)` : `2px solid rgba(${themeColorRgb}, 0.4)`,
@@ -63,7 +65,7 @@ function Login({ onLogin }) {
             opacity: loadingEmployees ? 0.6 : 1,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            justifyContent: 'center',
             transition: 'all 0.2s ease',
             outline: 'none',
             boxShadow: isOpen ? `0 4px 12px rgba(${themeColorRgb}, 0.2)` : `0 2px 8px rgba(${themeColorRgb}, 0.1)`
@@ -75,8 +77,8 @@ function Login({ onLogin }) {
             if (!isOpen) e.currentTarget.style.borderColor = `rgba(${themeColorRgb}, 0.4)`
           }}
         >
-          <span>{selected ? selected.label : (loadingEmployees ? 'Loading employees...' : placeholder)}</span>
-          <ChevronDown size={16} style={{ flexShrink: 0, transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+          <span style={{ flex: 1, textAlign: 'center' }}>{selected ? selected.label : (loadingEmployees ? 'Loading employees...' : placeholder)}</span>
+          <ChevronDown size={16} style={{ position: 'absolute', right: '16px', flexShrink: 0, transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
         </div>
         {isOpen && (
           <div
@@ -107,6 +109,7 @@ function Login({ onLogin }) {
                   cursor: 'pointer',
                   fontSize: '15px',
                   color: '#111',
+                  textAlign: 'center',
                   backgroundColor: value === opt.value ? `rgba(${themeColorRgb}, 0.2)` : 'transparent',
                   borderLeft: value === opt.value ? `3px solid rgba(${themeColorRgb}, 0.7)` : '3px solid transparent',
                   transition: 'background-color 0.15s ease'
@@ -357,18 +360,55 @@ function Login({ onLogin }) {
     }
   }
 
+  const isTauri = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)
+  const handleHeaderDrag = (e) => {
+    if (e.target.closest('button')) return
+    try {
+      getCurrentWindow().startDragging()
+    } catch (_) {}
+  }
+
   return (
     <div
       style={{
         minHeight: '100vh',
         backgroundColor: '#fff',
-        padding: '24px',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center'
+        alignItems: 'center'
       }}
     >
+      {isTauri && (
+        <div
+          data-tauri-drag-region
+          onMouseDown={handleHeaderDrag}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            width: '100%',
+            zIndex: 10000,
+            height: 52,
+            paddingLeft: 72,
+            userSelect: 'none',
+            cursor: 'move',
+            transform: 'translateZ(0)'
+          }}
+        />
+      )}
+      <div
+        style={{
+          flex: 1,
+          width: '100%',
+          padding: '24px',
+          paddingTop: isTauri ? 76 : 24,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      >
       <h1
         style={{
           fontSize: '22px',
@@ -398,7 +438,7 @@ function Login({ onLogin }) {
             onChange={(e) => setEmployeeCode(e.target.value)}
             options={loadingEmployees ? [] : employees.map((emp) => ({
               value: emp.username || emp.employee_code,
-              label: `${emp.first_name} ${emp.last_name} ${emp.username ? `(${emp.username})` : emp.employee_code ? `(${emp.employee_code})` : ''}`
+              label: [emp.first_name, emp.last_name].filter(Boolean).join(' ').trim() || emp.username || emp.employee_code || String(emp.employee_id)
             }))}
             placeholder={loadingEmployees ? 'Loading employees...' : 'Select an employee...'}
             isDarkMode={false}
@@ -571,6 +611,7 @@ function Login({ onLogin }) {
         </div>
 
       </form>
+      </div>
     </div>
   )
 }

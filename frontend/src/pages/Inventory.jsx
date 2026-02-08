@@ -121,6 +121,8 @@ function Inventory() {
   const [barcodeLoading, setBarcodeLoading] = useState(false)
   const [barcodeError, setBarcodeError] = useState(null)
   const barcodeObjectUrlRef = useRef(null)
+  const scannerInputRef = useRef(null)
+  const [scannerInputValue, setScannerInputValue] = useState('')
   const isArchivedView = inventoryFilter === 'archived'
 
   // Determine if dark mode is active
@@ -210,10 +212,15 @@ function Inventory() {
     }
   }, [showCreateDropdown])
 
+  const focusScannerInput = () => {
+    setScannerInputValue('')
+    setTimeout(() => scannerInputRef.current?.focus(), 0)
+  }
+
   const handleBarcodeScan = async (barcode) => {
-    // Set the search query to the scanned barcode
-    setSearchQuery(barcode)
-    // Optionally, you could also filter the inventory immediately
+    const v = (barcode || '').toString().trim()
+    if (v) setSearchQuery(v)
+    focusScannerInput()
   }
 
   const invalidateInventory = () => queryClient.invalidateQueries({ queryKey: ['inventory'] })
@@ -1897,6 +1904,34 @@ function Inventory() {
                 boxSizing: 'border-box',
                 fontFamily: '"Product Sans", sans-serif',
                 color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              }}
+            />
+            <input
+              ref={scannerInputRef}
+              type="text"
+              value={scannerInputValue}
+              onChange={(e) => setScannerInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const v = scannerInputValue.trim()
+                  if (v) {
+                    e.preventDefault()
+                    handleBarcodeScan(v)
+                  }
+                }
+              }}
+              placeholder="Barcode"
+              title="Scan with hardware scanner or type and press Enter"
+              style={{
+                width: 90,
+                padding: '6px 8px',
+                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                borderRadius: '8px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                outline: 'none',
+                fontSize: '13px',
+                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                boxSizing: 'border-box'
               }}
             />
             <button

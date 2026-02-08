@@ -40,6 +40,8 @@ function RecentOrders() {
   const [statusUpdatingOrderId, setStatusUpdatingOrderId] = useState(null) // order_id while PATCH status in progress
   const rowRefs = useRef({}) // Refs for table rows to enable scrolling
   const chipsContainerRef = useRef(null) // Ref for chips container
+  const scannerInputRef = useRef(null) // Focus target for hardware barcode scanner (persistent scanning)
+  const [scannerInputValue, setScannerInputValue] = useState('')
   
   // Return modal state
   const [order, setOrder] = useState(null)
@@ -84,6 +86,17 @@ function RecentOrders() {
   const themeColorRgb = hexToRgb(themeColor)
 
   const ordersQueryKey = ['orders', filterReturns, filterCanceled, filterOrderTypePickup, filterOrderTypeDelivery, filterOrderTypeInPerson, ordersPage]
+  const inventoryQueryKey = ['inventory']
+  const { data: inventoryResponse } = useQuery({
+    queryKey: inventoryQueryKey,
+    queryFn: async () => {
+      const res = await cachedFetch('/api/inventory')
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.message || 'Failed to load inventory')
+      return result
+    },
+    staleTime: 2 * 60 * 1000
+  })
   const { data: ordersResponse, isLoading: loading, error: ordersError, refetch: refetchOrders } = useQuery({
     queryKey: ordersQueryKey,
     queryFn: async () => {
@@ -725,44 +738,45 @@ function RecentOrders() {
     return { ...row, total: displayTotal, _actions: row }
   }) : []
 
+  const focusScannerInput = () => {
+    setScannerInputValue('')
+    setTimeout(() => scannerInputRef.current?.focus(), 0)
+  }
+
   const handleBarcodeScan = async (barcode) => {
     try {
       const scannedBarcode = barcode.toString().trim()
-      console.log('Scanned barcode:', scannedBarcode, 'Length:', scannedBarcode.length)
+      if (!scannedBarcode) {
+        focusScannerInput()
+        return
+      }
       
       // First, check if barcode matches an order number (receipt barcode)
-      // Try to parse as order_id first (if numeric)
       const orderIdMatch = parseInt(scannedBarcode)
       let matchingOrder = null
       
       if (!isNaN(orderIdMatch)) {
-        // Try searching by order_id
         try {
-          const orderIdResponse = await fetch(`/api/orders/search?order_id=${orderIdMatch}`)
+          const orderIdResponse = await cachedFetch(`/api/orders/search?order_id=${orderIdMatch}`)
           const orderIdResult = await orderIdResponse.json()
           if (orderIdResult.data && orderIdResult.data.length > 0) {
             matchingOrder = orderIdResult.data[0]
-            console.log('Found order by order_id:', matchingOrder.order_id)
           }
         } catch (err) {
           console.log('Error searching by order_id:', err)
         }
       }
       
-      // If not found by order_id, try searching by order_number
       if (!matchingOrder) {
         try {
-          const orderNumResponse = await fetch(`/api/orders/search?order_number=${encodeURIComponent(scannedBarcode)}`)
+          const orderNumResponse = await cachedFetch(`/api/orders/search?order_number=${encodeURIComponent(scannedBarcode)}`)
           const orderNumResult = await orderNumResponse.json()
           if (orderNumResult.data && orderNumResult.data.length > 0) {
-            // Try exact match first
             matchingOrder = orderNumResult.data.find(o => {
               if (!o.order_number) return false
               const orderNum = o.order_number.toString().trim()
               return orderNum === scannedBarcode || orderNum.toLowerCase() === scannedBarcode.toLowerCase()
             })
-            
-            // If no exact match, use first result (partial match)
             if (!matchingOrder && orderNumResult.data.length > 0) {
               matchingOrder = orderNumResult.data[0]
             }
@@ -773,70 +787,56 @@ function RecentOrders() {
       }
       
       if (matchingOrder) {
-        console.log('Found matching order:', matchingOrder.order_number, 'ID:', matchingOrder.order_id)
-        // Found order by receipt barcode - filter table to show only this order
         setToast({ message: `Found order: ${matchingOrder.order_number}`, type: 'success' })
-        
-        // Add order to data if not already present
         if (data && data.data) {
           const orderExists = data.data.some(o => o.order_id === matchingOrder.order_id)
           if (!orderExists) {
             queryClient.setQueryData(ordersQueryKey, (prev) => (prev ? { ...prev, data: [matchingOrder, ...(prev.data || [])] } : { columns: [], data: [matchingOrder] }))
           }
         }
-        
-        // Filter table to show only this order
         setScannedOrderId(matchingOrder.order_id)
-        
-        // Highlight the order in the table
         setHighlightedOrderId(matchingOrder.order_id)
-        setTimeout(() => setHighlightedOrderId(null), 5000) // Remove highlight after 5 seconds
-        
-        // Don't open the modal - just show the order in the table
+        setTimeout(() => setHighlightedOrderId(null), 5000)
         setShowBarcodeScanner(false)
+        focusScannerInput()
         return
       }
       
-      // If not an order number, try to find product by barcode
-      const inventoryResponse = await fetch('/api/inventory')
-      const inventoryResult = await inventoryResponse.json()
+      // Use cached inventory (from useQuery) so we don't refetch on every scan
+      let inventoryData = inventoryResponse?.data
+      if (!inventoryData) {
+        const res = await cachedFetch('/api/inventory')
+        const result = await res.json()
+        inventoryData = result.data
+      }
       
       let product = null
-      if (inventoryResult.data) {
-        // Try to find by barcode first (exact match)
-        product = inventoryResult.data.find(p => 
-          p.barcode && p.barcode.toString().trim() === barcode.toString().trim()
+      if (inventoryData) {
+        const barcodeStr = scannedBarcode
+        product = inventoryData.find(p =>
+          p.barcode && p.barcode.toString().trim() === barcodeStr
         )
-        
-        // If not found and barcode is 13 digits (EAN13), try without leading 0 (12 digits)
-        if (!product && barcode.length === 13 && barcode.startsWith('0')) {
-          const barcode12 = barcode.substring(1)
-          product = inventoryResult.data.find(p => 
-            p.barcode && p.barcode.toString().trim() === barcode12
+        if (!product && barcodeStr.length === 13 && barcodeStr.startsWith('0')) {
+          product = inventoryData.find(p =>
+            p.barcode && p.barcode.toString().trim() === barcodeStr.substring(1)
           )
         }
-        
-        // If not found and barcode is 12 digits, try with leading 0 (13 digits)
-        if (!product && barcode.length === 12) {
-          const barcode13 = '0' + barcode
-          product = inventoryResult.data.find(p => 
-            p.barcode && (p.barcode.toString().trim() === barcode13 || p.barcode.toString().trim() === barcode)
+        if (!product && barcodeStr.length === 12) {
+          const barcode13 = '0' + barcodeStr
+          product = inventoryData.find(p =>
+            p.barcode && (p.barcode.toString().trim() === barcode13 || p.barcode.toString().trim() === barcodeStr)
           )
         }
-        
-        // If not found by barcode, try by SKU
         if (!product) {
-          product = inventoryResult.data.find(p => 
-            p.sku && p.sku.toString().trim() === barcode.toString().trim()
+          product = inventoryData.find(p =>
+            p.sku && p.sku.toString().trim() === barcodeStr
           )
         }
         
         if (product) {
-          // Check if product is already scanned
-          const alreadyScanned = scannedProducts.some(sp => 
+          const alreadyScanned = scannedProducts.some(sp =>
             sp.product_id === product.product_id || sp.sku === product.sku
           )
-          
           if (!alreadyScanned) {
             setScannedProducts(prev => [...prev, {
               product_id: product.product_id,
@@ -848,24 +848,22 @@ function RecentOrders() {
           } else {
             setToast({ message: `${product.product_name} already scanned`, type: 'success' })
           }
-          // Keep scanner open for continuous scanning
+          focusScannerInput()
           return
         }
       }
       
-      // Neither order nor product found
-      // Check if it looks like it could be an order number (numeric or alphanumeric)
       const looksLikeOrderNumber = /^[A-Z0-9-]+$/i.test(scannedBarcode) && scannedBarcode.length >= 3
-      
       if (looksLikeOrderNumber) {
         setToast({ message: `Order or product with barcode "${barcode}" not found. Please check the barcode and try again.`, type: 'error' })
       } else {
         setToast({ message: `Product with barcode "${barcode}" not found`, type: 'error' })
       }
-      
     } catch (err) {
       console.error('Barcode scan error:', err)
       setToast({ message: 'Error processing barcode scan', type: 'error' })
+    } finally {
+      focusScannerInput()
     }
   }
 
@@ -1393,6 +1391,35 @@ function RecentOrders() {
               }}
             />
           </div>
+          <input
+            ref={scannerInputRef}
+            type="text"
+            value={scannerInputValue}
+            onChange={(e) => setScannerInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const v = scannerInputValue.trim()
+                if (v) {
+                  e.preventDefault()
+                  handleBarcodeScan(v)
+                }
+              }
+            }}
+            placeholder="Barcode / order #"
+            title="Scan with hardware scanner or type and press Enter"
+            style={{
+              width: isMobile ? 100 : 130,
+              maxWidth: '140px',
+              padding: '6px 10px',
+              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+              borderRadius: '8px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              outline: 'none',
+              fontSize: '13px',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+              boxSizing: 'border-box'
+            }}
+          />
           <button
             onClick={() => setShowBarcodeScanner(true)}
             style={{

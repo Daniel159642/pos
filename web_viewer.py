@@ -6341,9 +6341,15 @@ def api_create_employee():
         if not pin_code:
             pin_code = generate_pin()
         
-        # Create employee record
+        # Normalize identifier: trim whitespace so "Ok " and "Ok" don't both exist
+        raw_identifier = data.get('username') or data.get('employee_code') or ''
+        identifier = (raw_identifier and str(raw_identifier).strip()) or None
+        if not identifier:
+            return jsonify({'error': 'Username or employee code is required and cannot be blank'}), 400
+        # Create employee record (backend uses username or employee_code column)
         employee_id = add_employee(
-            username=data.get('username') or data.get('employee_code'),
+            username=identifier,
+            employee_code=None,
             first_name=data['first_name'],
             last_name=data['last_name'],
             position=data['position'],
@@ -10178,9 +10184,10 @@ if __name__ == '__main__':
 
     # Keep-alive for free-tier DBs (e.g. Supabase) that pause after inactivity – prevents 10–30s cold starts
     def _db_keepalive():
+        import time as _time  # use stdlib time (module); top-level 'time' is datetime.time)
         interval = 4 * 60  # 4 minutes
         while True:
-            time.sleep(interval)
+            _time.sleep(interval)
             try:
                 conn = get_connection()
                 try:

@@ -621,6 +621,7 @@ function ShipmentVerificationDetail({ shipmentId }) {
   const [currentItem, setCurrentItem] = useState(null)
   const [showIssueForm, setShowIssueForm] = useState(false)
   const [manualBarcode, setManualBarcode] = useState('')
+  const manualBarcodeInputRef = useRef(null)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
   const [customQuantities, setCustomQuantities] = useState({}) // Track custom quantity inputs per item
   const [checkingIn, setCheckingIn] = useState({}) // Track which items are being checked in
@@ -919,6 +920,8 @@ function ShipmentVerificationDetail({ shipmentId }) {
       alert('Failed to process scan')
     } finally {
       setScanning(false)
+      setManualBarcode('')
+      setTimeout(() => manualBarcodeInputRef.current?.focus(), 0)
     }
   }
 
@@ -1660,18 +1663,19 @@ function ShipmentVerificationDetail({ shipmentId }) {
         transition: isInitialMount ? 'none' : 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
       }}>
 
-      {/* Manual Barcode Entry */}
+      {/* Manual Barcode Entry - hardware scanner or type + Enter */}
       <div style={{ marginBottom: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <input
+            ref={manualBarcodeInputRef}
             type="text"
-            placeholder="Search orders..."
+            placeholder="Scan barcode or type and press Enter..."
             value={manualBarcode}
             onChange={(e) => setManualBarcode(e.target.value)}
-            onKeyPress={(e) => {
+            onKeyDown={(e) => {
               if (e.key === 'Enter' && manualBarcode.trim()) {
+                e.preventDefault()
                 handleBarcodeScan(manualBarcode.trim())
-                setManualBarcode('')
               }
             }}
             style={{
@@ -2599,13 +2603,10 @@ function ShipmentVerificationDetail({ shipmentId }) {
         />
       )}
 
-      {/* Barcode Scanner Popup */}
+      {/* Barcode Scanner Popup - stays open for multiple scans */}
       {showBarcodeScanner && (
         <BarcodeScanner
-          onScan={(barcode) => {
-            handleBarcodeScan(barcode)
-            setShowBarcodeScanner(false)
-          }}
+          onScan={handleBarcodeScan}
           onClose={() => setShowBarcodeScanner(false)}
           themeColor={themeColor}
         />

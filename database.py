@@ -3494,11 +3494,12 @@ def add_employee(
     
     password_hash = hash_password(password) if password else None
     
-    # Use username if provided, otherwise fall back to employee_code
-    login_identifier = username if username else employee_code
+    # Use username if provided, otherwise fall back to employee_code; strip whitespace
+    raw_identifier = username if username else employee_code
+    login_identifier = (raw_identifier or '').strip() if raw_identifier else None
     if not login_identifier:
         conn.close()
-        raise ValueError("Either username or employee_code must be provided")
+        raise ValueError("Either username or employee_code must be provided (and cannot be blank)")
     
     try:
         # Get establishment_id (for multi-tenant support if needed)
@@ -3517,6 +3518,7 @@ def add_employee(
         columns = [row[0] for row in cursor.fetchall()]
         
         has_username = 'username' in columns
+        has_employee_code = 'employee_code' in columns
         has_role_id = 'role_id' in columns
         has_pin_code = 'pin_code' in columns
         has_clerk_user_id = 'clerk_user_id' in columns
@@ -3571,10 +3573,12 @@ def add_employee(
             base_values.insert(0, establishment_id)
         
         if has_username:
-            # Use username column
+            # Use username column; also set employee_code if present so UNIQUE(establishment_id, employee_code) is satisfied
             fields = ['username'] + base_fields
             values = [login_identifier] + base_values
-            # Add optional fields if columns exist AND values are provided
+            if has_employee_code:
+                fields.append('employee_code')
+                values.append(login_identifier)
             if has_role_id and role_id is not None:
                 fields.append('role_id')
                 values.append(role_id)
@@ -3585,7 +3589,7 @@ def add_employee(
                 fields.append('clerk_user_id')
                 values.append(clerk_user_id)
         else:
-            # Fall back to employee_code
+            # Fall back to employee_code only
             fields = ['employee_code'] + base_fields
             values = [login_identifier] + base_values
             # Add optional fields if columns exist AND values are provided
@@ -3598,6 +3602,19 @@ def add_employee(
             if has_clerk_user_id and clerk_user_id:
                 fields.append('clerk_user_id')
                 values.append(clerk_user_id)
+        
+        # Ensure position constraint allows 'employee' (schema may only have cashier, manager, admin, etc.)
+        if position and str(position).strip().lower() == 'employee':
+            try:
+                cursor.execute("ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_position_check")
+                cursor.execute("""
+                    ALTER TABLE employees ADD CONSTRAINT employees_position_check
+                    CHECK (position = ANY (ARRAY['cashier', 'stock_clerk', 'manager', 'admin', 'supervisor', 'assistant_manager', 'employee']))
+                """)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                # Continue; if insert fails we now surface the real error
         
         # Build and execute INSERT query
         placeholders = ', '.join([param_placeholder] * len(fields))
@@ -3625,7 +3642,11 @@ def add_employee(
             except:
                 pass
         if isinstance(e, psycopg2.IntegrityError):
-            raise ValueError(f"Employee identifier '{login_identifier}' already exists") from e
+            msg = getattr(e, 'pgerror', None) or str(e)
+            # 23505 = unique_violation
+            if getattr(e, 'pgcode', None) == '23505':
+                raise ValueError(f"Employee identifier '{login_identifier}' already exists") from e
+            raise ValueError(f"Database constraint error: {msg}") from e
         raise
 
 def get_employee_by_clerk_user_id(clerk_user_id: str) -> Optional[Dict[str, Any]]:
