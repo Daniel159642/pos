@@ -24,6 +24,7 @@ function Login({ onLogin }) {
   const [employees, setEmployees] = useState([])
   const [loadingEmployees, setLoadingEmployees] = useState(true)
   const [passwordJitter, setPasswordJitter] = useState(false)
+  const formRef = useRef(null)
 
   const hexToRgb = (hex) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
@@ -50,6 +51,7 @@ function Login({ onLogin }) {
         <div
           role="button"
           tabIndex={0}
+          data-dropdown-trigger
           onClick={() => setIsOpen(!isOpen)}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen((o) => !o) } }}
           style={{
@@ -220,6 +222,12 @@ function Login({ onLogin }) {
       else if (e.key === 'Backspace') {
         e.preventDefault()
         handleNumpadClick('backspace')
+      }
+      // Handle Enter to submit login (when not in input/textarea or dropdown)
+      else if (e.key === 'Enter') {
+        if (e.target.closest('[data-dropdown-trigger]')) return
+        e.preventDefault()
+        formRef.current?.requestSubmit()
       }
     }
 
@@ -431,7 +439,7 @@ function Login({ onLogin }) {
         Select employee and enter password
       </p>
 
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '320px' }}>
+      <form ref={formRef} onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '320px' }}>
         <div style={{ marginBottom: '20px', width: '100%' }}>
           <CustomDropdown
             value={employeeCode}

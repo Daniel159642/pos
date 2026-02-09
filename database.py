@@ -4324,21 +4324,20 @@ def get_customer(customer_id: int) -> Optional[Dict[str, Any]]:
 # ORDER PROCESSING FUNCTIONS
 # ============================================================================
 
-def generate_order_number() -> str:
-    """Generate a unique order number"""
+def generate_order_number(prefix: str = "ORD") -> str:
+    """Generate a unique order number. Use prefix ORD (default), DD (DoorDash), SH (Shopify), UE (Uber Eats)."""
     conn = get_connection()
     cursor = conn.cursor()
-    
+    safe_prefix = (prefix or "ORD").strip().upper()[:10]
     today = datetime.now().strftime('%Y%m%d')
     cursor.execute("""
-        SELECT COUNT(*) FROM orders 
-        WHERE DATE(order_date) = DATE('now')
-    """)
+        SELECT COUNT(*) FROM orders
+        WHERE DATE(order_date) = CURRENT_DATE
+        AND order_number::text LIKE %s
+    """, (f"{safe_prefix}-%",))
     count = cursor.fetchone()[0]
-    
-    order_number = f"ORD-{today}-{count + 1:04d}"
+    order_number = f"{safe_prefix}-{today}-{count + 1:04d}"
     conn.close()
-    
     return order_number
 
 def _apply_pos_settings_fee_mode(cursor, fee_rates: Optional[Dict[str, float]]) -> Optional[Dict[str, float]]:
@@ -4409,7 +4408,9 @@ def create_order(
     points_used: int = 0,
     payment_status: Optional[str] = None,
     order_status_override: Optional[str] = None,
-    discount_type: Optional[str] = None
+    discount_type: Optional[str] = None,
+    order_source: Optional[str] = None,
+    prepare_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new order and process payment
@@ -4584,10 +4585,18 @@ def create_order(
                     if order_customer_address:
                         order_customer_address = (order_customer_address or '').strip() or None
 
-        
-        # Generate order number
-        order_number = generate_order_number()
-        
+        # Generate order number (prefix by order_source: DD/SH/UE for integrations, ORD otherwise)
+        _src = (order_source or '').strip().lower()
+        if _src == 'doordash':
+            _prefix = 'DD'
+        elif _src == 'shopify':
+            _prefix = 'SH'
+        elif _src == 'uber_eats':
+            _prefix = 'UE'
+        else:
+            _prefix = 'ORD'
+        order_number = generate_order_number(_prefix)
+
         # Calculate subtotal and tax for each item
         subtotal = 0.0
         total_tax = 0.0
@@ -4752,6 +4761,15 @@ def create_order(
             order_id = result.get('order_id')
         else:
             order_id = result[0] if result else None
+
+        # Set order_source and prepare_by for integration orders (columns added by migration)
+        if order_id and (order_source is not None or prepare_by is not None):
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'orders' AND table_schema = 'public'")
+            ocols = [r[0] if isinstance(r, tuple) else r.get('column_name') for r in cursor.fetchall()]
+            if order_source is not None and 'order_source' in ocols:
+                cursor.execute("UPDATE orders SET order_source = %s WHERE order_id = %s", (order_source.strip().lower(), order_id))
+            if prepare_by is not None and 'prepare_by' in ocols:
+                cursor.execute("UPDATE orders SET prepare_by = %s WHERE order_id = %s", (prepare_by, order_id))
         
         # Add order items (triggers will update inventory)
         # Check if order_items has variant_id and notes columns (optional migrations)
@@ -5087,7 +5105,7 @@ def update_order_status(
             pay_method = (payment_method or order.get('payment_method') or 'cash').strip()
             emp_id = employee_id or order.get('employee_id')
             if not emp_id:
-                cursor.execute("SELECT employee_id FROM employees WHERE is_active = 1 ORDER BY employee_id LIMIT 1")
+                cursor.execute("SELECT employee_id FROM employees WHERE active = 1 ORDER BY employee_id LIMIT 1")
                 erow = cursor.fetchone()
                 emp_id = erow['employee_id'] if hasattr(erow, 'keys') and erow else (erow[0] if erow else None)
             total = float(order.get('total') or 0)
@@ -6197,6 +6215,66 @@ def get_payment_method_breakdown(start_date: Optional[str] = None, end_date: Opt
     conn.close()
     
     return [dict(row) for row in rows]
+
+
+def get_integrations(establishment_id: int) -> List[Dict[str, Any]]:
+    """List pos_integrations for an establishment (shopify, doordash, uber_eats)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'pos_integrations'
+        """)
+        if not cursor.fetchone():
+            conn.close()
+            return []
+        from psycopg2.extras import RealDictCursor
+        cursor.close()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT id, establishment_id, provider, enabled, config, created_at, updated_at
+            FROM pos_integrations WHERE establishment_id = %s ORDER BY provider
+        """, (establishment_id,))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def upsert_integration(
+    establishment_id: int,
+    provider: str,
+    enabled: bool,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Insert or update one integration row. provider: shopify, doordash, uber_eats."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'pos_integrations'
+        """)
+        if not cursor.fetchone():
+            conn.close()
+            return {'success': False, 'message': 'pos_integrations table not found'}
+        import json
+        config_json = json.dumps(config if isinstance(config, dict) else {})
+        cursor.execute("""
+            INSERT INTO pos_integrations (establishment_id, provider, enabled, config, updated_at)
+            VALUES (%s, %s, %s, %s::jsonb, now())
+            ON CONFLICT (establishment_id, provider)
+            DO UPDATE SET enabled = EXCLUDED.enabled, config = EXCLUDED.config, updated_at = now()
+        """, (establishment_id, provider.strip().lower(), bool(enabled), config_json))
+        conn.commit()
+        return {'success': True}
+    except Exception as e:
+        conn.rollback()
+        return {'success': False, 'message': str(e)}
+    finally:
+        conn.close()
+
 
 def list_orders(
     start_date: Optional[str] = None,

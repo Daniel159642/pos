@@ -5,8 +5,8 @@ import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
 import { cachedFetch } from '../services/offlineSync'
 import BarcodeScanner from '../components/BarcodeScanner'
-import { ScanBarcode, CheckCircle, XCircle, ChevronDown, Pencil, MoreVertical } from 'lucide-react'
-import { formLabelStyle, inputBaseStyle, getInputFocusHandlers, FormField, FormLabel } from '../components/FormStyles'
+import { ScanBarcode, CheckCircle, XCircle, ChevronDown, Pencil, MoreVertical, List, LayoutGrid } from 'lucide-react'
+import { formLabelStyle, formTitleStyle, inputBaseStyle, getInputFocusHandlers, FormField, FormLabel, CompactFormActions } from '../components/FormStyles'
 import Table from '../components/Table'
 import CustomerDisplayPopup from '../components/CustomerDisplayPopup'
 
@@ -17,6 +17,7 @@ function RecentOrders() {
   const ORDERS_PAGE_SIZE = 50
   const queryClient = useQueryClient()
   const [expandedRow, setExpandedRow] = useState(null)
+  const [expandedCardGridRow, setExpandedCardGridRow] = useState(null) // grid row index when in card view; expanding one card expands whole row
   const [orderDetails, setOrderDetails] = useState({})
   const [loadingDetails, setLoadingDetails] = useState({})
   const [searchQuery, setSearchQuery] = useState('')
@@ -31,6 +32,8 @@ function RecentOrders() {
   const [filterOrderTypePickup, setFilterOrderTypePickup] = useState(false)
   const [filterOrderTypeDelivery, setFilterOrderTypeDelivery] = useState(false)
   const [filterOrderTypeInPerson, setFilterOrderTypeInPerson] = useState(false)
+  const [dateRange, setDateRange] = useState(null) // null | 'today' | 'week' | 'month' - sort/filter list by date
+  const [viewMode, setViewMode] = useState('table') // 'table' | 'cards' - how we view the order list
   const [allOrderItems, setAllOrderItems] = useState([]) // Cache all order items for searching
   const [scannedProducts, setScannedProducts] = useState([]) // Array of {product_id, product_name, sku, barcode}
   const [orderItemsMap, setOrderItemsMap] = useState({}) // Map of order_id -> order items
@@ -42,7 +45,12 @@ function RecentOrders() {
   const chipsContainerRef = useRef(null) // Ref for chips container
   const scannerInputRef = useRef(null) // Focus target for hardware barcode scanner (persistent scanning)
   const [scannerInputValue, setScannerInputValue] = useState('')
-  
+  const lastKnownOrderIdRef = useRef(null)
+  const [newOrderToast, setNewOrderToast] = useState(null) // { order_id, order_number, order_source }
+  const [creatingDemoOrders, setCreatingDemoOrders] = useState(false)
+  const [statusPhaseModal, setStatusPhaseModal] = useState(null) // { row, orderId } when open; null when closed
+  const [statusPhaseModalLoadingItems, setStatusPhaseModalLoadingItems] = useState(false)
+
   // Return modal state
   const [order, setOrder] = useState(null)
   const [orderItems, setOrderItems] = useState([])
@@ -320,6 +328,44 @@ function RecentOrders() {
       loadAllOrderItems()
     }
   }, [scannedProducts.length])
+
+  // Load all order items when in cards view so each card can show purchased items
+  useEffect(() => {
+    if (viewMode === 'cards' && data.data?.length > 0) {
+      loadAllOrderItems()
+    }
+  }, [viewMode, data.data?.length])
+
+  // Poll for new orders (integration orders) and show toast when a new order arrives
+  useEffect(() => {
+    if (!data?.data?.length) return
+    const firstOrderId = data.data[0]?.order_id
+    if (firstOrderId != null && lastKnownOrderIdRef.current === null) {
+      lastKnownOrderIdRef.current = firstOrderId
+    }
+  }, [data?.data])
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/orders/latest')
+        const result = await res.json()
+        const latestId = result.order_id
+        if (latestId == null) return
+        if (lastKnownOrderIdRef.current != null && latestId !== lastKnownOrderIdRef.current) {
+          lastKnownOrderIdRef.current = latestId
+          const source = (result.order_source || '').toLowerCase().trim()
+          setNewOrderToast({
+            order_id: latestId,
+            order_number: result.order_number || `#${latestId}`,
+            order_source: source
+          })
+          invalidateOrders()
+        }
+      } catch (_) {}
+    }, 12000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Scroll to highlighted order when it changes
   useEffect(() => {
@@ -611,42 +657,20 @@ function RecentOrders() {
     }
   }
 
-  const handleRowClick = async (row) => {
+  // Fetch and cache order details for one order (no expansion state change). Used by table row click and by card row expand.
+  const loadOrderDetailsIfNeeded = async (row) => {
     const orderId = row.order_id || row.orderId
     if (!orderId) return
-
-    // Normalize orderId for consistency
     const normalizedOrderId = parseInt(orderId)
     if (isNaN(normalizedOrderId)) return
+    if (orderDetails[normalizedOrderId]) return
 
-    // Toggle expansion
-    if (expandedRow === normalizedOrderId) {
-      setExpandedRow(null)
-      return
-    }
-
-    setExpandedRow(normalizedOrderId)
-
-    // If we already have the details, don't fetch again
-    if (orderDetails[normalizedOrderId]) {
-      return
-    }
-
-      // Fetch order details
-      setLoadingDetails(prev => ({ ...prev, [normalizedOrderId]: true }))
+    setLoadingDetails(prev => ({ ...prev, [normalizedOrderId]: true }))
     try {
-      // Fetch order items
       const itemsResponse = await fetch('/api/order_items')
       const itemsResult = await itemsResponse.json()
       const items = itemsResult.data || []
-      
-      // Filter items for this order (normalize both sides for comparison)
-      const orderItems = items.filter(item => {
-        const itemOrderId = item.order_id || item.orderId
-        return parseInt(itemOrderId) === normalizedOrderId
-      })
-
-      // Get order details from the row data (total includes tip when present)
+      const orderItems = items.filter(item => parseInt(item.order_id || item.orderId) === normalizedOrderId)
       const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount || row.tax) || 0) - (parseFloat(row.discount) || 0)
       const tipAmt = parseFloat(row.tip) || 0
       const storedTotal = parseFloat(row.total) || 0
@@ -671,24 +695,48 @@ function RecentOrders() {
         receipt_type: row.receipt_type ?? null,
         receipt_email: row.receipt_email ?? null,
         receipt_phone: row.receipt_phone ?? null,
+        prepare_by: row.prepare_by ?? null,
+        order_source: row.order_source ?? row.orderSource ?? null,
         items: orderItems
       }
-
-      // Update orderItemsMap for filtering FIRST (normalize orderId to number)
-      // This ensures the filtering logic can find the items immediately
       if (!isNaN(normalizedOrderId) && orderItems.length > 0) {
-        setOrderItemsMap(prev => ({
-          ...prev,
-          [normalizedOrderId]: orderItems
-        }))
+        setOrderItemsMap(prev => ({ ...prev, [normalizedOrderId]: orderItems }))
       }
-
-      // Store orderDetails with normalized orderId for consistency
       setOrderDetails(prev => ({ ...prev, [normalizedOrderId]: details }))
     } catch (err) {
       console.error('Error loading order details:', err)
     } finally {
       setLoadingDetails(prev => ({ ...prev, [normalizedOrderId]: false }))
+    }
+  }
+
+  const handleRowClick = async (row) => {
+    const orderId = row.order_id || row.orderId
+    if (!orderId) return
+    const normalizedOrderId = parseInt(orderId)
+    if (isNaN(normalizedOrderId)) return
+
+    if (expandedRow === normalizedOrderId) {
+      setExpandedRow(null)
+      return
+    }
+    setExpandedRow(normalizedOrderId)
+    await loadOrderDetailsIfNeeded(row)
+  }
+
+  const CARDS_PER_ROW = isMobile ? 1 : 3
+
+  const handleCardClick = async (row, idx) => {
+    const rowIndex = Math.floor(idx / CARDS_PER_ROW)
+    if (expandedCardGridRow === rowIndex) {
+      setExpandedCardGridRow(null)
+      return
+    }
+    setExpandedCardGridRow(rowIndex)
+    const start = rowIndex * CARDS_PER_ROW
+    const end = Math.min(start + CARDS_PER_ROW, filteredData.length)
+    for (let i = start; i < end; i++) {
+      await loadOrderDetailsIfNeeded(filteredData[i])
     }
   }
 
@@ -880,8 +928,36 @@ function RecentOrders() {
     setHighlightedOrderId(null)
   }
 
-  // Filter data based on search query, order status, scanned order, and scanned products
+  // Filter data based on search query, order status, date range, scanned order, and scanned products
   let filteredData = processedData
+
+  // Filter by date range (today / week / month)
+  if (dateRange) {
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    let rangeStart
+    let rangeEnd
+    if (dateRange === 'today') {
+      rangeStart = todayStart
+      rangeEnd = todayStart + 24 * 60 * 60 * 1000
+    } else if (dateRange === 'week') {
+      const day = now.getDay()
+      const weekStart = new Date(now)
+      weekStart.setDate(now.getDate() - (day === 0 ? 6 : day - 1)) // Monday start
+      rangeStart = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()).getTime()
+      rangeEnd = rangeStart + 7 * 24 * 60 * 60 * 1000
+    } else {
+      rangeStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+      rangeEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime()
+    }
+    filteredData = filteredData.filter(row => {
+      const raw = row.order_date ?? row.orderDate
+      if (!raw) return false
+      const t = new Date(raw).getTime()
+      return t >= rangeStart && t < rangeEnd
+    })
+  }
+
 
   // First, filter by scanned order (receipt barcode) - show only that order
   if (scannedOrderId) {
@@ -1065,7 +1141,7 @@ function RecentOrders() {
   }
 
   // Fields to hide from main table (shown in dropdown); order_status/payment_* combined into Status column
-  const hiddenFields = ['order_id', 'orderId', 'employee_id', 'employeeId', 'customer_id', 'customerId', 'subtotal', 'tax_rate', 'tax_amount', 'tax', 'discount', 'discount_type', 'transaction_fee', 'notes', 'tip', 'receipt_type', 'receipt_email', 'receipt_phone', 'establishment_id', 'employee_name', 'order_status', 'payment_status', 'payment_method']
+  const hiddenFields = ['order_id', 'orderId', 'employee_id', 'employeeId', 'customer_id', 'customerId', 'subtotal', 'tax_rate', 'tax_amount', 'tax', 'discount', 'discount_type', 'transaction_fee', 'notes', 'tip', 'receipt_type', 'receipt_email', 'receipt_phone', 'establishment_id', 'employee_name', 'order_status', 'payment_status', 'payment_method', 'order_source', 'orderSource']
   
   // Status: In Progress (pickup/delivery when placed/being_made), Ready, Out for delivery (delivery only), Completed (in-person always; pickup/delivery when done)
   const getStatusLabel = (orderStatus, orderType) => {
@@ -1095,6 +1171,72 @@ function RecentOrders() {
     const needsPayment = isPickupOrDelivery && (paymentPending || (isUnpaidPhase && paymentStatus !== 'completed'))
     const paidOrUnpaid = isPickupOrDelivery ? (needsPayment ? ' - Unpaid' : ' - Paid') : ''
     return `${label}${paidOrUnpaid}`
+  }
+
+  // Next phase for status-phase modal: { nextStatus, label } or null if no next (completed/voided/returned)
+  const getNextPhase = (row) => {
+    const orderStatus = ((row.order_status ?? row.orderStatus) ?? 'completed').toLowerCase()
+    const orderType = ((row.order_type ?? row.orderType) ?? '').toLowerCase()
+    if (orderStatus === 'voided' || orderStatus === 'returned') return null
+    if (orderType === 'in-person' || orderType === 'inperson') return null
+    if (orderType === 'pickup' || orderType === 'delivery') {
+      if (orderStatus === 'placed' || orderStatus === 'being_made') return { nextStatus: 'ready', label: 'Ready' }
+      if (orderStatus === 'ready') return orderType === 'delivery' ? { nextStatus: 'out_for_delivery', label: 'Out for delivery' } : { nextStatus: 'completed', label: 'Completed' }
+      if (orderStatus === 'out_for_delivery') return { nextStatus: 'delivered', label: 'Delivered' }
+      if (orderStatus === 'delivered') return { nextStatus: 'completed', label: 'Completed' }
+    }
+    return null
+  }
+
+  const openStatusPhaseModal = (row, e) => {
+    if (e) e.stopPropagation()
+    const orderId = row.order_id ?? row.orderId
+    if (!orderId) return
+    const normalizedOrderId = parseInt(orderId)
+    if (isNaN(normalizedOrderId)) return
+    if (!getNextPhase(row)) return // no next phase, don't open
+    setStatusPhaseModal({ row, orderId: normalizedOrderId })
+    const hasItems = (orderDetails[normalizedOrderId]?.items ?? orderItemsMap[normalizedOrderId] ?? []).length > 0
+    if (!hasItems) loadOrderDetailsForModal(normalizedOrderId)
+  }
+
+  const loadOrderDetailsForModal = async (orderId) => {
+    setStatusPhaseModalLoadingItems(true)
+    try {
+      const itemsResponse = await fetch('/api/order_items')
+      const itemsResult = await itemsResponse.json()
+      const items = itemsResult.data || []
+      const orderItems = items.filter(item => parseInt(item.order_id || item.orderId) === orderId)
+      setOrderDetails(prev => ({ ...prev, [orderId]: { ...(prev[orderId] || {}), items: orderItems } }))
+      setOrderItemsMap(prev => ({ ...prev, [orderId]: orderItems }))
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setStatusPhaseModalLoadingItems(false)
+    }
+  }
+
+  const closeStatusPhaseModal = () => {
+    setStatusPhaseModal(null)
+    setStatusPhaseModalLoadingItems(false)
+  }
+
+  const confirmStatusPhaseMove = async () => {
+    if (!statusPhaseModal) return
+    const { row, orderId } = statusPhaseModal
+    const next = getNextPhase(row)
+    if (!next) return
+    setStatusUpdatingOrderId(orderId)
+    try {
+      await updateOrderStatus(orderId, next.nextStatus)
+      closeStatusPhaseModal()
+      await invalidateOrders()
+      setToast({ message: `Order moved to ${next.label}`, type: 'success' })
+    } catch (err) {
+      setToast({ message: 'Failed to update status', type: 'error' })
+    } finally {
+      setStatusUpdatingOrderId(null)
+    }
   }
 
   // Void option: only for orders that are unpaid (payment_status === 'pending', not voided).
@@ -1146,6 +1288,16 @@ function RecentOrders() {
     return formatted
   }
 
+  // Order source logo for DoorDash / Shopify / Uber Eats (order_source from API)
+  const getOrderSourceLogo = (row) => {
+    const raw = row?.order_source ?? row?.orderSource ?? (row && row['order_source']) ?? ''
+    const source = String(raw).toLowerCase().trim()
+    if (source === 'doordash') return { src: '/doordash-logo.svg', alt: 'DoorDash', textOnly: false }
+    if (source === 'shopify') return { src: '/shopify-logo.svg', alt: 'Shopify', textOnly: false }
+    if (source === 'uber_eats') return { src: '/uber-eats-logo.svg', alt: 'Uber Eats', textOnly: false }
+    return null
+  }
+
   // Filter out hidden fields and insert Status column (replacing order_status / payment_method)
   // Use default columns when loading so table headers are always visible
   const defaultVisibleColumns = ['order_number', 'order_date', 'order_type', 'customer_name', 'total']
@@ -1162,20 +1314,74 @@ function RecentOrders() {
   const pageMaxWidth = isMobile ? '100%' : '1400px'
 
   return (
-    <div
-      style={{
-        padding: pagePadding,
-        maxWidth: pageMaxWidth,
-        margin: '0 auto',
-        backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#ffffff',
-        boxSizing: 'border-box',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 0,
-        overflow: 'hidden'
-      }}
-    >
+    <>
+      {/* New order toast popup when an integration order arrives */}
+      {newOrderToast && createPortal(
+        (() => {
+          const toastLogo = getOrderSourceLogo({ order_source: newOrderToast.order_source })
+          const fromLabel = toastLogo ? toastLogo.alt : (newOrderToast.order_source || 'New order')
+          return (
+        <div
+          style={{
+            position: 'fixed',
+            top: '16px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10000,
+            padding: '14px 20px',
+            borderRadius: '12px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+            border: `2px solid rgba(${themeColorRgb}, 0.8)`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            maxWidth: '90vw',
+            animation: 'fadeIn 0.3s ease'
+          }}
+        >
+          {toastLogo && !toastLogo.textOnly && (
+            <img src={toastLogo.src} alt="" style={{ height: '28px', width: 'auto', maxWidth: '80px', objectFit: 'contain', flexShrink: 0 }} />
+          )}
+          <span style={{ fontWeight: 600, color: `rgba(${themeColorRgb}, 1)` }}>New order</span>
+          <span style={{ color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+            {newOrderToast.order_number} from {fromLabel}
+          </span>
+          <button
+            type="button"
+            onClick={() => setNewOrderToast(null)}
+            style={{
+              marginLeft: '8px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: 'none',
+              background: isDarkMode ? '#444' : '#eee',
+              color: isDarkMode ? '#fff' : '#333',
+              cursor: 'pointer',
+              fontSize: '13px'
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+          )
+        })(),
+        document.body
+      )}
+      <div
+        style={{
+          padding: pagePadding,
+          maxWidth: pageMaxWidth,
+          margin: '0 auto',
+          backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#ffffff',
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 0,
+          overflow: 'hidden'
+        }}
+      >
       <div style={{ flexShrink: 0, marginBottom: isMobile ? '12px' : '20px', paddingTop: isMobile ? '12px' : 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px', flexWrap: 'wrap' }}>
           <div style={{ 
@@ -1498,6 +1704,123 @@ function RecentOrders() {
                   </button>
                 )
               })}
+              {/* Date range: Today, Week, Month */}
+              {[
+                { value: 'today', label: 'Today' },
+                { value: 'week', label: 'Week' },
+                { value: 'month', label: 'Month' }
+              ].map(({ value, label }) => {
+                const isSelected = dateRange === value
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setDateRange(isSelected ? null : value)}
+                    style={{
+                      padding: isMobile ? '5px 10px' : '6px 14px',
+                      height: isMobile ? '28px' : '32px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                      fontSize: isMobile ? '13px' : '14px',
+                      backgroundColor: isSelected
+                        ? `rgba(${themeColorRgb}, 0.7)`
+                        : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                      border: isSelected
+                        ? `1px solid rgba(${themeColorRgb}, 0.5)`
+                        : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '8px',
+                      fontWeight: isSelected ? 600 : 500,
+                      color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                    }}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+              {/* View mode: Table | Cards */}
+              {[
+                { value: 'table', label: 'Table', icon: List },
+                { value: 'cards', label: 'Cards', icon: LayoutGrid }
+              ].map(({ value, label, icon: Icon }) => {
+                const isSelected = viewMode === value
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setViewMode(value)}
+                    style={{
+                      padding: isMobile ? '5px 10px' : '6px 14px',
+                      height: isMobile ? '28px' : '32px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      whiteSpace: 'nowrap',
+                      fontSize: isMobile ? '13px' : '14px',
+                      backgroundColor: isSelected
+                        ? `rgba(${themeColorRgb}, 0.7)`
+                        : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                      border: isSelected
+                        ? `1px solid rgba(${themeColorRgb}, 0.5)`
+                        : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                      borderRadius: '8px',
+                      fontWeight: isSelected ? 600 : 500,
+                      color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                      boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                    }}
+                  >
+                    <Icon size={16} />
+                    {label}
+                  </button>
+                )
+              })}
+              {/* Create 3 demo integration orders (Shopify, DoorDash, Uber Eats) */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setCreatingDemoOrders(true)
+                  try {
+                    const res = await fetch('/api/orders/create-demo-integration-orders', { method: 'POST' })
+                    const data = await res.json()
+                    if (data.success) {
+                      setToast({ message: data.message || 'Demo orders created', type: 'success' })
+                      await invalidateOrders()
+                      if (viewMode === 'cards') loadAllOrderItems()
+                    } else {
+                      setToast({ message: data.message || 'Failed to create demo orders', type: 'error' })
+                    }
+                  } catch (e) {
+                    setToast({ message: 'Failed to create demo orders', type: 'error' })
+                  } finally {
+                    setCreatingDemoOrders(false)
+                  }
+                }}
+                disabled={creatingDemoOrders}
+                style={{
+                  padding: isMobile ? '5px 10px' : '6px 14px',
+                  height: isMobile ? '28px' : '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  fontSize: isMobile ? '12px' : '13px',
+                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                  borderRadius: '8px',
+                  fontWeight: 500,
+                  color: isDarkMode ? 'var(--text-secondary)' : '#666',
+                  cursor: creatingDemoOrders ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+                title="Create 3 demo orders (Shopify, DoorDash, Uber Eats) to preview logos and layout"
+              >
+                {creatingDemoOrders ? 'Creating…' : 'Create demo orders'}
+              </button>
               {/* Filter button with dropdown */}
               <div ref={filterDropdownRef} style={{ position: 'relative', marginLeft: isMobile ? '0' : 'auto' }}>
                 <button
@@ -1657,12 +1980,17 @@ function RecentOrders() {
             )
           ) : data.data && data.data.length > 0 ? (
             <>
-            {isMobile ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {viewMode === 'cards' ? (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))',
+                gap: isMobile ? '10px' : '16px',
+                alignContent: 'start'
+              }}>
                 {filteredData.map((row, idx) => {
                   const orderId = row.order_id || row.orderId
                   const normalizedOrderId = parseInt(orderId)
-                  const isExpanded = expandedRow === normalizedOrderId
+                  const isExpanded = expandedCardGridRow !== null && Math.floor(idx / CARDS_PER_ROW) === expandedCardGridRow
                   const details = orderDetails[normalizedOrderId]
                   const isLoading = loadingDetails[normalizedOrderId]
                   // Order total should include tip (updated by process_payment). Fallback: add tip for legacy orders where total wasn't updated
@@ -1671,22 +1999,33 @@ function RecentOrders() {
                   const storedTotal = parseFloat(row.total) || 0
                   const totalVal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0))
                   const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
+                  const cardSource = String(row?.order_source ?? row?.orderSource ?? '').toLowerCase().trim()
+                  const cardOutline = cardSource === 'doordash' ? '2px solid #FF3008' : cardSource === 'shopify' ? '2px solid #5A863E' : cardSource === 'uber_eats' ? '2px solid #1a1a1a' : (isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee')
+                  const cardNextPhase = getNextPhase(row)
                   return (
                     <div
                       key={`order-${normalizedOrderId ?? 'n/a'}-${idx}`}
-                      onClick={() => handleRowClick(row)}
+                      onClick={() => handleCardClick(row, idx)}
                       style={{
                         backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
                         borderRadius: '10px',
                         padding: '14px',
                         boxShadow: isDarkMode ? '0 1px 4px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.08)',
-                        border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                        border: cardOutline,
                         cursor: 'pointer'
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-                        <span style={{ fontWeight: 600, fontSize: '15px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
-                          {row.order_number || `#${orderId}`}
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '15px', color: isDarkMode ? 'var(--text-primary)' : '#333', minWidth: 0 }}>
+                          {(() => {
+                            const logo = getOrderSourceLogo(row)
+                            if (!logo) return null
+                            if (logo.textOnly) {
+                              return <span key={`src-${normalizedOrderId}`} style={{ flexShrink: 0, fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>{logo.alt}</span>
+                            }
+                            return <img key={`logo-${normalizedOrderId}`} src={logo.src} alt={logo.alt} style={{ height: '18px', width: 'auto', maxWidth: '80px', minWidth: '20px', objectFit: 'contain', flexShrink: 0, display: 'block' }} />
+                          })()}
+                          <span style={{ flexShrink: 0 }}>{row.order_number || `#${orderId}`}</span>
                         </span>
                         <span style={{ fontSize: '14px', fontWeight: 600, color: `rgba(${themeColorRgb}, 1)` }}>{totalStr}</span>
                       </div>
@@ -1694,16 +2033,53 @@ function RecentOrders() {
                         <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
                           {formatOrderDate(row.order_date || row.orderDate || '')}
                         </span>
-                        <span style={{ ...getStatusPillStyle(row), padding: '4px 10px', fontSize: '12px' }}>
+                        <span
+                          role={cardNextPhase ? 'button' : undefined}
+                          onClick={cardNextPhase ? (e) => openStatusPhaseModal(row, e) : undefined}
+                          style={{
+                            ...getStatusPillStyle(row),
+                            padding: '4px 10px',
+                            fontSize: '12px',
+                            cursor: cardNextPhase ? 'pointer' : 'default'
+                          }}
+                        >
                           {getStatusDisplay(row)}
                         </span>
                       </div>
+                      {(row.prepare_by) && (
+                        <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginTop: '4px' }}>
+                          Prepare by: {formatOrderDate(row.prepare_by)}
+                        </div>
+                      )}
+                      {/* Purchased items list visible in card container */}
+                      {(() => {
+                        const cardItems = orderDetails[normalizedOrderId]?.items ?? orderItemsMap[normalizedOrderId] ?? []
+                        if (cardItems.length === 0) return null
+                        return (
+                          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '6px', textTransform: 'uppercase' }}>Items</div>
+                            <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555', lineHeight: 1.5 }}>
+                              {cardItems.slice(0, 5).map((item, i) => (
+                                <li key={i}>
+                                  {item.product_name || item.productName || 'Item'} ×{item.quantity || 0}
+                                </li>
+                              ))}
+                              {cardItems.length > 5 && (
+                                <li style={{ color: isDarkMode ? '#999' : '#888', fontSize: '12px' }}>+{cardItems.length - 5} more</li>
+                              )}
+                            </ul>
+                          </div>
+                        )
+                      })()}
                       {isExpanded && (
                         <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
                           {isLoading ? (
                             <div style={{ textAlign: 'center', padding: '12px', color: isDarkMode ? '#999' : '#999', fontSize: '13px' }}>Loading...</div>
                           ) : details ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                              {details.prepare_by && (
+                                <div style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Prepare by: {formatOrderDate(details.prepare_by)}</div>
+                              )}
                               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Subtotal</span>
                                 <span>${(parseFloat(details.subtotal) || 0).toFixed(2)}</span>
@@ -1883,6 +2259,7 @@ function RecentOrders() {
                         >
                           {visibleColumns.map(col => {
                             if (col === 'Status') {
+                              const nextPhase = getNextPhase(row)
                               return (
                                 <td
                                   key={col}
@@ -1890,8 +2267,12 @@ function RecentOrders() {
                                     padding: '8px 12px',
                                     borderBottom: '1px solid #eee',
                                     fontSize: '14px',
-                                    textAlign: 'left'
+                                    textAlign: 'left',
+                                    cursor: nextPhase ? 'pointer' : 'default'
                                   }}
+                                  onClick={nextPhase ? (e) => openStatusPhaseModal(row, e) : undefined}
+                                  role={nextPhase ? 'button' : undefined}
+                                  title={nextPhase ? `Move to ${nextPhase.label}` : undefined}
                                 >
                                   <span style={getStatusPillStyle(row)}>
                                     {getStatusDisplay(row)}
@@ -1913,6 +2294,7 @@ function RecentOrders() {
                             } else {
                               formattedValue = String(value)
                             }
+                            const sourceLogo = col === 'order_number' ? getOrderSourceLogo(row) : null
                             return (
                               <td
                                 key={col}
@@ -1924,7 +2306,16 @@ function RecentOrders() {
                                              col.includes('amount') || col.includes('fee')) ? 'right' : 'left'
                                 }}
                               >
-                                {formattedValue}
+                                {sourceLogo ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                    {sourceLogo.textOnly ? (
+                                      <span style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>{sourceLogo.alt}</span>
+                                    ) : (
+                                      <img src={sourceLogo.src} alt={sourceLogo.alt} style={{ height: '18px', width: 'auto', maxWidth: '80px', objectFit: 'contain' }} />
+                                    )}
+                                    {formattedValue}
+                                  </span>
+                                ) : formattedValue}
                               </td>
                             )
                           })}
@@ -2082,6 +2473,11 @@ function RecentOrders() {
                                     <div>
                                       <strong>Tip:</strong> ${(parseFloat(details.tip) || 0).toFixed(2)}
                                     </div>
+                                    {details.prepare_by && (
+                                      <div style={{ gridColumn: '1 / -1' }}>
+                                        <strong>Prepare by:</strong> {formatOrderDate(details.prepare_by)}
+                                      </div>
+                                    )}
                                     {/* Status / phase update for pickup & delivery */}
                                     <div style={{ gridColumn: '1 / -1', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid #dee2e6' }}>
                                       <strong>Status:</strong> {getStatusDisplay(details)}
@@ -2116,6 +2512,17 @@ function RecentOrders() {
                                           )}
                                           <option value="completed">Paid / Complete</option>
                                         </select>
+                                        {(details.order_source || details.orderSource) && (
+                                          <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
+                                            {(details.order_type || '').toLowerCase() === 'delivery' && (
+                                              <>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'out_for_delivery') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Out for delivery'}</button>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'delivered') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Shipped'}</button>
+                                              </>
+                                            )}
+                                          </span>
+                                        )}
                                         {((details.order_type || '').toLowerCase() === 'pickup' || (details.order_type || '').toLowerCase() === 'delivery') && (details.payment_status || 'completed').toLowerCase() === 'pending' && (
                                           <button
                                             type="button"
@@ -2254,7 +2661,82 @@ function RecentOrders() {
           )
         )}
       </div>
-      
+
+      {/* Status phase confirmation modal */}
+      {statusPhaseModal && (() => {
+        const { row, orderId } = statusPhaseModal
+        const next = getNextPhase(row)
+        const modalItems = orderDetails[orderId]?.items ?? orderItemsMap[orderId] ?? []
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1001
+            }}
+            onClick={closeStatusPhaseModal}
+          >
+            <div
+              style={{
+                ...(isDarkMode ? { backgroundColor: 'var(--bg-primary, #1a1a1a)' } : { backgroundColor: '#fff' }),
+                borderRadius: '8px',
+                padding: isMobile ? '16px' : '24px',
+                maxWidth: isMobile ? '95%' : '420px',
+                width: '100%',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.3)'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={formTitleStyle(isDarkMode)}>Move order to next phase</h3>
+              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>
+                Order <strong>{row.order_number ?? row.orderNumber ?? orderId}</strong> · Current: {getStatusDisplay(row)}
+              </div>
+              {next && (
+                <div style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '16px' }}>
+                  Next phase: <strong>{next.label}</strong>
+                </div>
+              )}
+              <FormField>
+                <FormLabel isDarkMode={isDarkMode}>Items in order</FormLabel>
+                {statusPhaseModalLoadingItems ? (
+                  <div style={{ padding: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>Loading items…</div>
+                ) : modalItems.length === 0 ? (
+                  <div style={{ padding: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>No items</div>
+                ) : (
+                  <ul style={{ margin: '0 0 0', paddingLeft: '20px', fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#444', lineHeight: 1.6 }}>
+                    {modalItems.map((item, idx) => (
+                      <li key={item.order_item_id ?? item.orderItemId ?? idx}>
+                        {(item.quantity ?? 1) > 1 ? `${item.quantity}x ` : ''}
+                        {item.product_name ?? item.productName ?? item.name ?? 'Item'}
+                        {item.variant_name || item.variantName ? ` (${item.variant_name ?? item.variantName})` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </FormField>
+              <CompactFormActions
+                onCancel={closeStatusPhaseModal}
+                onPrimary={confirmStatusPhaseMove}
+                primaryLabel={next && statusUpdatingOrderId === orderId ? 'Updating…' : (next ? `Move to ${next.label}` : 'Move')}
+                primaryDisabled={!next || statusUpdatingOrderId === orderId}
+                primaryType="button"
+                isDarkMode={isDarkMode}
+                themeColorRgb={themeColorRgb}
+              />
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Return Form Modal */}
       {order && (
         <div style={{
@@ -3200,7 +3682,8 @@ function RecentOrders() {
           <span>{toast.message}</span>
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }
 

@@ -2107,7 +2107,7 @@ def api_create_order():
             try:
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.execute("SELECT employee_id FROM employees WHERE is_active = 1 ORDER BY employee_id LIMIT 1")
+                cur.execute("SELECT employee_id FROM employees WHERE active = 1 ORDER BY employee_id LIMIT 1")
                 row = cur.fetchone()
                 conn.close()
                 employee_id = row[0] if row and isinstance(row, tuple) else (row.get('employee_id') if isinstance(row, dict) else None)
@@ -2187,7 +2187,9 @@ def api_create_order():
             transaction_fee_rates=fee_rates,
             payment_status=pay_status,
             order_status_override=order_status_val,
-            discount_type=(data.get('discount_type') or '').strip() or None
+            discount_type=(data.get('discount_type') or '').strip() or None,
+            order_source=(data.get('order_source') or '').strip() or None,
+            prepare_by=data.get('prepare_by'),
         )
         
         # Post to accounting only when order was paid (not pay-later)
@@ -3051,8 +3053,16 @@ def api_orders():
                 total = count_orders(order_status=order_status or None, order_status_in=order_status_in, order_type_in=order_type_in)
                 out['total'] = total
             return jsonify(out)
-        
+        # Ensure every order has order_source and prepare_by (for logos in table/cards)
+        for o in orders:
+            if isinstance(o, dict):
+                o.setdefault('order_source', None)
+                o.setdefault('prepare_by', None)
         columns = list(orders[0].keys())
+        if 'order_source' not in columns:
+            columns.append('order_source')
+        if 'prepare_by' not in columns:
+            columns.append('prepare_by')
         out = {'columns': columns, 'data': orders}
         if limit is not None:
             total = count_orders(order_status=order_status or None, order_status_in=order_status_in, order_type_in=order_type_in)
@@ -3208,6 +3218,256 @@ def api_update_order_status(order_id):
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations', methods=['GET'])
+def api_get_integrations():
+    """List integrations (Shopify, DoorDash, Uber Eats) for current establishment."""
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        rows = get_integrations(establishment_id)
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations', methods=['POST'])
+def api_save_integrations():
+    """Save integration config. Body: { provider: 'shopify'|'doordash'|'uber_eats', enabled: bool, config: {} }."""
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        data = request.get_json() or {}
+        provider = (data.get('provider') or '').strip().lower()
+        if provider not in ('shopify', 'doordash', 'uber_eats'):
+            return jsonify({'success': False, 'message': 'Invalid provider'}), 400
+        enabled = bool(data.get('enabled', False))
+        config = data.get('config')
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            config = {}
+        from database import upsert_integration
+        result = upsert_integration(establishment_id, provider, enabled, config)
+        if result.get('success'):
+            return jsonify(result), 200
+        return jsonify(result), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/orders/from-integration', methods=['POST'])
+def api_orders_from_integration():
+    """Create an order from an integration (webhook or manual). Body: order_source, prepare_by_iso, customer_*, order_type, items, totals."""
+    try:
+        data = request.get_json() or {}
+        order_source = (data.get('order_source') or '').strip().lower()
+        if order_source not in ('shopify', 'doordash', 'uber_eats'):
+            return jsonify({'success': False, 'message': 'order_source must be shopify, doordash, or uber_eats'}), 400
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations, create_order, get_connection
+        from psycopg2.extras import RealDictCursor
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == order_source and i.get('enabled')), None)
+        price_multiplier = 1.0
+        if integration and isinstance(integration.get('config'), dict):
+            price_multiplier = float(integration['config'].get('price_multiplier', 1) or 1)
+        items = data.get('items') or []
+        if not items:
+            return jsonify({'success': False, 'message': 'items required'}), 400
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute("SELECT employee_id FROM employees WHERE active = 1 ORDER BY employee_id LIMIT 1")
+            row = cur.fetchone()
+            employee_id = (row.get('employee_id') if row and isinstance(row, dict) else (row[0] if row else None))
+        finally:
+            conn.close()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'No active employee'}), 400
+        order_items = []
+        for it in items:
+            product_id = it.get('product_id')
+            if product_id is None:
+                return jsonify({'success': False, 'message': f'item missing product_id: {it}'}), 400
+            qty = int(it.get('quantity', 1) or 1)
+            unit_price = float(it.get('unit_price', 0) or 0) * price_multiplier
+            order_items.append({
+                'product_id': int(product_id),
+                'quantity': qty,
+                'unit_price': unit_price,
+                'discount': float(it.get('discount', 0) or 0),
+                'tax_rate': float(it.get('tax_rate', 0) or 0),
+            })
+        prepare_by_iso = data.get('prepare_by_iso') or data.get('prepare_by')
+        customer_info = {
+            'name': (data.get('customer_name') or '').strip() or 'Integration Customer',
+            'phone': (data.get('customer_phone') or '').strip() or None,
+            'email': (data.get('customer_email') or '').strip() or None,
+            'address': (data.get('customer_address') or '').strip() or None,
+        }
+        order_type = (data.get('order_type') or 'delivery').strip().lower()
+        if order_type not in ('pickup', 'delivery'):
+            order_type = 'delivery'
+        settings = get_establishment_settings(None)
+        tax_rate = float(data.get('tax_rate') or settings.get('default_sales_tax_pct') or 0) / 100.0
+        if tax_rate <= 0:
+            tax_rate = 0.08
+        result = create_order(
+            employee_id=employee_id,
+            items=order_items,
+            payment_method='mobile_payment',
+            tax_rate=tax_rate,
+            discount=float(data.get('discount', 0) or 0),
+            customer_id=None,
+            tip=float(data.get('tip', 0) or 0),
+            order_type=order_type,
+            customer_info=customer_info,
+            payment_status='completed',
+            order_status_override='placed',
+            order_source=order_source,
+            prepare_by=prepare_by_iso,
+        )
+        if result.get('success') and result.get('order_id'):
+            return jsonify({
+                'success': True,
+                'order_id': result['order_id'],
+                'order_number': result.get('order_number'),
+                'message': 'Order created from integration',
+            }), 201
+        return jsonify(result or {'success': False, 'message': 'Create failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/orders/create-demo-integration-orders', methods=['POST'])
+def api_create_demo_integration_orders():
+    """Create 3 demo orders (Shopify, DoorDash, Uber Eats) for recent orders preview."""
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_connection, create_order
+        from psycopg2.extras import RealDictCursor
+        from datetime import datetime, timedelta
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute("""
+                SELECT product_id, product_price, product_name
+                FROM inventory
+                WHERE establishment_id = %s AND current_quantity > 0
+                ORDER BY product_id LIMIT 1
+            """, (establishment_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'success': False, 'message': 'Add at least one product with stock to create demo orders'}), 400
+            product_id = row['product_id']
+            unit_price = float(row['product_price'] or 9.99)
+            product_name = row.get('product_name') or 'Demo Item'
+            cur.execute("SELECT employee_id FROM employees WHERE active = 1 ORDER BY employee_id LIMIT 1")
+            emp_row = cur.fetchone()
+            employee_id = (emp_row.get('employee_id') if emp_row and isinstance(emp_row, dict) else (emp_row[0] if emp_row else None))
+        finally:
+            conn.close()
+        if not employee_id:
+            return jsonify({'success': False, 'message': 'No active employee'}), 400
+        items = [{'product_id': product_id, 'quantity': 1, 'unit_price': unit_price}]
+        prepare_by = (datetime.utcnow() + timedelta(minutes=45)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        created = []
+        # Ensure order_source column exists so demo orders show Shopify / DoorDash / Uber Eats (not in-house)
+        conn2 = get_connection()
+        cur2 = conn2.cursor()
+        cur2.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'order_source'
+        """)
+        has_order_source_col = cur2.fetchone() is not None
+        cur2.close()
+        conn2.close()
+        if not has_order_source_col:
+            return jsonify({
+                'success': False,
+                'message': 'Run migration first: migrations/add_orders_order_source.sql (adds order_source column so demo orders show Shopify, DoorDash, Uber Eats)',
+            }), 400
+        for order_source in ('shopify', 'doordash', 'uber_eats'):
+            result = create_order(
+                employee_id=employee_id,
+                items=items,
+                payment_method='mobile_payment',
+                tax_rate=0.08,
+                discount=0,
+                customer_id=None,
+                tip=2.0,
+                order_type='delivery',
+                customer_info={
+                    'name': f'Demo Customer ({order_source.replace("_", " ").title()})',
+                    'phone': '555-0100',
+                    'address': '123 Demo St',
+                },
+                payment_status='completed',
+                order_status_override='placed',
+                order_source=order_source,
+                prepare_by=prepare_by,
+            )
+            if result.get('success') and result.get('order_id'):
+                oid = result['order_id']
+                # Explicitly set order_source so demo always shows Shopify / DoorDash / Uber Eats
+                try:
+                    conn3 = get_connection()
+                    cur3 = conn3.cursor()
+                    cur3.execute("UPDATE orders SET order_source = %s WHERE order_id = %s", (order_source, oid))
+                    conn3.commit()
+                    cur3.close()
+                    conn3.close()
+                except Exception:
+                    pass
+                created.append({'order_source': order_source, 'order_id': oid, 'order_number': result.get('order_number')})
+        return jsonify({'success': True, 'message': f'Created {len(created)} demo orders (Shopify, DoorDash, Uber Eats)', 'orders': created}), 201
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/orders/latest')
+def api_orders_latest():
+    """Return the most recent order id (for new-order polling / toast)."""
+    try:
+        from database import list_orders
+        orders = list_orders(limit=1, offset=0)
+        if not orders:
+            return jsonify({'order_id': None, 'order_number': None})
+        o = orders[0]
+        return jsonify({
+            'order_id': o.get('order_id'),
+            'order_number': o.get('order_number'),
+            'order_source': o.get('order_source'),
+            'order_date': o.get('order_date'),
+        })
+    except Exception as e:
+        return jsonify({'order_id': None, 'message': str(e)}), 500
+
 
 @app.route('/api/order_items')
 def api_order_items():

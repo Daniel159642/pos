@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
+import { usePageScroll } from '../contexts/PageScrollContext'
 import BarcodeScanner from '../components/BarcodeScanner'
 import { Truck, List, Clock, CheckCircle, Plus, FileText, ChevronDown, ScanBarcode, PackageOpen, X, Save, Minus, PanelLeft, AlertTriangle, Check, Camera, Package } from 'lucide-react'
 import { FormTitle, FormLabel, FormField, inputBaseStyle, getInputFocusHandlers, formLabelStyle } from '../components/FormStyles'
@@ -3223,6 +3224,7 @@ function CustomDropdown({ value, onChange, options, placeholder, required, isDar
 
 function UploadShipmentForm({ onClose, onSuccess }) {
   const { themeMode, themeColor } = useTheme()
+  const { setDisableScroll } = usePageScroll()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [vendors, setVendors] = useState([])
@@ -3389,6 +3391,12 @@ function UploadShipmentForm({ onClose, onSuccess }) {
       }
     }
   }, [previewData])
+
+  // Disable page scroll when in Review Data (only the two containers should scroll)
+  useEffect(() => {
+    setDisableScroll(!!previewData)
+    return () => setDisableScroll(false)
+  }, [previewData, setDisableScroll])
 
   // Measure PDF viewer container width for responsive page width
   useEffect(() => {
@@ -3748,7 +3756,14 @@ function UploadShipmentForm({ onClose, onSuccess }) {
     const isCsv = previewData.filename.toLowerCase().endsWith('.csv')
 
   return (
-    <>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: 'calc(100vh - 120px)',
+      overflow: 'hidden',
+      minHeight: 0,
+      paddingTop: '48px'
+    }}>
         <style>{`
           .file-preview-container .react-pdf__Page__textContent,
           .file-preview-container .textLayer {
@@ -3780,10 +3795,10 @@ function UploadShipmentForm({ onClose, onSuccess }) {
             .preview-container {
               flex-direction: column !important;
               height: auto !important;
-              min-height: auto !important;
+              min-height: 300px !important;
             }
             .preview-container > div {
-              min-height: 400px;
+              min-height: 300px;
               max-width: 500px;
               width: 100%;
               margin: 0 auto;
@@ -3796,7 +3811,7 @@ function UploadShipmentForm({ onClose, onSuccess }) {
             }
           }
         `}</style>
-        <FormTitle isDarkMode={isDarkMode}>
+        <FormTitle isDarkMode={isDarkMode} style={{ flexShrink: 0, marginBottom: '8px' }}>
           Review Data
         </FormTitle>
 
@@ -3808,7 +3823,8 @@ function UploadShipmentForm({ onClose, onSuccess }) {
             borderRadius: '8px',
             marginBottom: '24px',
             fontSize: '14px',
-            border: isDarkMode ? '1px solid rgba(244, 67, 54, 0.3)' : '1px solid #ffcdd2'
+            border: isDarkMode ? '1px solid rgba(244, 67, 54, 0.3)' : '1px solid #ffcdd2',
+            flexShrink: 0
           }}>
             {error}
           </div>
@@ -3817,12 +3833,15 @@ function UploadShipmentForm({ onClose, onSuccess }) {
         <div className="preview-container" style={{
           display: 'flex',
           gap: '24px',
-          height: 'calc(100vh - 250px)',
-          minHeight: '600px'
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden'
         }}>
           {/* Left side: Editable data table */}
           <div className="scraped-items-container" style={{
-            flex: '1',
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
             border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
             borderRadius: '8px',
             overflow: 'hidden',
@@ -3840,7 +3859,8 @@ function UploadShipmentForm({ onClose, onSuccess }) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '12px'
+              gap: '12px',
+              flexShrink: 0
             }}>
               <span>Items ({editingItems.length})</span>
               <button
@@ -3874,6 +3894,7 @@ function UploadShipmentForm({ onClose, onSuccess }) {
             <div 
               style={{
                 flex: 1,
+                minHeight: 0,
                 overflow: 'auto',
                 padding: '16px'
               }}
@@ -4360,11 +4381,15 @@ function UploadShipmentForm({ onClose, onSuccess }) {
 
           {/* Right side: File viewer */}
           <div className="file-preview-container" style={{
-            flex: '1',
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
             border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
             borderRadius: '8px',
             overflow: 'hidden',
-            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f9f9f9'
+            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f9f9f9',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
             <div style={{
               padding: '12px 16px',
@@ -4372,12 +4397,14 @@ function UploadShipmentForm({ onClose, onSuccess }) {
               backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
               fontWeight: 600,
               fontSize: '14px',
-              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+              flexShrink: 0
             }}>
               {previewData.filename}
             </div>
             <div style={{
-              height: 'calc(100% - 49px)',
+              flex: 1,
+              minHeight: 0,
               overflow: 'auto',
               padding: isPdf ? '0' : '16px'
             }}>
@@ -4575,12 +4602,12 @@ function UploadShipmentForm({ onClose, onSuccess }) {
           </div>
         </div>
         <div style={{
-          padding: '16px',
-          borderTop: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+          padding: '12px 16px',
           backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
           display: 'flex',
           gap: '12px',
-          justifyContent: 'flex-end'
+          justifyContent: 'flex-end',
+          flexShrink: 0
         }}>
           <button
             type="button"
@@ -4677,7 +4704,7 @@ function UploadShipmentForm({ onClose, onSuccess }) {
             <span>{toast.message}</span>
           </div>
         )}
-      </>
+      </div>
     )
   }
 

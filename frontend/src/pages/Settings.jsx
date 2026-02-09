@@ -35,7 +35,8 @@ import {
   Package,
   MoreVertical,
   RefreshCw,
-  Shield
+  Shield,
+  Plug
 } from 'lucide-react'
 import BarcodeScanner from '../components/BarcodeScanner'
 import AdminDashboard from '../components/AdminDashboard'
@@ -1183,7 +1184,7 @@ function ReceiptPreview({ settings, id = 'receipt-preview-print', onSectionClick
   )
 }
 
-const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'admin']
+const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'integration', 'admin']
 
 const NO_PERMISSION_MSG = "You don't have permission"
 const EMPLOYEE_ALLOWED_SETTINGS_TABS = ['cash', 'location'] // Employee can only open Cash Register and Store Information (location read-only)
@@ -1255,6 +1256,74 @@ function Settings() {
   const [receiptNewTemplateName, setReceiptNewTemplateName] = useState('')
   const receiptTemplateDropdownRef = useRef(null)
   const receiptNewTemplateInputRef = useRef(null)
+
+  // Integrations (Shopify, DoorDash, Uber Eats)
+  const [integrations, setIntegrations] = useState({
+    shopify: { enabled: false, config: { api_key: '', store_url: '', price_multiplier: 1 } },
+    doordash: { enabled: false, config: { api_key: '', price_multiplier: 1 } },
+    uber_eats: { enabled: false, config: { api_key: '', price_multiplier: 1 } }
+  })
+  const [integrationsLoading, setIntegrationsLoading] = useState(false)
+  const [integrationsSaving, setIntegrationsSaving] = useState(null) // 'shopify' | 'doordash' | 'uber_eats' | null
+  useEffect(() => {
+    if (activeTab !== 'integration') return
+    setIntegrationsLoading(true)
+    cachedFetch('/api/integrations')
+      .then(res => res.json())
+      .then((result) => {
+        if (result.success && Array.isArray(result.data)) {
+          const next = {
+            shopify: { enabled: false, config: { api_key: '', store_url: '', price_multiplier: 1 } },
+            doordash: { enabled: false, config: { api_key: '', price_multiplier: 1 } },
+            uber_eats: { enabled: false, config: { api_key: '', price_multiplier: 1 } }
+          }
+          result.data.forEach((row) => {
+            const p = (row.provider || '').toLowerCase()
+            if (p === 'shopify' || p === 'doordash' || p === 'uber_eats') {
+              const c = row.config && typeof row.config === 'object' ? row.config : {}
+              next[p] = {
+                enabled: !!row.enabled,
+                config: {
+                  api_key: c.api_key || '',
+                  store_url: c.store_url || '',
+                  price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1
+                }
+              }
+            }
+          })
+          setIntegrations(next)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIntegrationsLoading(false))
+  }, [activeTab])
+
+  const saveIntegration = async (provider) => {
+    setIntegrationsSaving(provider)
+    const state = integrations[provider]
+    try {
+      const res = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          enabled: state.enabled,
+          config: state.config
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        showToast('Integration saved', 'success')
+      } else {
+        showToast(data.message || 'Failed to save', 'error')
+      }
+    } catch (e) {
+      showToast('Failed to save integration', 'error')
+    } finally {
+      setIntegrationsSaving(null)
+    }
+  }
+
   useEffect(() => {
     if (receiptEditModalOpen) {
       setReceiptUndoStack([])
@@ -2985,6 +3054,7 @@ function Settings() {
     { id: 'cash', label: 'Cash Register', icon: DollarSign },
     { id: 'notifications', label: 'Notifications', icon: MessageSquare },
     { id: 'rewards', label: 'Customer Rewards', icon: Gift },
+    { id: 'integration', label: 'Integrations', icon: Plug },
     ...(hasAdminAccess ? [{ id: 'admin', label: 'Admin', icon: Shield }] : [])
   ]
 
@@ -3239,7 +3309,7 @@ function Settings() {
           ) : (
             <>
           {/* Save Button - Hidden for location, cash, and pos tabs (pos has its own at bottom) */}
-          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'admin' && (
+          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'integration' && activeTab !== 'admin' && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               <button
                 type="button"
@@ -6629,6 +6699,131 @@ function Settings() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {/* Blank tab - content can be added later */}
           </div>
+        </div>
+      )}
+
+      {/* Integrations Tab */}
+      {activeTab === 'integration' && (
+        <div style={{ maxWidth: '720px' }}>
+          <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '8px' }}>
+            Integrations
+          </FormTitle>
+          <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
+            Connect Shopify, DoorDash, and Uber Eats. When an order is placed, it will appear on Recent Orders with pay breakdown. You can set custom prices per channel and update status (ready, out for delivery, shipped) for all apps.
+          </p>
+          {integrationsLoading ? (
+            <div style={{ padding: '24px', color: isDarkMode ? '#999' : '#666' }}>Loading…</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {[
+              { id: 'shopify', label: 'Shopify', extra: 'Store URL' },
+              { id: 'doordash', label: 'DoorDash' },
+              { id: 'uber_eats', label: 'Uber Eats' }
+            ].map(({ id, label, extra }) => {
+              const state = integrations[id] || { enabled: false, config: {} }
+              const config = state.config || {}
+              const integrationLogo = id === 'shopify' ? '/shopify.svg' : id === 'doordash' ? '/doordash.svg' : id === 'uber_eats' ? '/uber-15.svg' : null
+              return (
+                <div
+                  key={id}
+                  style={{
+                    padding: '20px',
+                    borderRadius: '12px',
+                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600, fontSize: '16px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+                      {integrationLogo && (
+                        <img src={integrationLogo} alt="" style={{ height: '24px', width: 'auto', maxWidth: '72px', objectFit: 'contain' }} />
+                      )}
+                      {label}
+                    </span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Enable</span>
+                      <input
+                        type="checkbox"
+                        checked={!!state.enabled}
+                        onChange={() => setIntegrations(prev => ({
+                          ...prev,
+                          [id]: { ...prev[id], enabled: !prev[id].enabled }
+                        }))}
+                      />
+                    </label>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <FormField isDarkMode={isDarkMode} label="API Key / Access Token">
+                      <input
+                        type="password"
+                        value={config.api_key || ''}
+                        onChange={(e) => setIntegrations(prev => ({
+                          ...prev,
+                          [id]: {
+                            ...prev[id],
+                            config: { ...(prev[id].config || {}), api_key: e.target.value }
+                          }
+                        }))}
+                        placeholder={id === 'shopify' ? 'Admin API access token' : 'API key'}
+                        style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                      />
+                    </FormField>
+                    {extra === 'Store URL' && (
+                      <FormField isDarkMode={isDarkMode} label="Store URL">
+                        <input
+                          type="text"
+                          value={config.store_url || ''}
+                          onChange={(e) => setIntegrations(prev => ({
+                            ...prev,
+                            [id]: {
+                              ...prev[id],
+                              config: { ...(prev[id].config || {}), store_url: e.target.value }
+                            }
+                          }))}
+                          placeholder="https://your-store.myshopify.com"
+                          style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                        />
+                      </FormField>
+                    )}
+                    <FormField isDarkMode={isDarkMode} label="Price multiplier (e.g. 1.0 = 100%, 1.1 = 10% markup)">
+                      <input
+                        type="number"
+                        min="0.5"
+                        max="3"
+                        step="0.01"
+                        value={config.price_multiplier ?? 1}
+                        onChange={(e) => setIntegrations(prev => ({
+                          ...prev,
+                          [id]: {
+                            ...prev[id],
+                            config: { ...(prev[id].config || {}), price_multiplier: parseFloat(e.target.value) || 1 }
+                          }
+                        }))}
+                        style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                      />
+                    </FormField>
+                    <div style={{ marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => saveIntegration(id)}
+                        disabled={integrationsSaving === id}
+                        style={{
+                          ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb),
+                          padding: '8px 16px'
+                        }}
+                      >
+                        {integrationsSaving === id ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+            </div>
+          )}
+          <p style={{ fontSize: '13px', color: isDarkMode ? '#888' : '#999', marginTop: '24px' }}>
+            Webhook URL for incoming orders: <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '2px 6px', borderRadius: '4px' }}>{typeof window !== 'undefined' ? `${window.location.origin}/api/orders/from-integration` : '/api/orders/from-integration'}</code>. Use your integration partner’s dashboard to send orders to this URL with JSON body: order_source, prepare_by_iso, customer_*, order_type, items (product_id, quantity, unit_price).
+          </p>
         </div>
       )}
 

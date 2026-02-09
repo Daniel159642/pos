@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import { PermissionProvider, usePermissions } from './contexts/PermissionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { ToastProvider, useToast } from './contexts/ToastContext'
+import { PageScrollProvider, usePageScroll } from './contexts/PageScrollContext'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Settings, User, LogOut } from 'lucide-react'
 import Login from './components/Login'
@@ -320,6 +321,7 @@ function Layout({ children, employee, onLogout }) {
   const navigate = useNavigate()
   const { hasPermission } = usePermissions()
   const { isOnline, isSyncing, pendingCount } = useOffline()
+  const { disableScroll } = usePageScroll()
   const showBanner = !isOnline || isSyncing || pendingCount > 0
 
   useEffect(() => {
@@ -457,7 +459,7 @@ function Layout({ children, employee, onLogout }) {
         style={{
           flex: 1,
           minHeight: 0,
-          overflowY: 'auto',
+          overflowY: disableScroll ? 'hidden' : 'auto',
           overscrollBehavior: 'none',
           WebkitOverflowScrolling: 'touch',
           paddingTop: contentTop,
@@ -589,6 +591,7 @@ function App() {
     <BrowserRouter>
       <ThemeProvider>
         <ToastProvider>
+          <PageScrollProvider>
           <PermissionProvider initialEmployee={employee}>
             <AppContent
             sessionToken={sessionToken}
@@ -599,6 +602,7 @@ function App() {
             sessionVerifying={sessionVerifying}
           />
           </PermissionProvider>
+          </PageScrollProvider>
         </ToastProvider>
       </ThemeProvider>
     </BrowserRouter>
