@@ -36,7 +36,8 @@ import {
   MoreVertical,
   RefreshCw,
   Shield,
-  Plug
+  Plug,
+  Database
 } from 'lucide-react'
 import BarcodeScanner from '../components/BarcodeScanner'
 import AdminDashboard from '../components/AdminDashboard'
@@ -1184,7 +1185,7 @@ function ReceiptPreview({ settings, id = 'receipt-preview-print', onSectionClick
   )
 }
 
-const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'integration', 'admin']
+const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'integration', 'migrations', 'admin']
 
 const NO_PERMISSION_MSG = "You don't have permission"
 const EMPLOYEE_ALLOWED_SETTINGS_TABS = ['cash', 'location'] // Employee can only open Cash Register and Store Information (location read-only)
@@ -1242,6 +1243,182 @@ async function playNewOrderSound() {
     osc.start(ctx.currentTime)
     osc.stop(ctx.currentTime + 0.2)
   } catch (_) {}
+}
+
+function SquareMigrationCard({ isDarkMode, themeColorRgb, showToast, compactPrimaryButtonStyle, inputBaseStyle, getInputFocusHandlers, FormField, FormLabel }) {
+  const [squareAccessToken, setSquareAccessToken] = useState('')
+  const [squareSandbox, setSquareSandbox] = useState(false)
+  const [migrateOptions, setMigrateOptions] = useState({
+    inventory: true,
+    employees: true,
+    order_history: true,
+    payments: true,
+    transactions: true,
+    statistics: true
+  })
+  const [verifyLoading, setVerifyLoading] = useState(false)
+  const [migrateLoading, setMigrateLoading] = useState(false)
+  const [verifyStatus, setVerifyStatus] = useState(null) // { success, message } or null
+  const [migrateResult, setMigrateResult] = useState(null) // { inventory, employees, orders, payments, error }
+
+  const toggleOption = (key) => {
+    setMigrateOptions(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const verifySquare = async () => {
+    if (!squareAccessToken.trim()) {
+      showToast('Enter your Square access token', 'error')
+      return
+    }
+    setVerifyLoading(true)
+    setVerifyStatus(null)
+    try {
+      const res = await fetch('/api/migrations/square/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_token: squareAccessToken.trim(), sandbox: squareSandbox })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setVerifyStatus({ success: true, message: data.message || 'Connected successfully' })
+        showToast(data.message || 'Square connected', 'success')
+      } else {
+        setVerifyStatus({ success: false, message: data.message || 'Connection failed' })
+        showToast(data.message || 'Verification failed', 'error')
+      }
+    } catch (e) {
+      const msg = e.message || 'Network error'
+      setVerifyStatus({ success: false, message: msg })
+      showToast(msg, 'error')
+    } finally {
+      setVerifyLoading(false)
+    }
+  }
+
+  const runMigration = async () => {
+    if (!squareAccessToken.trim()) {
+      showToast('Enter your Square access token first', 'error')
+      return
+    }
+    const any = Object.values(migrateOptions).some(Boolean)
+    if (!any) {
+      showToast('Select at least one data type to migrate', 'error')
+      return
+    }
+    setMigrateLoading(true)
+    setMigrateResult(null)
+    try {
+      const res = await fetch('/api/migrations/square/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token: squareAccessToken.trim(),
+          sandbox: squareSandbox,
+          migrate: migrateOptions
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setMigrateResult(data)
+        showToast('Migration completed', 'success')
+      } else {
+        setMigrateResult({ error: data.message })
+        showToast(data.message || 'Migration failed', 'error')
+      }
+    } catch (e) {
+      const msg = e.message || 'Network error'
+      setMigrateResult({ error: msg })
+      showToast(msg, 'error')
+    } finally {
+      setMigrateLoading(false)
+    }
+  }
+
+  return (
+    <div style={{
+      padding: '20px',
+      borderRadius: '12px',
+      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+      backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', fontWeight: 600, fontSize: '16px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+        <span style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #006AFF 0%, #00C2FF 100%)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px' }}>Sq</span>
+        Square
+      </div>
+      <FormField isDarkMode={isDarkMode} label="Access token">
+        <input
+          type="password"
+          value={squareAccessToken}
+          onChange={(e) => setSquareAccessToken(e.target.value)}
+          placeholder="Square API access token (from Developer Dashboard)"
+          style={inputBaseStyle(isDarkMode, themeColorRgb)}
+          {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+        />
+      </FormField>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+        <input
+          type="checkbox"
+          id="square-sandbox"
+          checked={squareSandbox}
+          onChange={(e) => setSquareSandbox(e.target.checked)}
+        />
+        <FormLabel isDarkMode={isDarkMode} htmlFor="square-sandbox" style={{ margin: 0 }}>Use Square Sandbox</FormLabel>
+      </div>
+      <div style={{ marginBottom: '16px' }}>
+        <button
+          type="button"
+          onClick={verifySquare}
+          disabled={verifyLoading || !squareAccessToken.trim()}
+          style={{ ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb), padding: '8px 16px' }}
+        >
+          {verifyLoading ? 'Verifying…' : 'Verify connection'}
+        </button>
+        {verifyStatus && (
+          <span style={{ marginLeft: '12px', fontSize: '14px', color: verifyStatus.success ? (isDarkMode ? '#86efac' : '#166534') : (isDarkMode ? '#fca5a5' : '#b91c1c') }}>
+            {verifyStatus.message}
+          </span>
+        )}
+      </div>
+      <FormLabel isDarkMode={isDarkMode} style={{ display: 'block', marginBottom: '10px' }}>Data to migrate</FormLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+        {[
+          { key: 'inventory', label: 'Inventory (catalog items & quantities)' },
+          { key: 'employees', label: 'Employees (team members)' },
+          { key: 'order_history', label: 'Order history' },
+          { key: 'payments', label: 'Payments' },
+          { key: 'transactions', label: 'Transactions (payment transactions)' },
+          { key: 'statistics', label: 'Statistics (summary from Square)' }
+        ].map(({ key, label }) => (
+          <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>
+            <input
+              type="checkbox"
+              checked={!!migrateOptions[key]}
+              onChange={() => toggleOption(key)}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={runMigration}
+        disabled={migrateLoading || !squareAccessToken.trim()}
+        style={{ ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb), padding: '10px 20px' }}
+      >
+        {migrateLoading ? 'Migrating…' : 'Start migration'}
+      </button>
+      {migrateResult && !migrateResult.error && (migrateResult.inventory !== undefined || migrateResult.employees !== undefined || migrateResult.orders !== undefined || migrateResult.payments !== undefined) && (
+        <div style={{ marginTop: '16px', padding: '12px', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(34,197,94,0.15)' : 'rgba(34,197,94,0.1)', fontSize: '14px', color: isDarkMode ? '#86efac' : '#166534' }}>
+          Migrated: Inventory {migrateResult.inventory ?? 0} · Employees {migrateResult.employees ?? 0} · Orders {migrateResult.orders ?? 0} · Payments {migrateResult.payments ?? 0}
+        </div>
+      )}
+      {migrateResult?.error && (
+        <div style={{ marginTop: '16px', padding: '12px', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.1)', fontSize: '14px', color: isDarkMode ? '#fca5a5' : '#b91c1c' }}>
+          {migrateResult.error}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function Settings() {
@@ -1327,6 +1504,7 @@ function Settings() {
   })
   const [integrationsLoading, setIntegrationsLoading] = useState(false)
   const [integrationsSaving, setIntegrationsSaving] = useState(null) // 'shopify' | 'doordash' | 'uber_eats' | null
+  const [shopifySyncLoading, setShopifySyncLoading] = useState(false)
   useEffect(() => {
     if (activeTab !== 'integration') return
     setIntegrationsLoading(true)
@@ -1348,7 +1526,10 @@ function Settings() {
                 config: {
                   api_key: c.api_key || '',
                   store_url: c.store_url || '',
-                  price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1
+                  price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1,
+                  webhook_secret: c.webhook_secret || '',
+                  last_synced_at: c.last_synced_at,
+                  last_synced_order_id: c.last_synced_order_id
                 }
               }
             }
@@ -1363,6 +1544,8 @@ function Settings() {
   const saveIntegration = async (provider) => {
     setIntegrationsSaving(provider)
     const state = integrations[provider]
+    const configToSend = { ...(state.config || {}) }
+    if (provider === 'shopify' && configToSend.webhook_secret === '') delete configToSend.webhook_secret
     try {
       const res = await fetch('/api/integrations', {
         method: 'POST',
@@ -1370,7 +1553,7 @@ function Settings() {
         body: JSON.stringify({
           provider,
           enabled: state.enabled,
-          config: state.config
+          config: configToSend
         })
       })
       const data = await res.json()
@@ -1378,6 +1561,15 @@ function Settings() {
         const integrationLogos = { doordash: { src: '/doordash-logo.svg', alt: 'DoorDash' }, uber_eats: { src: '/uber-eats-logo.svg', alt: 'Uber Eats' }, shopify: { src: '/shopify-logo.svg', alt: 'Shopify' } }
         const icon = integrationLogos[provider]
         showToast(icon ? `${icon.alt} saved` : 'Integration saved', 'success', icon ? { icon } : undefined)
+        if (provider === 'shopify' && data.config) {
+          setIntegrations(prev => ({
+            ...prev,
+            shopify: {
+              ...prev.shopify,
+              config: { ...(prev.shopify?.config || {}), ...data.config }
+            }
+          }))
+        }
       } else {
         showToast(data.message || 'Failed to save', 'error')
       }
@@ -1385,6 +1577,36 @@ function Settings() {
       showToast('Failed to save integration', 'error')
     } finally {
       setIntegrationsSaving(null)
+    }
+  }
+
+  const syncShopifyNow = async () => {
+    setShopifySyncLoading(true)
+    try {
+      const res = await fetch('/api/integrations/shopify/sync', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message || `Synced ${data.created ?? 0} order(s)`, 'success')
+        if (data.last_synced_order_id != null) {
+          setIntegrations(prev => ({
+            ...prev,
+            shopify: {
+              ...prev.shopify,
+              config: {
+                ...(prev.shopify?.config || {}),
+                last_synced_order_id: data.last_synced_order_id,
+                last_synced_at: new Date().toISOString()
+              }
+            }
+          }))
+        }
+      } else {
+        showToast(data.message || 'Sync failed', 'error')
+      }
+    } catch (e) {
+      showToast('Sync failed', 'error')
+    } finally {
+      setShopifySyncLoading(false)
     }
   }
 
@@ -3161,6 +3383,7 @@ function Settings() {
     { id: 'notifications', label: 'Notifications', icon: MessageSquare },
     { id: 'rewards', label: 'Customer Rewards', icon: Gift },
     { id: 'integration', label: 'Integrations', icon: Plug },
+    ...(hasAdminAccess ? [{ id: 'migrations', label: 'Data Migration', icon: Database }] : []),
     ...(hasAdminAccess ? [{ id: 'admin', label: 'Admin', icon: Shield }] : [])
   ]
 
@@ -3415,7 +3638,7 @@ function Settings() {
           ) : (
             <>
           {/* Save Button - Hidden for location, cash, and pos tabs (pos has its own at bottom) */}
-          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'integration' && activeTab !== 'admin' && (
+          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'integration' && activeTab !== 'migrations' && activeTab !== 'admin' && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               <button
                 type="button"
@@ -7101,7 +7324,7 @@ function Settings() {
             Integrations
           </FormTitle>
           <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
-            Connect Shopify, DoorDash, and Uber Eats. When an order is placed, it will appear on Recent Orders with pay breakdown. You can set custom prices per channel and update status (ready, out for delivery, shipped) for all apps.
+            Connect Shopify, DoorDash, and Uber Eats. When an order is placed, it will appear on Recent Orders with pay breakdown and in Accounting. For Shopify: add your store URL and Admin API access token (Settings → Apps and sales channels → Develop apps → Create an app → Configure Admin API scopes: <code>read_orders</code>), then use &quot;Sync orders now&quot; or set up the webhook for instant new orders.
           </p>
           {integrationsLoading ? (
             <div style={{ padding: '24px', color: isDarkMode ? '#999' : '#666' }}>Loading…</div>
@@ -7194,6 +7417,46 @@ function Settings() {
                         style={inputBaseStyle(isDarkMode, themeColorRgb)}
                       />
                     </FormField>
+                    {id === 'shopify' && (
+                      <>
+                        <FormField isDarkMode={isDarkMode} label="Webhook secret (optional, for orders/create verification)">
+                          <input
+                            type="password"
+                            value={config.webhook_secret || ''}
+                            onChange={(e) => setIntegrations(prev => ({
+                              ...prev,
+                              shopify: {
+                                ...prev.shopify,
+                                config: { ...(prev.shopify?.config || {}), webhook_secret: e.target.value }
+                              }
+                            }))}
+                            placeholder="From Shopify webhook setup"
+                            style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                          />
+                        </FormField>
+                        <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: 0 }}>
+                          Webhook URL: <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '2px 6px', borderRadius: '4px' }}>{typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/shopify/orders` : '/api/webhooks/shopify/orders'}</code>. In Shopify: Settings → Notifications → Webhooks → Order creation.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={syncShopifyNow}
+                            disabled={shopifySyncLoading || !state.enabled}
+                            style={{
+                              ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb),
+                              padding: '8px 16px'
+                            }}
+                          >
+                            {shopifySyncLoading ? 'Syncing…' : 'Sync orders now'}
+                          </button>
+                          {(config.last_synced_at || config.last_synced_order_id) && (
+                            <span style={{ fontSize: '13px', color: isDarkMode ? '#999' : '#666' }}>
+                              Last sync: {config.last_synced_at ? new Date(config.last_synced_at).toLocaleString() : `Order #${config.last_synced_order_id}`}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
                     <div style={{ marginTop: '8px' }}>
                       <button
                         type="button"
@@ -7216,6 +7479,28 @@ function Settings() {
           <p style={{ fontSize: '13px', color: isDarkMode ? '#888' : '#999', marginTop: '24px' }}>
             Webhook URL for incoming orders: <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '2px 6px', borderRadius: '4px' }}>{typeof window !== 'undefined' ? `${window.location.origin}/api/orders/from-integration` : '/api/orders/from-integration'}</code>. Use your integration partner’s dashboard to send orders to this URL with JSON body: order_source, prepare_by_iso, customer_*, order_type, items (product_id, quantity, unit_price).
           </p>
+        </div>
+      )}
+
+      {/* Data Migration Tab (Square) */}
+      {activeTab === 'migrations' && hasAdminAccess && (
+        <div style={{ maxWidth: '720px' }}>
+          <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '8px' }}>
+            Data Migration
+          </FormTitle>
+          <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
+            Migrate your data from Square into this system. Connect with your Square access token (from Developer Dashboard → Apps → Credentials; use a personal access token or OAuth with scopes: MERCHANT_READ, LOCATION_READ, ITEMS_READ, ORDERS_READ, PAYMENTS_READ, TEAM_READ), then choose which data to import. We recommend migrating in order: Inventory first, then Employees, then Orders and Payments. Statistics are derived from order and payment history after migration.
+          </p>
+          <SquareMigrationCard
+            isDarkMode={isDarkMode}
+            themeColorRgb={themeColorRgb}
+            showToast={showToast}
+            compactPrimaryButtonStyle={compactPrimaryButtonStyle}
+            inputBaseStyle={inputBaseStyle}
+            getInputFocusHandlers={getInputFocusHandlers}
+            FormField={FormField}
+            FormLabel={FormLabel}
+          />
         </div>
       )}
 

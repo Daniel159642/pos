@@ -1,4 +1,4 @@
-import StatisticsDashboard from '../components/dashboard/StatisticsDashboard'
+import OverviewDashboard from '../components/dashboard/OverviewDashboard'
 
 function StatisticsPage() {
   return (
@@ -9,7 +9,7 @@ function StatisticsPage() {
       flexDirection: 'column',
       overflow: 'hidden'
     }}>
-      <StatisticsDashboard />
+      <OverviewDashboard />
     </div>
   )
 }

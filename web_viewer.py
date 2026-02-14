@@ -3337,6 +3337,61 @@ def api_save_integrations():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@app.route('/api/migrations/square/verify', methods=['POST'])
+def api_migrations_square_verify():
+    """Verify Square API access token. Body: { access_token, sandbox: bool }."""
+    try:
+        data = request.get_json() or {}
+        access_token = (data.get('access_token') or '').strip()
+        if not access_token:
+            return jsonify({'success': False, 'message': 'Access token is required'}), 400
+        sandbox = bool(data.get('sandbox', False))
+        from square_migration import verify_connection
+        success, message = verify_connection(access_token, sandbox=sandbox)
+        if success:
+            return jsonify({'success': True, 'message': message}), 200
+        return jsonify({'success': False, 'message': message}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/migrations/square/run', methods=['POST'])
+def api_migrations_square_run():
+    """Run Square migration. Body: { access_token, sandbox: bool, migrate: { inventory, employees, order_history, payments, transactions, statistics } }."""
+    try:
+        data = request.get_json() or {}
+        access_token = (data.get('access_token') or '').strip()
+        if not access_token:
+            return jsonify({'success': False, 'message': 'Access token is required'}), 400
+        sandbox = bool(data.get('sandbox', False))
+        migrate = data.get('migrate')
+        if not isinstance(migrate, dict):
+            migrate = {}
+        establishment_id = None
+        if get_current_establishment is not None:
+            establishment_id = get_current_establishment()
+        from square_migration import run_migration
+        result = run_migration(
+            access_token=access_token,
+            sandbox=sandbox,
+            migrate=migrate,
+            establishment_id_override=establishment_id,
+        )
+        if result.get('success') is False:
+            return jsonify({'success': False, 'message': result.get('error', 'Migration failed')}), 400
+        return jsonify({
+            'success': True,
+            'inventory': result.get('inventory', 0),
+            'employees': result.get('employees', 0),
+            'orders': result.get('orders', 0),
+            'payments': result.get('payments', 0),
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/api/orders/from-integration', methods=['POST'])
 def api_orders_from_integration():
     """Create an order from an integration (webhook or manual). Body: order_source, prepare_by_iso, customer_*, order_type, items, totals."""
@@ -3414,9 +3469,15 @@ def api_orders_from_integration():
             prepare_by=prepare_by_iso,
         )
         if result.get('success') and result.get('order_id'):
+            order_id = result['order_id']
+            try:
+                from pos_accounting_bridge import journalize_sale_to_accounting
+                journalize_sale_to_accounting(order_id, int(employee_id))
+            except Exception as je:
+                print(f"Accounting journalize_sale (order {order_id}) from integration: {je}")
             return jsonify({
                 'success': True,
-                'order_id': result['order_id'],
+                'order_id': order_id,
                 'order_number': result.get('order_number'),
                 'message': 'Order created from integration',
             }), 201
@@ -3425,6 +3486,138 @@ def api_orders_from_integration():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/shopify/sync', methods=['POST'])
+def api_shopify_sync():
+    """Sync orders from Shopify into POS (Recent Orders + accounting). Uses integration config."""
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from shopify_service import sync_shopify_orders
+        result = sync_shopify_orders(establishment_id)
+        if result.get('success') is False:
+            return jsonify({
+                'success': False,
+                'message': result.get('errors', ['Sync failed'])[0] if result.get('errors') else 'Sync failed',
+                'errors': result.get('errors', []),
+            }), 400
+        return jsonify({
+            'success': True,
+            'created': result.get('created', 0),
+            'last_synced_order_id': result.get('last_synced_order_id'),
+            'errors': result.get('errors', []),
+            'message': f"Synced {result.get('created', 0)} new order(s) from Shopify",
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/webhooks/shopify/orders', methods=['POST'])
+def api_webhooks_shopify_orders():
+    """
+    Shopify webhook: orders/create. Verify HMAC, then create POS order and journalize.
+    In Shopify Admin: Settings > Notifications > Webhooks > Order creation → URL = this endpoint.
+    """
+    try:
+        # HMAC is in header X-Shopify-Hmac-Sha256
+        import hmac
+        import hashlib
+        import base64
+        raw = request.get_data()
+        hmac_header = request.headers.get('X-Shopify-Hmac-Sha256') or request.headers.get('X-Shopify-Hmac-Sha256'.lower())
+        if not raw:
+            return jsonify({'ok': False}), 400
+        # Webhook secret from integration config (per-establishment is tricky; use first Shopify integration with webhook_secret)
+        from database import get_connection, get_integrations
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT establishment_id, config FROM pos_integrations WHERE provider = 'shopify' AND enabled = true")
+        rows = cur.fetchall()
+        conn.close()
+        secret = None
+        establishment_id = None
+        for row in rows:
+            c = (row.get('config') or {}) if isinstance(row, dict) else (row[1] if len(row) > 1 else {})
+            if isinstance(c, dict) and c.get('webhook_secret'):
+                secret = c.get('webhook_secret')
+                establishment_id = row.get('establishment_id') if isinstance(row, dict) else row[0]
+                break
+        if secret and hmac_header:
+            computed = base64.b64encode(hmac.new(secret.encode('utf-8'), raw, hashlib.sha256).digest()).decode('utf-8')
+            if not hmac.compare_digest(computed, hmac_header):
+                return jsonify({'ok': False}), 401
+        elif hmac_header and not secret:
+            return jsonify({'ok': False}), 401
+
+        data = request.get_json(silent=True) or {}
+        if not data.get('id'):
+            return jsonify({'ok': True}), 200
+        if not establishment_id and rows:
+            establishment_id = rows[0].get('establishment_id') if isinstance(rows[0], dict) else rows[0][0]
+        if not establishment_id:
+            return jsonify({'ok': False}), 400
+        from shopify_service import build_pos_payload_from_shopify_order
+        from database import create_order, get_connection
+        from psycopg2.extras import RealDictCursor
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'shopify' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'ok': False}), 400
+        config = integration.get('config') or {}
+        price_multiplier = float(config.get('price_multiplier') or 1)
+        payload = build_pos_payload_from_shopify_order(data, establishment_id, price_multiplier)
+        if not payload:
+            return jsonify({'ok': True}), 200
+        items = payload.pop('items')
+        payload.pop('shopify_order_id', None)
+        payload.pop('shopify_order_number', None)
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT employee_id FROM employees WHERE active = 1 ORDER BY employee_id LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        employee_id = (row.get('employee_id') if row and isinstance(row, dict) else (row[0] if row else None)) if row else None
+        if not employee_id:
+            return jsonify({'ok': False}), 400
+        result = create_order(
+            employee_id=employee_id,
+            items=items,
+            payment_method='mobile_payment',
+            tax_rate=float(payload.get('tax_rate') or 0),
+            discount=float(payload.get('discount') or 0),
+            customer_id=None,
+            tip=float(payload.get('tip') or 0),
+            order_type=(payload.get('order_type') or 'delivery').strip() or 'delivery',
+            customer_info={
+                'name': payload.get('customer_name') or 'Shopify Customer',
+                'phone': payload.get('customer_phone'),
+                'email': payload.get('customer_email'),
+                'address': payload.get('customer_address'),
+            },
+            payment_status='completed',
+            order_status_override='placed',
+            order_source='shopify',
+            prepare_by=payload.get('prepare_by_iso'),
+            establishment_id_override=establishment_id,
+        )
+        if result.get('success') and result.get('order_id'):
+            try:
+                from pos_accounting_bridge import journalize_sale_to_accounting
+                journalize_sale_to_accounting(result['order_id'], employee_id)
+            except Exception:
+                pass
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False}), 500
 
 
 @app.route('/api/orders/create-demo-integration-orders', methods=['POST'])
@@ -5443,6 +5636,40 @@ def api_dashboard_statistics():
                 conn.close()
             except:
                 pass
+
+
+@app.route('/api/dashboard/top_customers', methods=['GET'])
+def api_dashboard_top_customers():
+    """Top customers by total spend (sum of completed/paid order totals). Query: limit=5."""
+    try:
+        limit = request.args.get('limit', type=int) or 10
+        limit = min(max(1, limit), 50)
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("""
+                SELECT
+                    c.customer_id,
+                    c.customer_name,
+                    c.email,
+                    COALESCE(SUM(o.total), 0) AS total_spend
+                FROM customers c
+                LEFT JOIN orders o ON o.customer_id = c.customer_id
+                    AND (o.order_status IS NULL OR o.order_status != 'voided')
+                GROUP BY c.customer_id, c.customer_name, c.email
+                HAVING COALESCE(SUM(o.total), 0) > 0
+                ORDER BY total_spend DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            data = [dict(r) for r in rows]
+            return jsonify({'data': data})
+        finally:
+            conn.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'data': []}), 500
+
 
 # ============================================================================
 # IMAGE MATCHING API ENDPOINTS

@@ -870,6 +870,65 @@ def get_product_by_barcode(barcode: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def get_product_id_by_sku(establishment_id: int, sku: str) -> Optional[int]:
+    """Get product_id by SKU for a given establishment. Returns None if not found."""
+    if not sku or not str(sku).strip():
+        return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT product_id FROM inventory WHERE establishment_id = %s AND sku = %s LIMIT 1",
+            (establishment_id, str(sku).strip()),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row[0] if isinstance(row, (list, tuple)) else row.get("product_id")
+        return None
+    finally:
+        conn.close()
+
+
+def get_or_create_product_for_shopify(
+    establishment_id: int, sku: str, title: str, price: float
+) -> int:
+    """
+    Get product_id by SKU for establishment, or create a placeholder product for Shopify sync.
+    Returns product_id. Used when mapping Shopify line items to POS inventory.
+    """
+    pid = get_product_id_by_sku(establishment_id, sku)
+    if pid is not None:
+        return pid
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        sku_clean = (sku or "").strip() or f"SHOPIFY-{title[:20]}"
+        name = (title or "Shopify item")[:255]
+        # Use current_quantity=999 so create_order inventory check passes; admin can adjust later
+        cursor.execute(
+            """
+            INSERT INTO inventory
+            (establishment_id, product_name, sku, product_price, product_cost, vendor_id, photo,
+             current_quantity, category, barcode, item_type, unit, sell_at_pos)
+            VALUES (%s, %s, %s, %s, 0, NULL, NULL, 999, NULL, NULL, 'product', NULL, true)
+            ON CONFLICT (establishment_id, sku) DO UPDATE SET product_name = EXCLUDED.product_name, product_price = EXCLUDED.product_price
+            RETURNING product_id
+            """,
+            (establishment_id, name, sku_clean, float(price)),
+        )
+        row = cursor.fetchone()
+        conn.commit()
+        product_id = row[0] if row and not isinstance(row, dict) else (row.get("product_id") if row else None)
+        if not product_id:
+            raise ValueError("Insert did not return product_id")
+        return product_id
+    except Exception as e:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Product variants (sizes with different prices) and ingredients (recipes)
 # ---------------------------------------------------------------------------
@@ -4411,6 +4470,7 @@ def create_order(
     discount_type: Optional[str] = None,
     order_source: Optional[str] = None,
     prepare_by: Optional[str] = None,
+    establishment_id_override: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Create a new order and process payment
@@ -4421,15 +4481,18 @@ def create_order(
     transaction_fee_rates: Optional dict to override default fee rates
     order_type: \'pickup\' or \'delivery\' (optional)
     customer_info: Dict with \'name\', \'phone\', and optionally \'address\' (for delivery)
+    establishment_id_override: When set (e.g. from webhooks), use this establishment instead of current context.
     """
     conn = get_connection()
     cursor = conn.cursor()
     
     try:
-        # Get establishment_id (use current establishment for the order)
-        from database_postgres import get_current_establishment
-        establishment_id = get_current_establishment()
-        
+        # Get establishment_id (use override for webhooks/integrations, else current establishment)
+        if establishment_id_override is not None:
+            establishment_id = establishment_id_override
+        else:
+            from database_postgres import get_current_establishment
+            establishment_id = get_current_establishment()
         # If establishment_id is None, use _get_or_create_default_establishment as fallback
         if establishment_id is None:
             establishment_id = _get_or_create_default_establishment(conn)
