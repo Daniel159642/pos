@@ -11,7 +11,7 @@ try:
 except ImportError:
     print("Warning: python-dotenv not installed. Environment variables must be set manually.")
 
-from flask import Flask, render_template, jsonify, send_from_directory, request, Response, make_response
+from flask import Flask, render_template, jsonify, send_from_directory, request, Response, make_response, redirect
 from werkzeug.utils import secure_filename
 
 # Socket.IO support
@@ -3312,6 +3312,121 @@ def api_update_order_status(order_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+def _shopify_oauth_url(shop: str) -> str:
+    """Build Shopify OAuth authorize URL. Returns URL string."""
+    establishment_id = get_current_establishment() if get_current_establishment else None
+    establishment_id = establishment_id or 1
+    state = str(establishment_id)
+    client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
+    redirect_uri = os.environ.get('SHOPIFY_REDIRECT_URI') or (request.host_url.rstrip('/') + '/api/integrations/shopify/callback')
+    scope = 'read_orders,read_products,write_products'
+    from urllib.parse import quote
+    # Log so you can whitelist this exact URL in Shopify Partners
+    print(f"[Shopify OAuth] redirect_uri={redirect_uri!r} (whitelist this exact URL in Shopify)")
+    return f"https://{shop}/admin/oauth/authorize?client_id={client_id}&scope={scope}&redirect_uri={quote(redirect_uri)}&state={state}"
+
+
+@app.route('/api/integrations/shopify/connect-url', methods=['GET'])
+def api_shopify_connect_url():
+    """Return Shopify OAuth URL as JSON. Use this to open in system browser (avoids Tauri webview WebKit issues)."""
+    try:
+        shop = (request.args.get('shop') or '').strip().lower()
+        if not shop:
+            return jsonify({'success': False, 'message': 'shop parameter required (e.g. mystore.myshopify.com)'}), 400
+        if '.myshopify.com' not in shop:
+            shop = shop + '.myshopify.com'
+        shop = shop.replace('https://', '').replace('http://', '').split('/')[0]
+        client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
+        if not client_id:
+            return jsonify({'success': False, 'message': 'SHOPIFY_CLIENT_ID not configured'}), 500
+        url = _shopify_oauth_url(shop)
+        return jsonify({'success': True, 'url': url}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/shopify/debug-redirect-uri', methods=['GET'])
+def api_shopify_debug_redirect_uri():
+    """Return the redirect_uri being used (for whitelisting in Shopify Partners)."""
+    redirect_uri = os.environ.get('SHOPIFY_REDIRECT_URI') or (request.host_url.rstrip('/') + '/api/integrations/shopify/callback')
+    return jsonify({
+        'redirect_uri': redirect_uri,
+        'source': 'SHOPIFY_REDIRECT_URI' if os.environ.get('SHOPIFY_REDIRECT_URI') else 'request.host_url',
+        'instructions': 'Add this EXACT URL to Shopify Partners → Apps → Swiftly → Configuration → Allowed redirection URL(s)'
+    }), 200
+
+
+@app.route('/api/integrations/shopify/connect', methods=['GET'])
+def api_shopify_connect():
+    """
+    OAuth connect: redirects user to Shopify to install/approve the app.
+    Query: shop (required) - e.g. mystore or mystore.myshopify.com
+    For Tauri/desktop, prefer connect-url + open in system browser.
+    """
+    try:
+        shop = (request.args.get('shop') or '').strip().lower()
+        if not shop:
+            return jsonify({'success': False, 'message': 'shop parameter required (e.g. mystore.myshopify.com)'}), 400
+        if '.myshopify.com' not in shop:
+            shop = shop + '.myshopify.com'
+        shop = shop.replace('https://', '').replace('http://', '').split('/')[0]
+        client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
+        if not client_id:
+            return jsonify({'success': False, 'message': 'SHOPIFY_CLIENT_ID not configured. Add it to .env (from Swiftly/Partners app API credentials).'}), 500
+        auth_url = _shopify_oauth_url(shop)
+        return redirect(auth_url)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/shopify/callback', methods=['GET'])
+def api_shopify_callback():
+    """
+    OAuth callback: Shopify redirects here with code and shop. Exchange for token and store.
+    """
+    try:
+        code = request.args.get('code')
+        shop = (request.args.get('shop') or '').strip().lower()
+        state = request.args.get('state') or '1'
+
+        if not code or not shop:
+            return redirect('/settings?tab=integration&shopify=error&msg=missing_code_or_shop')
+        if '.myshopify.com' not in shop:
+            shop = shop + '.myshopify.com'
+        shop = shop.replace('https://', '').replace('http://', '').split('/')[0]
+
+        client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
+        client_secret = os.environ.get('SHOPIFY_CLIENT_SECRET') or ''
+        if not client_id or not client_secret:
+            return redirect('/settings?tab=integration&shopify=error&msg=oauth_not_configured')
+
+        import requests
+        token_url = f"https://{shop}/admin/oauth/access_token"
+        payload = {'client_id': client_id, 'client_secret': client_secret, 'code': code}
+        r = requests.post(token_url, json=payload, headers={'Content-Type': 'application/json'}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        access_token = data.get('access_token')
+        if not access_token:
+            return redirect('/settings?tab=integration&shopify=error&msg=no_token')
+
+        establishment_id = int(state) if state.isdigit() else 1
+        store_url = f"https://{shop}"
+        from database import upsert_integration
+        config = {'store_url': store_url, 'api_key': access_token, 'price_multiplier': 1}
+        upsert_integration(establishment_id, 'shopify', True, config)
+
+        return redirect('/settings?tab=integration&shopify=connected')
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return redirect('/settings?tab=integration&shopify=error&msg=' + str(e)[:50])
+
+
 @app.route('/api/integrations', methods=['GET'])
 def api_get_integrations():
     """List integrations (Shopify, DoorDash, Uber Eats) for current establishment."""
@@ -3536,6 +3651,39 @@ def api_shopify_sync():
             'last_synced_order_id': result.get('last_synced_order_id'),
             'errors': result.get('errors', []),
             'message': f"Synced {result.get('created', 0)} new order(s) from Shopify",
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/shopify/sync-products', methods=['POST'])
+def api_shopify_sync_products():
+    """Sync product catalog from Shopify into POS inventory. Creates/updates products by SKU."""
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from shopify_service import sync_shopify_products
+        result = sync_shopify_products(establishment_id)
+        if result.get('success') is False:
+            return jsonify({
+                'success': False,
+                'message': result.get('errors', ['Sync failed'])[0] if result.get('errors') else 'Sync failed',
+                'errors': result.get('errors', []),
+            }), 400
+        created = result.get('created', 0)
+        updated = result.get('updated', 0)
+        return jsonify({
+            'success': True,
+            'created': created,
+            'updated': updated,
+            'last_synced_product_id': result.get('last_synced_product_id'),
+            'errors': result.get('errors', []),
+            'message': f"Synced products: {created} created, {updated} updated",
         }), 200
     except Exception as e:
         import traceback

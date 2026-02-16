@@ -17,6 +17,37 @@ def _normalize_store_url(store_url: str) -> str:
     return u.rstrip("/")
 
 
+def fetch_products(
+    store_url: str,
+    access_token: str,
+    since_id: Optional[int] = None,
+    limit: int = 250,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch products (with variants) from Shopify Admin REST API.
+    GET /admin/api/2024-01/products.json
+    Returns list of product objects with variants (each variant has sku, price, title).
+    """
+    base = _normalize_store_url(store_url)
+    if not base or not access_token:
+        return []
+    if ".myshopify.com/admin" in base:
+        base = base.split(".myshopify.com")[0] + ".myshopify.com"
+    url = f"{base}/admin/api/2024-01/products.json"
+    params = {"limit": min(limit, 250)}
+    if since_id is not None:
+        params["since_id"] = since_id
+    headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        return (data.get("products") or []) if isinstance(data, dict) else []
+    except Exception as e:
+        print(f"Shopify fetch_products error: {e}")
+        return []
+
+
 def fetch_orders(
     store_url: str,
     access_token: str,
@@ -256,5 +287,99 @@ def sync_shopify_orders(establishment_id: int) -> Dict[str, Any]:
         from database import upsert_integration
         upsert_integration(establishment_id, "shopify", True, config)
         result["last_synced_order_id"] = max_id
+
+    return result
+
+
+def sync_shopify_products(establishment_id: int) -> Dict[str, Any]:
+    """
+    Fetch all products (with variants) from Shopify and sync into POS inventory.
+    Creates or updates products by SKU. Each variant becomes one inventory row.
+    Returns { success, created: int, updated: int, errors: list, last_synced_product_id }.
+    """
+    from database import get_integrations, get_or_create_product_for_shopify, upsert_integration
+
+    result = {"success": True, "created": 0, "updated": 0, "errors": [], "last_synced_product_id": None}
+    integrations = get_integrations(establishment_id)
+    integration = next((i for i in integrations if i.get("provider") == "shopify" and i.get("enabled")), None)
+    if not integration:
+        result["success"] = False
+        result["errors"].append("Shopify integration not enabled or not configured")
+        return result
+
+    config = integration.get("config") or {}
+    if not isinstance(config, dict):
+        config = {}
+    store_url = (config.get("store_url") or "").strip()
+    access_token = (config.get("api_key") or config.get("access_token") or "").strip()
+    price_multiplier = float(config.get("price_multiplier") or 1)
+    # Full catalog sync each time (since_id=None) so we create/update all products
+    since_id = None
+
+    if not store_url or not access_token:
+        result["success"] = False
+        result["errors"].append("Shopify store URL and Admin API access token are required")
+        return result
+
+    from database import get_product_id_by_sku
+
+    max_product_id = since_id
+    total_created = 0
+    total_updated = 0
+
+    while True:
+        products = fetch_products(store_url, access_token, since_id=since_id, limit=250)
+        if not products:
+            break
+
+        for product in products:
+            pid = product.get("id")
+            if pid is not None and (max_product_id is None or pid > max_product_id):
+                max_product_id = pid
+
+            product_title = (product.get("title") or "Product")[:255]
+            variants = product.get("variants") or []
+            if not variants:
+                continue
+
+            for variant in variants:
+                sku = (variant.get("sku") or "").strip() or ""
+                variant_id = variant.get("id")
+                if not sku and variant_id:
+                    sku = f"shopify-{variant_id}"
+                if not sku:
+                    sku = f"shopify-v-{variant_id}"
+                variant_title = (variant.get("title") or "").strip()
+                if variant_title and variant_title.lower() != "default title":
+                    display_name = f"{product_title} / {variant_title}"[:255]
+                else:
+                    display_name = product_title
+                try:
+                    price = float(variant.get("price") or 0) * price_multiplier
+                except (TypeError, ValueError):
+                    price = 0.0
+
+                try:
+                    existing = get_product_id_by_sku(establishment_id, sku)
+                    get_or_create_product_for_shopify(establishment_id, sku, display_name, price)
+                    if existing:
+                        total_updated += 1
+                    else:
+                        total_created += 1
+                except Exception as e:
+                    result["errors"].append(f"Variant {sku}: {str(e)}")
+
+        if len(products) < 250:
+            break
+        since_id = max(p.get("id") for p in products if p.get("id") is not None) if products else since_id
+
+    result["created"] = total_created
+    result["updated"] = total_updated
+
+    if max_product_id is not None:
+        config["last_synced_product_id"] = max_product_id
+        config["products_synced_at"] = datetime.now(tz=timezone.utc).isoformat()
+        upsert_integration(establishment_id, "shopify", True, config)
+        result["last_synced_product_id"] = max_product_id
 
     return result

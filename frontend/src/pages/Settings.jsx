@@ -1516,6 +1516,7 @@ function Settings() {
   const [integrationsLoading, setIntegrationsLoading] = useState(false)
   const [integrationsSaving, setIntegrationsSaving] = useState(null) // 'shopify' | 'doordash' | 'uber_eats' | null
   const [shopifySyncLoading, setShopifySyncLoading] = useState(false)
+  const [shopifyProductsSyncLoading, setShopifyProductsSyncLoading] = useState(false)
   useEffect(() => {
     if (activeTab !== 'integration') return
     setIntegrationsLoading(true)
@@ -1540,7 +1541,9 @@ function Settings() {
                   price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1,
                   webhook_secret: c.webhook_secret || '',
                   last_synced_at: c.last_synced_at,
-                  last_synced_order_id: c.last_synced_order_id
+                  last_synced_order_id: c.last_synced_order_id,
+                  last_synced_product_id: c.last_synced_product_id,
+                  products_synced_at: c.products_synced_at
                 }
               }
             }
@@ -1620,6 +1623,130 @@ function Settings() {
       setShopifySyncLoading(false)
     }
   }
+
+  const syncShopifyProductsNow = async () => {
+    setShopifyProductsSyncLoading(true)
+    try {
+      const res = await fetch('/api/integrations/shopify/sync-products', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message || `Synced ${data.created ?? 0} created, ${data.updated ?? 0} updated`, 'success')
+        if (data.last_synced_product_id != null) {
+          setIntegrations(prev => ({
+            ...prev,
+            shopify: {
+              ...prev.shopify,
+              config: {
+                ...(prev.shopify?.config || {}),
+                last_synced_product_id: data.last_synced_product_id,
+                products_synced_at: new Date().toISOString()
+              }
+            }
+          }))
+        }
+      } else {
+        showToast(data.message || 'Product sync failed', 'error')
+      }
+    } catch (e) {
+      showToast('Product sync failed', 'error')
+    } finally {
+      setShopifyProductsSyncLoading(false)
+    }
+  }
+
+  const connectShopifyWithOAuth = async () => {
+    const storeUrl = (integrations.shopify?.config?.store_url || '').trim() || ''
+    let shop = storeUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.myshopify\.com.*/, '')
+    if (!shop) {
+      showToast('Enter your Shopify store URL first (e.g. mystore.myshopify.com)', 'error')
+      return
+    }
+    if (!shop.includes('.myshopify.com')) shop = shop + '.myshopify.com'
+    // Open window immediately (before any await) to avoid popup blocker
+    const w = typeof window !== 'undefined' && window.__TAURI__ ? null : window.open('about:blank', '_blank')
+    try {
+      const res = await fetch(`/api/integrations/shopify/connect-url?shop=${encodeURIComponent(shop)}`)
+      const data = await res.json()
+      if (data.success && data.url) {
+        if (typeof window !== 'undefined' && window.__TAURI__) {
+          const { open } = await import('@tauri-apps/plugin-shell')
+          await open(data.url)
+          showToast('Shopify authorization opened in your browser. Approve there, then return here.', 'success')
+        } else if (w && !w.closed) {
+          w.location.href = data.url
+          showToast('Shopify authorization opened in a new tab. Approve there, then return here.', 'success')
+        } else {
+          window.open(data.url, '_blank')
+          showToast('Shopify authorization opened in a new tab. Approve there, then return here.', 'success')
+        }
+      } else {
+        if (w && !w.closed) w.close()
+        showToast(data.message || 'Failed to get Shopify connect URL', 'error')
+      }
+    } catch (e) {
+      if (w && !w.closed) w.close()
+      showToast('Failed to open Shopify connect', 'error')
+    }
+  }
+
+  const disconnectShopify = async () => {
+    setIntegrationsSaving('shopify')
+    try {
+      const res = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'shopify',
+          enabled: false,
+          config: { ...integrations.shopify?.config, api_key: '', store_url: '', price_multiplier: integrations.shopify?.config?.price_multiplier ?? 1 }
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setIntegrations(prev => ({
+          ...prev,
+          shopify: { enabled: false, config: { api_key: '', store_url: '', price_multiplier: 1 } }
+        }))
+        showToast('Shopify disconnected', 'success')
+      } else {
+        showToast(data.message || 'Failed to disconnect', 'error')
+      }
+    } catch (e) {
+      showToast('Failed to disconnect', 'error')
+    } finally {
+      setIntegrationsSaving(null)
+    }
+  }
+
+  useEffect(() => {
+    const shopify = searchParams.get('shopify')
+    const msg = searchParams.get('msg')
+    if (shopify === 'connected') {
+      showToast('Shopify connected successfully', 'success')
+      searchParams.delete('shopify')
+      searchParams.delete('msg')
+      setSearchParams(searchParams, { replace: true })
+      setIntegrationsLoading(true)
+      cachedFetch('/api/integrations').then(res => res.json()).then((result) => {
+        if (result.success && Array.isArray(result.data)) {
+          const next = { ...integrations }
+          result.data.forEach((row) => {
+            const p = (row.provider || '').toLowerCase()
+            if (p === 'shopify') {
+              const c = row.config && typeof row.config === 'object' ? row.config : {}
+              next.shopify = { enabled: !!row.enabled, config: { api_key: c.api_key || '', store_url: c.store_url || '', price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1, webhook_secret: c.webhook_secret || '', last_synced_at: c.last_synced_at, last_synced_order_id: c.last_synced_order_id, last_synced_product_id: c.last_synced_product_id, products_synced_at: c.products_synced_at } }
+            }
+          })
+          setIntegrations(next)
+        }
+      }).finally(() => setIntegrationsLoading(false))
+    } else if (shopify === 'error') {
+      showToast(msg || 'Shopify connection failed', 'error')
+      searchParams.delete('shopify')
+      searchParams.delete('msg')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [searchParams.get('shopify'), searchParams.get('msg')])
 
   useEffect(() => {
     if (receiptEditModalOpen) {
@@ -8292,7 +8419,7 @@ function Settings() {
             Integrations
           </FormTitle>
           <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
-            Connect Shopify, DoorDash, and Uber Eats. When an order is placed, it will appear on Recent Orders with pay breakdown and in Accounting. For Shopify: add your store URL and Admin API access token (Settings → Apps and sales channels → Develop apps → Create an app → Configure Admin API scopes: <code>read_orders</code>), then use &quot;Sync orders now&quot; or set up the webhook for instant new orders.
+            Connect Shopify, DoorDash, and Uber Eats. When an order is placed, it will appear on Recent Orders with pay breakdown and in Accounting. For Shopify: add your store URL and Admin API access token (Settings → Apps and sales channels → Develop apps → Create an app → Configure Admin API scopes: <code>read_orders</code>, <code>read_products</code>), then use &quot;Sync orders now&quot; or &quot;Sync products now&quot; to pull data, or set up the webhook for instant new orders.
           </p>
           {integrationsLoading ? (
             <div style={{ padding: '24px', color: isDarkMode ? '#999' : '#666' }}>Loading…</div>
@@ -8336,7 +8463,110 @@ function Settings() {
                     </label>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <FormField isDarkMode={isDarkMode} label="API Key / Access Token">
+                    {id === 'shopify' && (
+                      <>
+                        {config.api_key && config.store_url ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '14px', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <CheckCircle size={18} /> Connected: {(config.store_url || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={disconnectShopify}
+                              disabled={integrationsSaving === 'shopify'}
+                              style={{ ...compactCancelButtonStyle(isDarkMode, themeColorRgb), padding: '6px 12px', fontSize: '13px' }}
+                            >
+                              Disconnect
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
+                            <FormField isDarkMode={isDarkMode} label="Your Shopify store" style={{ flex: '1 1 200px', minWidth: '200px' }}>
+                              <input
+                                type="text"
+                                value={config.store_url || ''}
+                                onChange={(e) => setIntegrations(prev => ({
+                                  ...prev,
+                                  shopify: { ...prev.shopify, config: { ...(prev.shopify?.config || {}), store_url: e.target.value } }
+                                }))}
+                                placeholder="mystore.myshopify.com"
+                                style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                              />
+                            </FormField>
+                            {(() => {
+                              const su = (integrations.shopify?.config?.store_url || '').trim()
+                              let shop = su.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.myshopify\.com.*/, '')
+                              if (!shop) shop = ''
+                              else if (!shop.includes('.myshopify.com')) shop = shop + '.myshopify.com'
+                              const connectUrl = shop && typeof window !== 'undefined'
+                                ? `${window.location.origin}/api/integrations/shopify/connect?shop=${encodeURIComponent(shop)}`
+                                : null
+                              const isTauri = typeof window !== 'undefined' && window.__TAURI__
+                              if (!connectUrl) {
+                                return (
+                                  <span
+                                    style={{
+                                      ...compactPrimaryButtonStyle(themeColorRgb, true),
+                                      padding: '8px 20px',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      cursor: 'not-allowed',
+                                      opacity: 0.6
+                                    }}
+                                  >
+                                    Connect with Shopify
+                                  </span>
+                                )
+                              }
+                              if (isTauri) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        const { open } = await import('@tauri-apps/plugin-shell')
+                                        await open(connectUrl)
+                                        showToast('Shopify authorization opened in your browser. Approve there, then return here.', 'success')
+                                      } catch (e) {
+                                        showToast('Failed to open Shopify connect', 'error')
+                                      }
+                                    }}
+                                    style={{ ...compactPrimaryButtonStyle(themeColorRgb, false), padding: '8px 20px' }}
+                                  >
+                                    Connect with Shopify
+                                  </button>
+                                )
+                              }
+                              return (
+                                <a
+                                  href={connectUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    ...compactPrimaryButtonStyle(themeColorRgb, false),
+                                    padding: '8px 20px',
+                                    textDecoration: 'none',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Connect with Shopify
+                                </a>
+                              )
+                            })()}
+                          </div>
+                        )}
+                        {!config.api_key && (
+                          <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 8px 0' }}>
+                            Enter your store (e.g. mystore.myshopify.com) and click Connect to authorize. Or paste a token manually below.
+                          </p>
+                        )}
+                      </>
+                    )}
+                    <FormField isDarkMode={isDarkMode} label={id === 'shopify' ? 'Or paste API token manually' : 'API Key / Access Token'}>
                       <input
                         type="password"
                         value={config.api_key || ''}
@@ -8347,11 +8577,11 @@ function Settings() {
                             config: { ...(prev[id].config || {}), api_key: e.target.value }
                           }
                         }))}
-                        placeholder={id === 'shopify' ? 'Admin API access token' : 'API key'}
+                        placeholder={id === 'shopify' ? 'Admin API access token (if not using Connect)' : 'API key'}
                         style={inputBaseStyle(isDarkMode, themeColorRgb)}
                       />
                     </FormField>
-                    {extra === 'Store URL' && (
+                    {extra === 'Store URL' && id !== 'shopify' && (
                       <FormField isDarkMode={isDarkMode} label="Store URL">
                         <input
                           type="text"
@@ -8417,9 +8647,25 @@ function Settings() {
                           >
                             {shopifySyncLoading ? 'Syncing…' : 'Sync orders now'}
                           </button>
+                          <button
+                            type="button"
+                            onClick={syncShopifyProductsNow}
+                            disabled={shopifyProductsSyncLoading || !state.enabled}
+                            style={{
+                              ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb),
+                              padding: '8px 16px'
+                            }}
+                          >
+                            {shopifyProductsSyncLoading ? 'Syncing…' : 'Sync products now'}
+                          </button>
                           {(config.last_synced_at || config.last_synced_order_id) && (
                             <span style={{ fontSize: '13px', color: isDarkMode ? '#999' : '#666' }}>
-                              Last sync: {config.last_synced_at ? new Date(config.last_synced_at).toLocaleString() : `Order #${config.last_synced_order_id}`}
+                              Orders: {config.last_synced_at ? new Date(config.last_synced_at).toLocaleString() : config.last_synced_order_id ? `#${config.last_synced_order_id}` : '-'}
+                            </span>
+                          )}
+                          {(config.products_synced_at || config.last_synced_product_id) && (
+                            <span style={{ fontSize: '13px', color: isDarkMode ? '#999' : '#666' }}>
+                              Products: {config.products_synced_at ? new Date(config.products_synced_at).toLocaleString() : config.last_synced_product_id ? `#${config.last_synced_product_id}` : '-'}
                             </span>
                           )}
                         </div>
