@@ -677,12 +677,19 @@ def generate_receipt_pdf(order_data: Dict[str, Any], order_items: list, settings
     payment_status = (order_data.get('payment_status') or 'completed').lower()
     order_type_payment = (order_data.get('order_type') or '').lower()
     if payment_status == 'pending':
-        not_paid_phrase = "Pay at delivery" if order_type_payment == 'delivery' else "Pay at pickup"
+        if order_type_payment == 'delivery':
+            not_paid_phrase = "Pay at delivery"
+        elif order_type_payment == 'pickup':
+            not_paid_phrase = "Pay at pickup"
+        else:
+            not_paid_phrase = "Pay at counter"
         story.append(Paragraph(f"<b>Not paid - {not_paid_phrase}</b>", payment_style))
         if order_type_payment == 'delivery':
             story.append(Paragraph("Pay on delivery", payment_style))
-        else:
+        elif order_type_payment == 'pickup':
             story.append(Paragraph("Customer will pay when they pick up", payment_style))
+        else:
+            story.append(Paragraph("Customer will pay at counter", payment_style))
         story.append(Spacer(1, 0.05*inch))
     elif settings.get('show_payment_method', 1):
         payment_method = (order_data.get('payment_method') or 'Unknown').strip().lower()
@@ -1220,6 +1227,257 @@ def generate_transaction_receipt(transaction_id: int) -> Optional[bytes]:
         return None
     finally:
         conn.close()
+
+
+def get_receipt_data_for_email(
+    transaction_id: Optional[int] = None,
+    order_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch receipt data (order_data, order_items, barcode, signature) using the SAME backend
+    logic as printed receipts. Use for email receipts so barcode and signature match.
+    Prefer transaction_id when available (same as /api/receipt/transaction/<id>).
+    Returns dict with: order_data, order_items, barcode_base64, signature
+    or None if not found.
+    """
+    import base64
+    order_data = None
+    order_items = []
+    signature = None
+
+    if transaction_id:
+        # Same data path as generate_transaction_receipt (printed receipt)
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cursor.execute("""
+                SELECT t.*,
+                       e.first_name || ' ' || e.last_name as employee_name,
+                       c.customer_name,
+                       o.order_number,
+                       o.order_id,
+                       o.order_date,
+                       t.signature
+                FROM transactions t
+                LEFT JOIN employees e ON t.employee_id = e.employee_id
+                LEFT JOIN customers c ON t.customer_id = c.customer_id
+                LEFT JOIN orders o ON t.order_id = o.order_id
+                WHERE t.transaction_id = %s
+            """, (transaction_id,))
+            transaction_row = cursor.fetchone()
+            if not transaction_row:
+                return None
+            transaction = dict(transaction_row)
+            order_id = transaction.get('order_id')
+            order_number = transaction.get('order_number') or (f"ORD-{transaction_id}" if not order_id else None)
+            signature = transaction.get('signature')
+            if not order_number and order_id:
+                cursor.execute("SELECT order_number FROM orders WHERE order_id = %s", (order_id,))
+                r = cursor.fetchone()
+                if r:
+                    order_number = r.get('order_number') if isinstance(r, dict) else r[0]
+            if not order_number:
+                order_number = f"ORD-{transaction_id}"
+
+            cursor.execute("""
+                SELECT ti.*, i.product_name, i.sku
+                FROM transaction_items ti
+                LEFT JOIN inventory i ON ti.product_id = i.product_id
+                WHERE ti.transaction_id = %s
+                ORDER BY ti.transaction_item_id
+            """, (transaction_id,))
+            transaction_items = [dict(r) for r in cursor.fetchall()]
+            amount_paid = None
+            payment_method = transaction.get('payment_method') or 'Unknown'
+            payment_method_type = ''
+            change = 0
+            try:
+                cursor.execute("SELECT amount_paid, change_amount FROM transactions WHERE transaction_id = %s", (transaction_id,))
+                txn_row = cursor.fetchone()
+                if txn_row:
+                    amount_paid = txn_row.get('amount_paid')
+                    change = txn_row.get('change_amount') or 0
+            except Exception:
+                pass
+            try:
+                cursor.execute("""
+                    SELECT pm.method_name, pm.method_type, p.amount
+                    FROM payments p
+                    JOIN payment_methods pm ON p.payment_method_id = pm.payment_method_id
+                    WHERE p.transaction_id = %s
+                    ORDER BY p.payment_id DESC LIMIT 1
+                """, (transaction_id,))
+                pm_row = cursor.fetchone()
+                if pm_row:
+                    payment_method = pm_row.get('method_name') or payment_method
+                    payment_method_type = (pm_row.get('method_type') or '').lower()
+                    if amount_paid is None:
+                        amount_paid = pm_row.get('amount')
+                    if change == 0 and amount_paid and ('cash' in (payment_method or '').lower() or payment_method_type == 'cash'):
+                        change = float(amount_paid) - float(transaction.get('total', 0))
+            except Exception:
+                pass
+            order_type = None
+            order_discount = 0
+            order_tip = float(transaction.get('tip') or 0)
+            if order_id:
+                try:
+                    cursor.execute("SELECT discount, discount_type, order_type, tip FROM orders WHERE order_id = %s", (order_id,))
+                    o_row = cursor.fetchone()
+                    if o_row:
+                        order_discount = float(o_row.get('discount') or 0)
+                        order_type = o_row.get('order_type') or ''
+                        if o_row.get('tip'):
+                            order_tip = float(o_row.get('tip') or 0)
+                except Exception:
+                    pass
+            customer_phone = None
+            customer_address = None
+            cust_id = transaction.get('customer_id')
+            if cust_id:
+                try:
+                    cursor.execute("SELECT phone FROM customers WHERE customer_id = %s", (cust_id,))
+                    cr = cursor.fetchone()
+                    if cr:
+                        customer_phone = cr.get('phone')
+                except Exception:
+                    pass
+            payment_status = 'completed'
+            if amount_paid is None and order_type and str(order_type).lower() in ('pickup', 'delivery'):
+                payment_status = 'pending'
+            order_data = {
+                'order_id': order_id or transaction_id,
+                'order_number': order_number,
+                'order_date': transaction.get('order_date') or transaction.get('created_at'),
+                'employee_name': transaction.get('employee_name', ''),
+                'customer_name': transaction.get('customer_name', ''),
+                'customer_phone': customer_phone,
+                'customer_address': customer_address,
+                'order_type': order_type or '',
+                'payment_status': payment_status,
+                'subtotal': transaction.get('subtotal', 0),
+                'tax_amount': transaction.get('tax', 0),
+                'tax_rate': (transaction.get('tax') or 0) / (transaction.get('subtotal') or 1) if transaction.get('subtotal') else 0,
+                'discount': order_discount,
+                'tip': order_tip,
+                'total': transaction.get('total', 0),
+                'total_includes_tip': True,
+                'payment_method': payment_method,
+                'payment_method_type': payment_method_type,
+                'amount_paid': amount_paid,
+                'change': change if change > 0 else 0,
+                'signature': signature,
+                'transaction_fee': 0,
+                'profile_customer_name': transaction.get('customer_name', ''),
+                'profile_customer_phone': customer_phone,
+            }
+            order_items = [
+                {
+                    'product_name': it.get('product_name', 'Unknown Product'),
+                    'quantity': it.get('quantity', 1),
+                    'unit_price': it.get('unit_price', 0),
+                    'subtotal': it.get('subtotal', 0),
+                    'discount': it.get('discount', 0),
+                    'sku': it.get('sku', ''),
+                }
+                for it in transaction_items
+            ]
+        finally:
+            conn.close()
+    elif order_id:
+        # Same data path as generate_receipt_with_barcode (printed receipt)
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cursor.execute("""
+                SELECT o.*,
+                       e.first_name || ' ' || e.last_name as employee_name,
+                       c.customer_name AS profile_customer_name,
+                       c.phone AS profile_customer_phone
+                FROM orders o
+                LEFT JOIN employees e ON o.employee_id = e.employee_id
+                LEFT JOIN customers c ON o.customer_id = c.customer_id
+                WHERE o.order_id = %s
+            """, (order_id,))
+            order_row = cursor.fetchone()
+            if not order_row:
+                return None
+            order_data = dict(order_row)
+            if not order_data.get('customer_name') and order_data.get('profile_customer_name'):
+                order_data['customer_name'] = order_data['profile_customer_name']
+            if not order_data.get('customer_phone') and order_data.get('profile_customer_phone'):
+                order_data['customer_phone'] = order_data['profile_customer_phone']
+            cursor.execute("""
+                SELECT oi.*, i.product_name, i.sku
+                FROM order_items oi
+                LEFT JOIN inventory i ON oi.product_id = i.product_id
+                WHERE oi.order_id = %s
+                ORDER BY oi.order_item_id
+            """, (order_id,))
+            order_items = [dict(r) for r in cursor.fetchall()]
+            cursor.execute(
+                "SELECT signature FROM transactions WHERE order_id = %s AND signature IS NOT NULL AND TRIM(signature) != '' ORDER BY transaction_id DESC LIMIT 1",
+                (order_id,),
+            )
+            sig_row = cursor.fetchone()
+            if sig_row and sig_row.get('signature'):
+                signature = sig_row['signature']
+                order_data['signature'] = signature
+            amount_paid = None
+            payment_method = order_data.get('payment_method', 'Unknown')
+            payment_method_type = ''
+            change = 0
+            try:
+                cursor.execute("""
+                    SELECT pm.method_name, pm.method_type, p.amount
+                    FROM payments p
+                    JOIN payment_methods pm ON p.payment_method_id = pm.payment_method_id
+                    WHERE p.transaction_id IN (SELECT transaction_id FROM transactions WHERE order_id = %s)
+                    ORDER BY p.payment_id DESC LIMIT 1
+                """, (order_id,))
+                pm_row = cursor.fetchone()
+                if pm_row:
+                    payment_method = pm_row.get('method_name', payment_method)
+                    payment_method_type = (pm_row.get('method_type') or '').lower()
+                    amount_paid = pm_row.get('amount')
+            except Exception:
+                pass
+            if amount_paid and ('cash' in (payment_method or '').lower() or payment_method_type == 'cash'):
+                change = float(amount_paid) - float(order_data.get('total', 0))
+            order_data['payment_method'] = payment_method
+            order_data['payment_method_type'] = payment_method_type
+            order_data['amount_paid'] = amount_paid
+            order_data['change'] = change if change > 0 else 0
+            order_data['signature'] = signature
+            order_data['total_includes_tip'] = True
+        finally:
+            conn.close()
+    else:
+        return None
+
+    if not order_data:
+        return None
+
+    order_number = order_data.get('order_number', '')
+    barcode_base64 = ''
+    try:
+        barcode_bytes = generate_barcode_data(order_number)
+        if barcode_bytes and len(barcode_bytes) > 0:
+            barcode_base64 = base64.b64encode(barcode_bytes).decode('ascii')
+    except Exception:
+        pass
+
+    return {
+        'order_data': order_data,
+        'order_items': order_items,
+        'barcode_base64': barcode_base64,
+        'signature': signature,
+    }
+
 
 def generate_return_receipt(return_id: int) -> Optional[bytes]:
     """Generate return receipt PDF using the same receipt template as POS (Settings)."""

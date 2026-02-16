@@ -5,7 +5,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { PageScrollProvider, usePageScroll } from './contexts/PageScrollContext'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { Settings, User, LogOut } from 'lucide-react'
+import { Settings, User, LogOut, Bell } from 'lucide-react'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import POS from './components/POS'
@@ -24,6 +24,7 @@ const Accounting = lazy(() => import('./pages/Accounting'))
 import CashRegister from './pages/CashRegister'
 import Customers from './pages/Customers'
 import OfflineBanner from './components/OfflineBanner'
+import NotificationPanel from './components/NotificationPanel'
 import { useOffline } from './contexts/OfflineContext'
 import { cachedFetch } from './services/offlineSync'
 import { getPermissionsCache } from './services/employeeRolesCache'
@@ -323,6 +324,8 @@ function Layout({ children, employee, onLogout }) {
   const { isOnline, isSyncing, pendingCount } = useOffline()
   const { disableScroll } = usePageScroll()
   const showBanner = !isOnline || isSyncing || pendingCount > 0
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
+  const [notifications] = useState([]) // Optional: feed from context or API later
 
   useEffect(() => {
     if (!navigator.onLine) return
@@ -414,18 +417,38 @@ function Layout({ children, employee, onLogout }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {employee && (
-            <button
-              type="button"
-              className="button-26 button-26--header"
-              role="button"
-              onClick={() => navigate('/settings')}
-              title="Settings"
-            >
-              <div className="button-26__content">
-                <Settings size={14} style={{ marginRight: '6px', color: '#888' }} />
-                <span className="button-26__text text">Settings</span>
-              </div>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setNotificationPanelOpen(true)}
+                title="Notifications"
+                aria-label="Notifications"
+                style={{
+                  padding: 0,
+                  margin: 0,
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <Bell size={20} style={{ color: '#888' }} />
+              </button>
+              <button
+                type="button"
+                className="button-26 button-26--header"
+                role="button"
+                onClick={() => navigate('/settings')}
+                title="Settings"
+              >
+                <div className="button-26__content">
+                  <Settings size={14} style={{ marginRight: '6px', color: '#888' }} />
+                  <span className="button-26__text text">Settings</span>
+                </div>
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -454,6 +477,11 @@ function Layout({ children, employee, onLogout }) {
           </button>
         </div>
       </div>
+      <NotificationPanel
+        open={notificationPanelOpen}
+        onClose={() => setNotificationPanelOpen(false)}
+        notifications={notifications}
+      />
       <OfflineBanner />
       <main
         style={{

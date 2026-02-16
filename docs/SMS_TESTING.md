@@ -1,35 +1,33 @@
-# SMS Testing
+# Email & SMS Notifications
 
-Test SMS from **Settings → SMS & Notifications**.
+Configure **Settings → Notifications → Email & SMS Notifications** for orders, reports, scheduling, clock-ins, and receipts.
+
+## Quick Setup
+
+1. **Open Settings** and go to the **Notifications** tab.
+2. In the **Email & SMS Notifications** section:
+   - **Email service**: Gmail (test email) or AWS SES (production email)
+   - **SMS service**: AWS SNS only (~$0.006/SMS) — separate from email
+3. **To test email with Gmail**:
+   - SMTP Server: `smtp.gmail.com`
+   - Gmail Address: your Gmail
+   - App Password: Create at [Google Account → Security → 2-Step Verification → App passwords](https://myaccount.google.com/apppasswords)
+4. **For AWS (production)**:
+   - AWS Access Key ID, Secret Access Key, Region (e.g. `us-east-1`)
+5. Toggle **Notify for** (Orders, Reports, Scheduling, Clock-ins, Receipts) for email/SMS.
+6. Click **Save**, then **Test Email** or **Test SMS**.
 
 ## Important: Email-to-SMS is largely discontinued
 
-**ATT** (June 2025), **Verizon**, and **T-Mobile** (late 2024) have shut down their free email-to-SMS gateways. Sending to addresses like `number@txt.att.net` will often fail with "domain not found" or similar. For **reliable delivery**, use **AWS SNS** in Settings (~$0.006/SMS).
+**ATT** (June 2025), **Verizon**, and **T-Mobile** (late 2024) have shut down their free email-to-SMS gateways. For **reliable SMS delivery**, use **AWS SNS** (~$0.006/SMS).
 
-## Quick test from Settings
+## Migrations
 
-1. **Open Settings** and go to the **SMS & Notifications** tab.
-2. **Store**: Leave "Default Store" selected (or pick another store if you have more).
-3. **SMS Provider**: For reliable delivery choose **AWS SNS** and add your AWS credentials. (Email-to-SMS is kept for legacy; most US carriers no longer support it.)
-4. **If using Email-to-SMS** (Gmail setup):
-   - **SMTP Server**: `smtp.gmail.com`
-   - **SMTP Port**: `587`
-   - **Email**: Your Gmail address
-   - **App Password**: Create one at [Google Account → Security → 2-Step Verification → App passwords](https://myaccount.google.com/apppasswords). Use that 16-character password here (not your normal Gmail password).
-5. Click **Save SMS Settings**.
-6. Click **Send Test SMS**.
-7. Enter a **10-digit US mobile number** (e.g. `5551234567`) and a short message, then **Send**.
-
-Messages are limited to **160 characters** and only **US 10-digit numbers** are supported for email-to-SMS.
-
-## If you just set up the database
-
-The migration `migrations/add_sms_tables_postgres.sql` creates the `stores`, `sms_settings`, `sms_messages`, `sms_opt_outs`, and `sms_templates` tables and seeds one **Default Store**. If you added the SMS feature after initial setup, run:
+Run these if the tables don't exist yet:
 
 ```bash
-# From project root, with .env loaded for DB connection:
 psql $DATABASE_URL -f migrations/add_sms_tables_postgres.sql
-# Or: psql -h localhost -p 5432 -U postgres -d pos_db -f migrations/add_sms_tables_postgres.sql
+psql $DATABASE_URL -f migrations/add_notification_settings_postgres.sql
 ```
 
-Then restart the backend and test from Settings as above.
+The second migration adds `email_provider`, `email_from_address`, and `notification_preferences` to `sms_settings`.

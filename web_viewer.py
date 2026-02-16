@@ -290,6 +290,21 @@ def _pg_conn():
     return conn, conn.cursor(cursor_factory=RealDictCursor)
 
 
+def _send_order_notification_async(order_info):
+    """Fire-and-forget: send order notification (email/SMS) if enabled. Runs in thread."""
+    def _do():
+        try:
+            from notification_service import send_order_notification
+            store_settings = get_store_location_settings() or {}
+            emails = [e for e in [(store_settings.get('store_email') or '').strip()] if e]
+            phones = [p for p in [(store_settings.get('store_phone') or '').replace('-', '').replace(' ', '').strip()] if p and len(p) >= 10]
+            if emails or phones:
+                send_order_notification(1, order_info, emails, phones)
+        except Exception as e:
+            print(f"[notification] order notify error: {e}")
+    threading.Thread(target=_do, daemon=True).start()
+
+
 def _json_serial(obj):
     """Convert date/time/Decimal to JSON-serializable types."""
     if obj is None:
@@ -2204,7 +2219,15 @@ def api_create_order():
                     import traceback
                     print(f"Accounting journalize_sale error (order {result['order_id']}): {je}")
                     traceback.print_exc()
-        
+
+        # Send order notification (email/SMS) if enabled
+        if result.get('success') and result.get('order_id'):
+            oi = {'order_number': result.get('order_number', ''), 'total': result.get('total', 0)}
+            src = (data.get('order_source') or '').strip()
+            if src:
+                oi['order_source'] = src
+            _send_order_notification_async(oi)
+
         return jsonify(result)
     except Exception as e:
         print(f"Create order error: {e}")
@@ -3475,6 +3498,8 @@ def api_orders_from_integration():
                 journalize_sale_to_accounting(order_id, int(employee_id))
             except Exception as je:
                 print(f"Accounting journalize_sale (order {order_id}) from integration: {je}")
+            oi = {'order_number': result.get('order_number', ''), 'total': result.get('total', 0), 'order_source': order_source}
+            _send_order_notification_async(oi)
             return jsonify({
                 'success': True,
                 'order_id': order_id,
@@ -7517,12 +7542,32 @@ def api_publish_schedule(period_id):
         
         scheduler = AutomatedScheduleGenerator()
         result = scheduler.publish_schedule(period_id, employee_id)
-        
+
+        # Send schedule notifications (email/SMS) if enabled
+        if result:
+            try:
+                from notification_service import send_schedule_notification
+                conn, cursor = _pg_conn()
+                try:
+                    cursor.execute("""
+                        SELECT DISTINCT e.email, e.phone FROM employees e
+                        JOIN scheduled_shifts ss ON ss.employee_id = e.employee_id
+                        WHERE ss.period_id = %s AND e.active = 1
+                    """, (period_id,))
+                    rows = cursor.fetchall() or []
+                    emails = [r.get('email') for r in rows if r and (r.get('email') or '').strip()]
+                    phones = [r.get('phone') for r in rows if r and (r.get('phone') or '').replace('-', '').replace(' ', '').strip()]
+                    send_schedule_notification(1, emails, phones, 'Your schedule has been updated. Please check the calendar.')
+                finally:
+                    conn.close()
+            except Exception as ne:
+                print(f"[notification] schedule notify error: {ne}")
+
         # Published shifts are shown via /api/employee_schedule (Scheduled_Shifts).
         # Do NOT add them to master_calendar — the Calendar loads both APIs and would
         # show each shift twice (event + schedule). Profile weekly schedule also uses
         # employee_schedule, so nothing extra is needed.
-        
+
         return jsonify({'success': result})
     except Exception as e:
         traceback.print_exc()
@@ -8386,7 +8431,7 @@ def process_payment():
 
 @app.route('/api/receipt/preference', methods=['POST'])
 def save_receipt_preference():
-    """Save receipt preference"""
+    """Save receipt preference and send receipt email when type is 'email'"""
     try:
         data = request.json
         
@@ -8399,6 +8444,37 @@ def save_receipt_preference():
             data.get('email'),
             data.get('phone')
         )
+        
+        # When customer opts for email receipt, send it immediately
+        if data.get('receipt_type') == 'email' and (data.get('email') or data.get('to_address')):
+            to_address = (data.get('email') or data.get('to_address') or '').strip()
+            if to_address:
+                try:
+                    conn, cursor = cds.get_connection()
+                    cursor.execute(
+                        "SELECT order_id FROM transactions WHERE transaction_id = %s",
+                        (data['transaction_id'],)
+                    )
+                    row = cursor.fetchone()
+                    conn.close()
+                    order_id = (row.get('order_id') if isinstance(row, dict) else (row[0] if row else None))
+                    if order_id:
+                        from notification_service import send_receipt_email_for_order
+                        result = send_receipt_email_for_order(
+                            int(data.get('store_id', 1)), int(order_id), to_address,
+                            transaction_id=data.get('transaction_id'),
+                        )
+                        if not result.get('success'):
+                            return jsonify({
+                                'success': False,
+                                'message': result.get('message', 'Receipt saved but email failed to send')
+                            }), 400
+                except Exception as email_err:
+                    traceback.print_exc()
+                    return jsonify({
+                        'success': False,
+                        'message': f'Receipt saved but email failed: {str(email_err)}'
+                    }), 400
         
         return jsonify({'success': True, 'preference_id': preference_id})
     except Exception as e:
@@ -9369,6 +9445,815 @@ def api_update_customer_rewards_settings():
         finally:
             conn.close()
             
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# ============================================================================
+# SMS & NOTIFICATION API (Settings > Notifications)
+# ============================================================================
+
+def _require_notification_auth():
+    """Require session and admin/manage_settings. Returns (ok, err_response)."""
+    session_token = (request.json or {}).get('session_token') if request.is_json else None
+    session_token = session_token or request.headers.get('X-Session-Token') or request.args.get('session_token')
+    if not session_token:
+        return False, (jsonify({'success': False, 'message': 'Session token required'}), 401)
+    session_result = verify_session(session_token)
+    if not session_result.get('valid'):
+        return False, (jsonify({'success': False, 'message': 'Invalid session'}), 401)
+    employee_id = session_result.get('employee_id')
+    employee = get_employee(employee_id) if employee_id else None
+    is_admin = employee and (employee.get('position') or '').lower() == 'admin'
+    pm = get_permission_manager()
+    has_perm = pm.has_permission(employee_id, 'manage_settings') if employee_id else False
+    if not is_admin and not has_perm:
+        return False, (jsonify({'success': False, 'message': 'Permission denied'}), 403)
+    return True, None
+
+@app.route('/api/sms/stores', methods=['GET'])
+def api_sms_stores():
+    """List stores for SMS/notification settings."""
+    try:
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("SELECT store_id, store_name, is_active FROM stores WHERE is_active = 1 ORDER BY store_id")
+            rows = cursor.fetchall()
+            return jsonify([dict(r) for r in rows] if rows else [])
+        finally:
+            conn.close()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sms/settings/<int:store_id>', methods=['GET'])
+def api_sms_settings_get(store_id):
+    """Get SMS/email settings for a store."""
+    try:
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("""
+                SELECT setting_id, store_id, sms_provider, smtp_server, smtp_port, smtp_user, smtp_password,
+                       smtp_use_tls, business_name, store_phone_number,
+                       aws_access_key_id, aws_secret_access_key, aws_region,
+                       auto_send_rewards_earned, auto_send_rewards_redeemed,
+                       COALESCE(email_provider, 'gmail') AS email_provider,
+                       email_from_address,
+                       COALESCE(notification_preferences::text, '{}') AS notification_preferences
+                FROM sms_settings WHERE store_id = %s LIMIT 1
+            """, (store_id,))
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({
+                    'sms_provider': 'aws_sns', 'smtp_server': 'smtp.gmail.com', 'smtp_port': 587,
+                    'smtp_use_tls': 1, 'email_provider': 'gmail', 'notification_preferences': {}
+                })
+            out = dict(row)
+            if out.get('smtp_password'):
+                out['smtp_password'] = '***'
+            if out.get('aws_secret_access_key'):
+                out['aws_secret_access_key'] = '***'
+            prefs = out.get('notification_preferences')
+            if isinstance(prefs, str):
+                try:
+                    out['notification_preferences'] = json.loads(prefs) if prefs else {}
+                except json.JSONDecodeError:
+                    out['notification_preferences'] = {}
+            return jsonify(out)
+        finally:
+            conn.close()
+    except Exception as e:
+        if 'email_provider' in str(e) or 'notification_preferences' in str(e):
+            # Columns may not exist yet - run migration
+            return jsonify({
+                'sms_provider': 'aws_sns', 'smtp_server': 'smtp.gmail.com', 'smtp_port': 587,
+                'smtp_use_tls': 1, 'email_provider': 'gmail', 'notification_preferences': {}
+            })
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+def _save_sms_settings(store_id, data):
+    """Internal helper to save SMS/notification settings. Returns (success, response)."""
+    conn, cursor = _pg_conn()
+    try:
+        cursor.execute("SELECT 1 FROM stores WHERE store_id = %s", (store_id,))
+        if cursor.fetchone() is None:
+            try:
+                cursor.execute("INSERT INTO stores (store_id, store_name, is_active) VALUES (%s, 'Default Store', 1)", (store_id,))
+            except Exception:
+                conn.rollback()
+                cursor.execute("INSERT INTO stores (store_name, is_active) VALUES ('Default Store', 1) RETURNING store_id")
+                row = cursor.fetchone()
+                if row:
+                    store_id = row.get('store_id', row[0]) if hasattr(row, 'get') else row[0]
+            conn.commit()
+        cursor.execute("SELECT 1 FROM sms_settings WHERE store_id = %s", (store_id,))
+        exists = cursor.fetchone() is not None
+        prefs = data.get('notification_preferences')
+        if isinstance(prefs, dict):
+            prefs_json = json.dumps(prefs)
+        else:
+            prefs_json = '{}'
+
+        updates = [
+            'sms_provider = %s', 'smtp_server = %s', 'smtp_port = %s', 'smtp_use_tls = %s',
+            'business_name = %s', 'store_phone_number = %s', 'updated_at = NOW()'
+        ]
+        params = [
+            data.get('sms_provider', 'aws_sns'),
+            data.get('smtp_server', 'smtp.gmail.com'),
+            int(data.get('smtp_port', 587)),
+            1 if data.get('smtp_use_tls', True) else 0,
+            data.get('business_name') or None,
+            data.get('store_phone_number') or None,
+        ]
+        try:
+            cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'sms_settings' AND column_name = 'email_provider'")
+            if cursor.fetchone():
+                updates.extend(['email_provider = %s', 'email_from_address = %s', 'notification_preferences = %s::jsonb'])
+                params.extend([(data.get('email_provider') or 'gmail'), data.get('email_from_address') or None, prefs_json])
+        except Exception:
+            conn.rollback()
+
+        if exists:
+            if data.get('smtp_password') and data.get('smtp_password') != '***':
+                updates.append('smtp_password = %s')
+                params.append(data['smtp_password'])
+            if data.get('aws_secret_access_key') and data.get('aws_secret_access_key') != '***':
+                updates.append('aws_secret_access_key = %s')
+                params.append(data['aws_secret_access_key'])
+            # For aws_access_key_id: treat '***' (masked) as "keep current" - pass '' so COALESCE keeps existing
+            aws_key = data.get('aws_access_key_id')
+            if aws_key == '***':
+                aws_key = ''
+            updates.extend(['smtp_user = COALESCE(NULLIF(%s, %s), smtp_user)', 'aws_access_key_id = COALESCE(NULLIF(%s, %s), aws_access_key_id)', 'aws_region = COALESCE(NULLIF(%s, %s), aws_region)'])
+            params.extend([data.get('smtp_user') or '', '', aws_key or '', '', data.get('aws_region') or '', ''])
+            params.append(store_id)
+            cursor.execute("UPDATE sms_settings SET " + ", ".join(updates) + " WHERE store_id = %s", params)
+        else:
+            try:
+                cursor.execute("""
+                    INSERT INTO sms_settings (store_id, sms_provider, smtp_server, smtp_port, smtp_user, smtp_password,
+                        smtp_use_tls, business_name, store_phone_number, aws_access_key_id, aws_secret_access_key,
+                        aws_region, email_provider, email_from_address, notification_preferences, auto_send_rewards_earned, auto_send_rewards_redeemed)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, 1, 1)
+                """, (
+                    store_id, data.get('sms_provider', 'email'),
+                    data.get('smtp_server', 'smtp.gmail.com'), int(data.get('smtp_port', 587)),
+                    data.get('smtp_user') or '', data.get('smtp_password') or '',
+                    1 if data.get('smtp_use_tls', True) else 0,
+                    data.get('business_name') or None, data.get('store_phone_number') or None,
+                    data.get('aws_access_key_id') or None, data.get('aws_secret_access_key') or None,
+                    data.get('aws_region') or 'us-east-1',
+                    data.get('email_provider') or 'gmail', data.get('email_from_address') or None,
+                    prefs_json
+                ))
+            except Exception:
+                conn.rollback()
+                cursor.execute("""
+                    INSERT INTO sms_settings (store_id, sms_provider, smtp_server, smtp_port, smtp_user, smtp_password,
+                        smtp_use_tls, business_name, store_phone_number, aws_access_key_id, aws_secret_access_key,
+                        aws_region, auto_send_rewards_earned, auto_send_rewards_redeemed)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
+                """, (
+                    store_id, data.get('sms_provider', 'email'),
+                    data.get('smtp_server', 'smtp.gmail.com'), int(data.get('smtp_port', 587)),
+                    data.get('smtp_user') or '', data.get('smtp_password') or '',
+                    1 if data.get('smtp_use_tls', True) else 0,
+                    data.get('business_name') or None, data.get('store_phone_number') or None,
+                    data.get('aws_access_key_id') or None, data.get('aws_secret_access_key') or None,
+                    data.get('aws_region') or 'us-east-1'
+                ))
+        conn.commit()
+        return True, jsonify({'success': True, 'message': 'Settings saved'})
+    except Exception as db_err:
+        conn.rollback()
+        traceback.print_exc()
+        return False, (jsonify({'success': False, 'message': str(db_err)}), 500)
+    finally:
+        conn.close()
+
+@app.route('/api/sms/settings/<int:store_id>', methods=['POST'])
+def api_sms_settings_post(store_id):
+    """Save SMS/email settings for a store."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        ok, resp = _save_sms_settings(store_id, data)
+        return resp if ok else (resp[0], resp[1])
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sms/send', methods=['POST'])
+def api_sms_send():
+    """Send an SMS (manual or test)."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        phone = (data.get('phone_number') or '').strip()
+        text = (data.get('message_text') or '').strip()[:160]
+        if not phone or not text:
+            return jsonify({'success': False, 'message': 'Phone number and message required'}), 400
+        from notification_service import send_sms
+        result = send_sms(phone, text, store_id, 'manual', data.get('customer_id'))
+        if result.get('success'):
+            return jsonify({'success': True, 'message': 'SMS sent'})
+        return jsonify({'success': False, 'message': result.get('message', 'Failed to send')}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sms/messages', methods=['GET'])
+def api_sms_messages():
+    """List SMS messages for a store."""
+    try:
+        store_id = int(request.args.get('store_id', 1))
+        limit = min(int(request.args.get('limit', 50)), 200)
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("""
+                SELECT message_id, store_id, phone_number, message_text, direction, status, provider, created_at
+                FROM sms_messages WHERE store_id = %s ORDER BY created_at DESC LIMIT %s
+            """, (store_id, limit))
+            rows = cursor.fetchall()
+            return jsonify([dict(r) for r in rows] if rows else [])
+        finally:
+            conn.close()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sms/templates', methods=['GET', 'POST'])
+def api_sms_templates():
+    """List or create SMS templates."""
+    if request.method == 'GET':
+        try:
+            store_id = int(request.args.get('store_id', 1))
+            conn, cursor = _pg_conn()
+            try:
+                cursor.execute("SELECT template_id, store_id, template_name, template_text, category FROM sms_templates WHERE store_id = %s", (store_id,))
+                rows = cursor.fetchall()
+                return jsonify([dict(r) for r in rows] if rows else [])
+            finally:
+                conn.close()
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'success': False, 'message': str(e)}), 500
+    else:
+        ok, err = _require_notification_auth()
+        if not ok:
+            return err
+        try:
+            data = request.json or {}
+            store_id = int(data.get('store_id', 1))
+            name = (data.get('template_name') or '').strip()
+            text = (data.get('template_text') or '').strip()
+            if not name or not text:
+                return jsonify({'success': False, 'message': 'Template name and text required'}), 400
+            conn, cursor = _pg_conn()
+            try:
+                cursor.execute(
+                    "INSERT INTO sms_templates (store_id, template_name, template_text, category) VALUES (%s, %s, %s, %s)",
+                    (store_id, name, text, data.get('category', 'rewards'))
+                )
+                conn.commit()
+                return jsonify({'success': True, 'message': 'Template created'})
+            except Exception as db_err:
+                conn.rollback()
+                return jsonify({'success': False, 'message': str(db_err)}), 500
+            finally:
+                conn.close()
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sms/migrate-to-aws/<int:store_id>', methods=['POST'])
+def api_sms_migrate_to_aws(store_id):
+    """Switch SMS provider from email to AWS SNS."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("""
+                UPDATE sms_settings SET sms_provider = 'aws_sns',
+                    aws_access_key_id = COALESCE(NULLIF(%s, ''), aws_access_key_id),
+                    aws_secret_access_key = CASE WHEN %s IS NOT NULL AND %s != '' AND %s != '***' THEN %s ELSE aws_secret_access_key END,
+                    aws_region = COALESCE(NULLIF(%s, ''), aws_region)
+                WHERE store_id = %s
+            """, (
+                data.get('aws_access_key_id') or '',
+                data.get('aws_secret_access_key'), data.get('aws_secret_access_key'),
+                data.get('aws_secret_access_key'), data.get('aws_secret_access_key'),
+                data.get('aws_region') or 'us-east-1',
+                store_id
+            ))
+            conn.commit()
+            return jsonify({'success': True, 'message': 'Migrated to AWS SNS'})
+        except Exception as db_err:
+            conn.rollback()
+            return jsonify({'success': False, 'message': str(db_err)}), 500
+        finally:
+            conn.close()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/notification-settings', methods=['GET'])
+def api_notification_settings_get():
+    """Get notification settings (email/SMS config + preferences) for Settings page."""
+    try:
+        store_id = int(request.args.get('store_id', 1))
+        from notification_service import _get_sms_settings, get_notification_preferences
+        s = _get_sms_settings(store_id)
+        prefs = get_notification_preferences(store_id)
+        out = {'store_id': store_id, 'notification_preferences': prefs}
+        if s:
+            out['email_provider'] = s.get('email_provider') or 'gmail'
+            out['email_from_address'] = s.get('email_from_address') or s.get('smtp_user')
+            out['sms_provider'] = s.get('sms_provider') or 'aws_sns'
+            out['smtp_server'] = s.get('smtp_server') or 'smtp.gmail.com'
+            out['smtp_port'] = s.get('smtp_port') or 587
+            out['smtp_user'] = s.get('smtp_user')
+            out['smtp_password'] = '***' if (s.get('smtp_password') and s.get('smtp_password').strip()) else ''
+            out['business_name'] = s.get('business_name')
+            out['store_phone_number'] = s.get('store_phone_number')
+            out['aws_access_key_id'] = '***' if (s.get('aws_access_key_id') and s.get('aws_access_key_id').strip()) else (s.get('aws_access_key_id') or '')
+            out['aws_secret_access_key'] = '***' if (s.get('aws_secret_access_key') and s.get('aws_secret_access_key').strip()) else ''
+            out['aws_region'] = s.get('aws_region') or 'us-east-1'
+        else:
+            out['email_provider'] = 'gmail'
+            out['sms_provider'] = 'aws_sns'
+            out['smtp_server'] = 'smtp.gmail.com'
+            out['smtp_port'] = 587
+        return jsonify(out)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/notification-settings', methods=['POST'])
+def api_notification_settings_post():
+    """Save notification settings from Settings page."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        ok, resp = _save_sms_settings(store_id, data)
+        return resp if ok else (resp[0], resp[1])
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/notifications/test-email', methods=['POST'])
+def api_notifications_test_email():
+    """Send a test email. Uses saved settings, or override from request body (for testing without save)."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        to_addr = (data.get('to_address') or data.get('email') or '').strip()
+        if not to_addr:
+            return jsonify({'success': False, 'message': 'Email address required'}), 400
+        store_id = int(data.get('store_id', 1))
+        override = None
+        pw = data.get('smtp_password') or ''
+        if data.get('smtp_user') and pw and pw != '***':
+            override = {
+                'email_provider': data.get('email_provider', 'gmail'),
+                'smtp_server': data.get('smtp_server', 'smtp.gmail.com'),
+                'smtp_port': int(data.get('smtp_port', 587)),
+                'smtp_user': data.get('smtp_user'),
+                'smtp_password': pw,
+                'smtp_use_tls': 1,
+                'business_name': data.get('business_name', 'POS'),
+            }
+        from notification_service import send_email
+        result = send_email(to_addr, 'POS Test Email', '<p>This is a test email from your POS notification system.</p>', 'This is a test email from your POS notification system.', store_id, settings_override=override)
+        if result.get('success'):
+            return jsonify({'success': True, 'message': 'Test email sent'})
+        return jsonify({'success': False, 'message': result.get('message', 'Failed to send')}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/notifications/test-sms', methods=['POST'])
+def api_notifications_test_sms():
+    """Send a test SMS."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        phone = (data.get('phone_number') or data.get('phone') or '').strip()
+        if not phone:
+            return jsonify({'success': False, 'message': 'Phone number required'}), 400
+        store_id = int(data.get('store_id', 1))
+        from notification_service import send_sms
+        result = send_sms(phone, data.get('message_text', 'Test SMS from POS')[:160], store_id)
+        if result.get('success'):
+            return jsonify({'success': True, 'message': 'Test SMS sent'})
+        return jsonify({'success': False, 'message': result.get('message', 'Failed to send')}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# --- Email templates ---
+@app.route('/api/email-templates/send-test', methods=['POST'])
+def api_email_templates_send_test():
+    """Send the current template as a test email. Body: { to_address, subject, body_html }."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        to_addr = (data.get('to_address') or data.get('to') or '').strip()
+        if not to_addr:
+            return jsonify({'success': False, 'message': 'Email address required'}), 400
+        subj = (data.get('subject') or data.get('subject_template') or 'Test').strip() or 'Test'
+        body_html = (data.get('body_html') or data.get('body_html_template') or '<p>Test</p>').strip() or '<p>Test</p>'
+        body_text = (data.get('body_text') or data.get('body_text_template') or '').strip()
+        store_id = int(data.get('store_id', 1))
+        from notification_service import send_email
+        result = send_email(to_addr, subj, body_html, body_text or None, store_id)
+        if result.get('success'):
+            return jsonify({'success': True, 'message': 'Test email sent'})
+        return jsonify({'success': False, 'message': result.get('message', 'Failed to send')}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates')
+def api_email_templates_list():
+    """List email templates for store."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        store_id = int(request.args.get('store_id', 1))
+        conn, cursor = _pg_conn()
+        cursor.execute(
+            """SELECT id, store_id, category, name, subject_template, body_html_template, body_text_template, variables, is_default, created_at, updated_at
+               FROM email_templates WHERE store_id = %s ORDER BY category, name""",
+            (store_id,)
+        )
+        rows = cursor.fetchall()
+        cols = ['id', 'store_id', 'category', 'name', 'subject_template', 'body_html_template', 'body_text_template', 'variables', 'is_default', 'created_at', 'updated_at']
+        templates = []
+        for r in rows:
+            d = dict(zip(cols, r)) if not hasattr(r, 'keys') else dict(r)
+            if d.get('variables') and isinstance(d['variables'], str):
+                try:
+                    d['variables'] = json.loads(d['variables'])
+                except Exception:
+                    pass
+            templates.append(d)
+        conn.close()
+        return jsonify({'templates': templates})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/<int:tid>', methods=['GET'])
+def api_email_template_get(tid):
+    """Get single email template."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        conn, cursor = _pg_conn()
+        cursor.execute(
+            """SELECT id, store_id, category, name, subject_template, body_html_template, body_text_template, variables, is_default
+               FROM email_templates WHERE id = %s""",
+            (tid,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({'success': False, 'message': 'Template not found'}), 404
+        cols = ['id', 'store_id', 'category', 'name', 'subject_template', 'body_html_template', 'body_text_template', 'variables', 'is_default']
+        d = dict(zip(cols, row)) if not hasattr(row, 'keys') else dict(row)
+        if d.get('variables') and isinstance(d['variables'], str):
+            try:
+                d['variables'] = json.loads(d['variables'])
+            except Exception:
+                pass
+        return jsonify(d)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates', methods=['POST'])
+def api_email_template_create():
+    """Create email template."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        category = (data.get('category') or 'generic').strip().lower()
+        if category not in ('receipt', 'order', 'report', 'schedule', 'clockin', 'generic'):
+            category = 'generic'
+        name = (data.get('name') or 'New Template').strip()
+        subject = (data.get('subject_template') or '').strip()
+        body_html = (data.get('body_html_template') or '').strip()
+        body_text = (data.get('body_text_template') or '').strip()
+        variables = data.get('variables')
+        if variables is not None and not isinstance(variables, (dict, list)):
+            variables = None
+        is_default = 1 if data.get('is_default') else 0
+        conn, cursor = _pg_conn()
+        cursor.execute(
+            """INSERT INTO email_templates (store_id, category, name, subject_template, body_html_template, body_text_template, variables, is_default)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (store_id, category, name, subject, body_html, body_text, json.dumps(variables) if variables else None, is_default)
+        )
+        row = cursor.fetchone()
+        tid = row['id'] if isinstance(row, dict) else row[0]
+        if is_default:
+            cursor.execute(
+                """UPDATE email_templates SET is_default = 0 WHERE store_id = %s AND category = %s AND id != %s""",
+                (store_id, category, tid)
+            )
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'id': tid})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/<int:tid>', methods=['PUT'])
+def api_email_template_update(tid):
+    """Update email template."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        conn, cursor = _pg_conn()
+        cursor.execute("SELECT store_id, category FROM email_templates WHERE id = %s", (tid,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Template not found'}), 404
+        store_id = row['store_id'] if isinstance(row, dict) else row[0]
+        category = row['category'] if isinstance(row, dict) else row[1]
+        updates = []
+        params = []
+        for k, col in [('name', 'name'), ('subject_template', 'subject_template'), ('body_html_template', 'body_html_template'), ('body_text_template', 'body_text_template')]:
+            if k in data:
+                updates.append(f"{col} = %s")
+                params.append(data[k])
+        if 'variables' in data:
+            updates.append("variables = %s")
+            params.append(json.dumps(data['variables']) if data['variables'] else None)
+        if 'is_default' in data:
+            updates.append("is_default = %s")
+            params.append(1 if data['is_default'] else 0)
+        if 'category' in data:
+            c = (data['category'] or 'generic').strip().lower()
+            if c in ('receipt', 'order', 'report', 'schedule', 'clockin', 'generic'):
+                updates.append("category = %s")
+                params.append(c)
+        if not updates:
+            conn.close()
+            return jsonify({'success': True})
+        updates.append("updated_at = NOW()")
+        params.append(tid)
+        cursor.execute(f"UPDATE email_templates SET {', '.join(updates)} WHERE id = %s", params)
+        if data.get('is_default'):
+            cursor.execute(
+                """UPDATE email_templates SET is_default = 0 WHERE store_id = %s AND category = %s AND id != %s""",
+                (store_id, data.get('category') or category, tid)
+            )
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/reset-to-la-maison', methods=['POST'])
+def api_email_templates_reset_to_la_maison():
+    """Delete all email templates for the store and insert fresh La Maison templates."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        from la_maison_templates import LA_MAISON_DEFAULTS
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        conn, cursor = _pg_conn()
+        cursor.execute("DELETE FROM email_templates WHERE store_id = %s", (store_id,))
+        deleted = cursor.rowcount
+        for row in LA_MAISON_DEFAULTS:
+            category, name, subject, body_html, body_text = row[:5]
+            is_default = row[5] if len(row) > 5 else 1
+            cursor.execute(
+                """INSERT INTO email_templates (store_id, category, name, subject_template, body_html_template, body_text_template, is_default)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (store_id, category, name, subject, body_html, body_text, is_default)
+            )
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'deleted': deleted, 'created': len(LA_MAISON_DEFAULTS)})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/seed-receipt-presets', methods=['POST'])
+def api_email_templates_seed_receipt_presets():
+    """Ensure at least 2 receipt templates exist (Premium and Restaurant Promotion). Creates missing ones."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        from la_maison_templates import LA_MAISON_DEFAULTS
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        conn, cursor = _pg_conn()
+        cursor.execute(
+            "SELECT name FROM email_templates WHERE store_id = %s AND category = 'receipt'",
+            (store_id,)
+        )
+        existing_names = {r[0] for r in cursor.fetchall()}
+        receipt_defaults = [r for r in LA_MAISON_DEFAULTS if r[0] == 'receipt']
+        created = 0
+        for row in receipt_defaults:
+            category, name, subject, body_html, body_text = row[:5]
+            is_default = row[5] if len(row) > 5 else (1 if name == 'Receipt (Premium)' else 0)
+            if name not in existing_names:
+                cursor.execute(
+                    """INSERT INTO email_templates (store_id, category, name, subject_template, body_html_template, body_text_template, is_default)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (store_id, category, name, subject, body_html, body_text, is_default)
+                )
+                created += 1
+                if is_default:
+                    cursor.execute(
+                        """UPDATE email_templates SET is_default = 0 WHERE store_id = %s AND category = 'receipt' AND name != %s""",
+                        (store_id, name)
+                    )
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'created': created})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/clear-receipt-templates', methods=['POST'])
+def api_email_templates_clear_receipt():
+    """Delete all receipt email templates for the store (removes old custom templates)."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        conn, cursor = _pg_conn()
+        cursor.execute("DELETE FROM email_templates WHERE store_id = %s AND category = 'receipt'", (store_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'deleted': deleted})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/clear', methods=['POST'])
+def api_email_templates_clear():
+    """Delete all email templates for the store. Use to remove old templates and start fresh with La Maison."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        conn, cursor = _pg_conn()
+        cursor.execute("DELETE FROM email_templates WHERE store_id = %s", (store_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'deleted': deleted})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/<int:tid>', methods=['DELETE'])
+def api_email_template_delete(tid):
+    """Delete email template."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        conn, cursor = _pg_conn()
+        cursor.execute("DELETE FROM email_templates WHERE id = %s RETURNING id", (tid,))
+        if cursor.fetchone():
+            conn.commit()
+            conn.close()
+            return jsonify({'success': True})
+        conn.close()
+        return jsonify({'success': False, 'message': 'Template not found'}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/<int:tid>/set-default', methods=['POST'])
+def api_email_template_set_default(tid):
+    """Set template as default for its category."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        conn, cursor = _pg_conn()
+        cursor.execute("SELECT store_id, category FROM email_templates WHERE id = %s", (tid,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'success': False, 'message': 'Template not found'}), 404
+        store_id, category = row[0], row[1]
+        cursor.execute("UPDATE email_templates SET is_default = 0 WHERE store_id = %s AND category = %s", (store_id, category))
+        cursor.execute("UPDATE email_templates SET is_default = 1, updated_at = NOW() WHERE id = %s", (tid,))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/email-templates/preview', methods=['POST'])
+def api_email_template_preview():
+    """Preview template with sample variables."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        from notification_service import render_template
+        data = request.json or {}
+        subject = (data.get('subject_template') or '').strip()
+        body_html = (data.get('body_html_template') or '').strip()
+        body_text = (data.get('body_text_template') or '').strip()
+        variables = data.get('variables') or {}
+        if isinstance(variables, list):
+            variables = {k: f"<{k}>" for k in variables}
+        sample = {
+            'store_name': variables.get('store_name', 'My Store'),
+            'order_number': variables.get('order_number', '12345'),
+            'order_date': variables.get('order_date', '2025-01-15 14:30'),
+            'total': variables.get('total', '49.99'),
+            'subtotal': variables.get('subtotal', '45.00'),
+            'tax': variables.get('tax', '4.99'),
+            'items_html': variables.get('items_html', '<tr><td>Sample Item x 1</td><td>$45.00</td></tr>'),
+            'items_text': variables.get('items_text', 'Sample Item x 1 $45.00'),
+            'footer_message': variables.get('footer_message', 'Thank you!'),
+            'message': variables.get('message', 'Your schedule has been updated.'),
+            'employee_name': variables.get('employee_name', 'John Doe'),
+            'action': variables.get('action', 'clocked in'),
+            'report_name': variables.get('report_name', 'Sales Report'),
+            'report_date': variables.get('report_date', '2025-01-15'),
+        }
+        sample.update({k: v for k, v in variables.items() if k not in sample})
+        out_subj = render_template(subject, sample)
+        out_html = render_template(body_html, sample)
+        out_text = render_template(body_text, sample)
+        return jsonify({'subject': out_subj, 'body_html': out_html, 'body_text': out_text})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/notifications/send-receipt-email', methods=['POST'])
+def api_send_receipt_email():
+    """Send receipt email for an order. Called when customer opts for email receipt."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        data = request.json or {}
+        order_id = data.get('order_id')
+        to_address = (data.get('to_address') or data.get('email') or '').strip()
+        if not order_id or not to_address:
+            return jsonify({'success': False, 'message': 'order_id and to_address required'}), 400
+        store_id = int(data.get('store_id', 1))
+        transaction_id = data.get('transaction_id')
+        from notification_service import send_receipt_email_for_order
+        result = send_receipt_email_for_order(
+            store_id, int(order_id), to_address,
+            transaction_id=int(transaction_id) if transaction_id else None,
+        )
+        if result.get('success'):
+            return jsonify({'success': True, 'message': 'Receipt sent'})
+        return jsonify({'success': False, 'message': result.get('message', 'Failed to send')}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500

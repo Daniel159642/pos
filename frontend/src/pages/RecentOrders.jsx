@@ -9,9 +9,10 @@ import { ScanBarcode, CheckCircle, XCircle, ChevronDown, Pencil, MoreVertical, L
 import { formLabelStyle, formTitleStyle, inputBaseStyle, getInputFocusHandlers, FormField, FormLabel, CompactFormActions, modalOverlayStyle, modalContentStyle } from '../components/FormStyles'
 import Table from '../components/Table'
 import CustomerDisplayPopup from '../components/CustomerDisplayPopup'
+import { playNewOrderSound } from '../utils/notificationSound'
 
 const NEW_ORDER_TOAST_OPTIONS_KEY = 'pos_new_order_toast_options'
-const DEFAULT_NEW_ORDER_TOAST_OPTIONS = { play_sound: true, auto_dismiss_sec: 0, click_action: 'go_to_order' }
+const DEFAULT_NEW_ORDER_TOAST_OPTIONS = { play_sound: true, sound_type: 'default', volume: 0.5, sound_until_dismiss: false, auto_dismiss_sec: 0, click_action: 'go_to_order' }
 
 function getNewOrderToastOptions() {
   try {
@@ -22,34 +23,6 @@ function getNewOrderToastOptions() {
     }
   } catch (_) {}
   return { ...DEFAULT_NEW_ORDER_TOAST_OPTIONS }
-}
-
-function playNewOrderSound() {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    if (!Ctx) return
-    const ctx = new Ctx()
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(() => playNewOrderBeep(ctx)).catch(() => {})
-    } else {
-      playNewOrderBeep(ctx)
-    }
-  } catch (_) {}
-}
-
-function playNewOrderBeep(ctx) {
-  try {
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.frequency.value = 800
-    osc.type = 'sine'
-    gain.gain.setValueAtTime(0.15, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.2)
-  } catch (_) {}
 }
 
 function RecentOrders() {
@@ -431,10 +404,32 @@ function RecentOrders() {
   }, [highlightedOrderId])
 
   // New order toast: play sound and/or auto-dismiss per settings
+  const newOrderSoundIntervalRef = useRef(null)
   useEffect(() => {
     if (!newOrderToast) return
     const opts = getNewOrderToastOptions()
-    if (opts.play_sound) playNewOrderSound()
+    const soundOpts = { sound_type: opts.sound_type ?? 'default', volume: opts.volume ?? 0.5 }
+    if (opts.play_sound && opts.sound_type !== 'none') {
+      if (opts.sound_until_dismiss) {
+        playNewOrderSound(soundOpts)
+        newOrderSoundIntervalRef.current = setInterval(() => {
+          playNewOrderSound(soundOpts)
+        }, 1200)
+      } else {
+        playNewOrderSound(soundOpts)
+      }
+    }
+    return () => {
+      if (newOrderSoundIntervalRef.current) {
+        clearInterval(newOrderSoundIntervalRef.current)
+        newOrderSoundIntervalRef.current = null
+      }
+    }
+  }, [newOrderToast])
+
+  useEffect(() => {
+    if (!newOrderToast) return
+    const opts = getNewOrderToastOptions()
     if (opts.auto_dismiss_sec > 0) {
       const t = setTimeout(() => setNewOrderToast(null), opts.auto_dismiss_sec * 1000)
       return () => clearTimeout(t)

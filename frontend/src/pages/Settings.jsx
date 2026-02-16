@@ -6,6 +6,7 @@ import { useTheme } from '../contexts/ThemeContext'
 import { usePermissions } from '../contexts/PermissionContext'
 import { useToast } from '../contexts/ToastContext'
 import { cachedFetch } from '../services/offlineSync'
+import { getApiUrl } from '../utils/backendUrl'
 import { 
   Settings as SettingsIcon, 
   MapPin, 
@@ -37,7 +38,8 @@ import {
   RefreshCw,
   Shield,
   Plug,
-  Database
+  Database,
+  Mail
 } from 'lucide-react'
 import BarcodeScanner from '../components/BarcodeScanner'
 import AdminDashboard from '../components/AdminDashboard'
@@ -46,6 +48,8 @@ import Table from '../components/Table'
 import '../components/CustomerDisplay.css'
 import '../components/CustomerDisplayButtons.css'
 import { getDefaultCheckoutUi, mergeCheckoutUiFromApi } from '../utils/checkoutUi'
+import { playNewOrderSound, NOTIFICATION_SOUND_OPTIONS } from '../utils/notificationSound'
+import { LA_MAISON_RECEIPT_HTML, LA_MAISON_ORDER_HTML, LA_MAISON_ORDER_APP_NOTIFICATION_HTML, LA_MAISON_SCHEDULE_HTML, LA_MAISON_SCHEDULE_APP_NOTIFICATION_HTML, LA_MAISON_CLOCKIN_HTML, LA_MAISON_CLOCKIN_APP_NOTIFICATION_HTML, LA_MAISON_REPORT_HTML, LA_MAISON_REPORT_APP_NOTIFICATION_HTML, LA_MAISON_RESTAURANT_PROMOTION_RECEIPT_HTML } from './laMaisonReceiptTemplate'
 
 function CustomDropdown({ value, onChange, options, placeholder, required, isDarkMode, themeColorRgb, style = {} }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -190,6 +194,7 @@ function CustomDropdown({ value, onChange, options, placeholder, required, isDar
 const DEFAULT_RECEIPT_TEMPLATE = {
   receipt_type: 'traditional',
   store_name: 'Store',
+  store_tagline: '',
   store_address: '',
   store_city: '',
   store_state: '',
@@ -1219,30 +1224,34 @@ const NOTIFICATION_OPTIONS = [
   { id: 'general_error', label: 'General error toasts', description: 'Any other error messages in the app.', toastType: 'error', sampleMessage: 'Something went wrong' }
 ]
 
+const NOTIFICATION_SECTIONS = [
+  { id: 'orders', title: 'Orders' },
+  { id: 'register', title: 'Register' },
+  { id: 'customers', title: 'Customers' },
+  { id: 'shipments', title: 'Shipments' },
+  { id: 'settings_integrations', title: 'Settings & integrations' },
+  { id: 'general', title: 'General' }
+]
+
+const NOTIFICATION_OPTIONS_BY_SECTION = {
+  orders: ['pos_order_success', 'pos_add_to_cart', 'pos_discount', 'pos_register_closed', 'pos_customer', 'pos_store_credit', 'pos_errors', 'recent_new_order', 'recent_status', 'recent_return', 'recent_errors'],
+  register: ['cash_register', 'cash_drop', 'cash_errors'],
+  customers: ['customers', 'customers_errors'],
+  shipments: ['shipment_created', 'shipment_draft_saved', 'shipment_preview_error', 'shipment_create_errors', 'shipment_validation', 'shipment_load_error'],
+  settings_integrations: ['settings_integration'],
+  general: ['general_success', 'general_warning', 'general_error']
+}
+
+const NOTIFICATION_OPTIONS_MAP = NOTIFICATION_OPTIONS.reduce((acc, opt) => ({ ...acc, [opt.id]: opt }), {})
+
 const NEW_ORDER_TOAST_OPTIONS_KEY = 'pos_new_order_toast_options'
 const DEFAULT_NEW_ORDER_TOAST_OPTIONS = {
   play_sound: true,
+  sound_type: 'default', // 'default' | 'chime' | 'alert' | 'soft' | 'none'
+  volume: 0.5, // 0-1
+  sound_until_dismiss: false, // repeat sound until user dismisses
   auto_dismiss_sec: 0, // 0 = only when clicked, 4 = auto after 4 sec
   click_action: 'go_to_order' // 'go_to_order' | 'print_receipt' | 'dismiss_only'
-}
-
-async function playNewOrderSound() {
-  try {
-    const Ctx = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)
-    if (!Ctx) return
-    const ctx = new Ctx()
-    if (ctx.state === 'suspended') await ctx.resume()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.frequency.value = 800
-    osc.type = 'sine'
-    gain.gain.setValueAtTime(0.15, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.2)
-  } catch (_) {}
 }
 
 function SquareMigrationCard({ isDarkMode, themeColorRgb, showToast, compactPrimaryButtonStyle, inputBaseStyle, getInputFocusHandlers, FormField, FormLabel }) {
@@ -1463,6 +1472,8 @@ function Settings() {
   const [allowScheduledDelivery, setAllowScheduledDelivery] = useState(false)
   const [activeReceiptSection, setActiveReceiptSection] = useState(null) // 'header', 'body_items', 'body_totals', 'body_barcode', 'footer', 'styling', null
   const [receiptEditModalOpen, setReceiptEditModalOpen] = useState(false)
+  const [receiptEditorView, setReceiptEditorView] = useState('print') // 'print' | 'email'
+  const [receiptEditorEmailPreset, setReceiptEditorEmailPreset] = useState('premium') // 'premium' | 'restaurantPromotion'
   const [receiptUndoStack, setReceiptUndoStack] = useState([])
   const [receiptRedoStack, setReceiptRedoStack] = useState([])
   const setReceiptSettingsWithUndo = (updater) => {
@@ -1616,6 +1627,9 @@ function Settings() {
       setReceiptRedoStack([])
       loadReceiptTemplates()
       setActiveReceiptSection('header')
+    } else {
+      setReceiptEditorView('print')
+      setReceiptEditorEmailPreset('premium')
     }
   }, [receiptEditModalOpen])
   useEffect(() => {
@@ -1850,6 +1864,57 @@ function Settings() {
       localStorage.setItem(NEW_ORDER_TOAST_OPTIONS_KEY, JSON.stringify(next))
     } catch (_) {}
   }
+          const [notificationChannelSettings, setNotificationChannelSettings] = useState({
+    store_id: 1,
+    email_provider: 'gmail',
+    sms_provider: 'aws_sns',
+    smtp_server: 'smtp.gmail.com',
+    smtp_port: 587,
+    smtp_user: '',
+    smtp_password: '',
+    business_name: '',
+    store_phone_number: '',
+    aws_access_key_id: '',
+    aws_secret_access_key: '',
+    aws_region: 'us-east-1',
+    notification_preferences: {
+      orders: { email: false, sms: false },
+      reports: { email: false, sms: false },
+      scheduling: { email: true, sms: true },
+      clockins: { email: false, sms: false },
+      receipts: { email: true, sms: false }
+    }
+  })
+  const [notificationChannelSaving, setNotificationChannelSaving] = useState(false)
+  const [showTestEmailInput, setShowTestEmailInput] = useState(false)
+  const [testEmailInput, setTestEmailInput] = useState('')
+  const [testEmailSending, setTestEmailSending] = useState(false)
+  const [emailTemplates, setEmailTemplates] = useState([])
+  const [emailTemplateModalOpen, setEmailTemplateModalOpen] = useState(false)
+  const [emailTemplateAdding, setEmailTemplateAdding] = useState(false)
+  const [emailTemplateResetting, setEmailTemplateResetting] = useState(false)
+  const [emailTemplateEditing, setEmailTemplateEditing] = useState(null)
+  const [emailTemplateForm, setEmailTemplateForm] = useState({ name: '', category: 'receipt', subject_template: '', body_html_template: '', body_text_template: '' })
+  const [emailTemplateEditMode, setEmailTemplateEditMode] = useState('visual') // 'visual' | 'html'
+  const [activeEmailReceiptSection, setActiveEmailReceiptSection] = useState('header')
+  const [emailReceiptDesign, setEmailReceiptDesign] = useState(() => ({ ...DEFAULT_RECEIPT_TEMPLATE, headerBg: '#1e293b', headerTextColor: '#ffffff', footerBg: '#f8fafc', footerTextColor: '#64748b' }))
+  const [emailTemplateCategory, setEmailTemplateCategory] = useState('receipt')
+  const [emailTemplateDropdownOpen, setEmailTemplateDropdownOpen] = useState(false)
+  const [emailOrderDesign, setEmailOrderDesign] = useState({ store_name: '', store_tagline: '', store_address: '', store_phone: '', store_email: '', footer_message: '' })
+  const [activeEmailOrderSection, setActiveEmailOrderSection] = useState('header')
+  const [emailTemplateShowNewInput, setEmailTemplateShowNewInput] = useState(false)
+  const [emailTemplateNewName, setEmailTemplateNewName] = useState('')
+  const [emailTemplateCreatePreset, setEmailTemplateCreatePreset] = useState(null)
+  const [emailReceiptPreset, setEmailReceiptPreset] = useState(null) // 'premium' | 'restaurantPromotion' when on built-in preset (like receipt print Modern/Classic)
+  const [emailOrderPreset, setEmailOrderPreset] = useState('appNotification') // 'appNotification' | 'classic' – default for order alerts
+  const [emailTemplateUndoStack, setEmailTemplateUndoStack] = useState([])
+  const [emailTemplateRedoStack, setEmailTemplateRedoStack] = useState([])
+  const [showOrderTestEmailInput, setShowOrderTestEmailInput] = useState(false)
+  const [orderTestEmailInput, setOrderTestEmailInput] = useState('')
+  const [orderTestEmailSending, setOrderTestEmailSending] = useState(false)
+  const emailTemplateDropdownRef = useRef(null)
+  const emailTemplateNewInputRef = useRef(null)
+  const emailTemplateRestoringRef = useRef(false)
   const [showCreateCampaignModal, setShowCreateCampaignModal] = useState(false)
   const [showProductPickerModal, setShowProductPickerModal] = useState(false)
   const [showBarcodeInPicker, setShowBarcodeInPicker] = useState(false)
@@ -2284,6 +2349,151 @@ function Settings() {
       loadRegisterEvents()
     }
   }, [activeTab, cashSettings.register_id])
+
+  useEffect(() => {
+    if (activeTab === 'notifications') {
+      cachedFetch('/api/notification-settings?store_id=1', { headers: { 'X-Session-Token': localStorage.getItem('sessionToken') || '' } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.success !== false) {
+            setNotificationChannelSettings((prev) => ({
+              ...prev,
+              store_id: data.store_id ?? 1,
+              email_provider: data.email_provider ?? 'gmail',
+              sms_provider: data.sms_provider ?? 'email',
+              smtp_server: data.smtp_server ?? 'smtp.gmail.com',
+              smtp_port: data.smtp_port ?? 587,
+              smtp_user: data.smtp_user ?? '',
+              smtp_password: data.smtp_password ?? '',
+              business_name: data.business_name ?? '',
+              store_phone_number: data.store_phone_number ?? '',
+              aws_access_key_id: data.aws_access_key_id ?? '',
+              aws_secret_access_key: data.aws_secret_access_key ?? '',
+              aws_region: data.aws_region ?? 'us-east-1',
+              notification_preferences: {
+                ...prev.notification_preferences,
+                ...(data.notification_preferences || {})
+              }
+            }))
+          }
+        })
+        .catch(() => {})
+      const token = localStorage.getItem('sessionToken') || ''
+      cachedFetch(`/api/email-templates?store_id=1&session_token=${encodeURIComponent(token)}`, { headers: { 'X-Session-Token': token } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.templates) setEmailTemplates(data.templates)
+        })
+        .catch(() => {})
+    }
+  }, [activeTab])
+
+  // Refetch email templates when modal opens; seed receipt presets if fewer than 2
+  useEffect(() => {
+    if (!emailTemplateModalOpen) return
+    setEmailTemplateUndoStack([])
+    setEmailTemplateRedoStack([])
+    const token = localStorage.getItem('sessionToken') || ''
+    const refetch = () => cachedFetch(`/api/email-templates?store_id=1&session_token=${encodeURIComponent(token)}`, { headers: { 'X-Session-Token': token } }).then((r) => r.json()).then((d) => { if (d?.templates) setEmailTemplates(d.templates) }).catch(() => {})
+    cachedFetch(`/api/email-templates?store_id=1&session_token=${encodeURIComponent(token)}`, { headers: { 'X-Session-Token': token } })
+      .then((r) => r.json())
+      .then((d) => {
+        const templates = d?.templates || []
+        const receiptCount = templates.filter((t) => t.category === 'receipt').length
+        if (receiptCount < 2) {
+          cachedFetch('/api/email-templates/seed-receipt-presets', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': token }, body: JSON.stringify({ store_id: 1 }) }).then(() => refetch()).catch(() => refetch())
+        } else {
+          setEmailTemplates(templates)
+        }
+      })
+      .catch(() => {})
+  }, [emailTemplateModalOpen])
+
+  const pushEmailTemplateUndo = () => {
+    if (emailTemplateRestoringRef.current) return
+    setEmailTemplateUndoStack((u) => [...u, { rd: JSON.parse(JSON.stringify(emailReceiptDesign)), od: JSON.parse(JSON.stringify(emailOrderDesign)), f: JSON.parse(JSON.stringify(emailTemplateForm)) }])
+    setEmailTemplateRedoStack([])
+  }
+  const handleEmailTemplateUndo = () => {
+    if (emailTemplateUndoStack.length === 0) return
+    const toRestore = emailTemplateUndoStack[emailTemplateUndoStack.length - 1]
+    emailTemplateRestoringRef.current = true
+    setEmailTemplateRedoStack((r) => [...r, { rd: JSON.parse(JSON.stringify(emailReceiptDesign)), od: JSON.parse(JSON.stringify(emailOrderDesign)), f: JSON.parse(JSON.stringify(emailTemplateForm)) }])
+    setEmailReceiptDesign(toRestore.rd)
+    setEmailOrderDesign(toRestore.od)
+    setEmailTemplateForm(toRestore.f)
+    setEmailTemplateUndoStack((u) => u.slice(0, -1))
+    setTimeout(() => { emailTemplateRestoringRef.current = false }, 0)
+  }
+  const handleEmailTemplateRedo = () => {
+    if (emailTemplateRedoStack.length === 0) return
+    const toRestore = emailTemplateRedoStack[emailTemplateRedoStack.length - 1]
+    emailTemplateRestoringRef.current = true
+    setEmailTemplateUndoStack((u) => [...u, { rd: JSON.parse(JSON.stringify(emailReceiptDesign)), od: JSON.parse(JSON.stringify(emailOrderDesign)), f: JSON.parse(JSON.stringify(emailTemplateForm)) }])
+    setEmailReceiptDesign(toRestore.rd)
+    setEmailOrderDesign(toRestore.od)
+    setEmailTemplateForm(toRestore.f)
+    setEmailTemplateRedoStack((r) => r.slice(0, -1))
+    setTimeout(() => { emailTemplateRestoringRef.current = false }, 0)
+  }
+
+  // Auto-select first template when modal opens or category has templates but none selected. For order with no templates, default to App Notification preset.
+  useEffect(() => {
+    if (!emailTemplateModalOpen || emailTemplateEditing !== null) return
+    const templates = emailTemplates.filter((t) => t.category === emailTemplateCategory)
+    const first = templates.find((t) => t.is_default) || templates[0]
+    if (emailTemplateCategory === 'order' && !first) {
+      const p = { name: 'Order Alert (App Notification)', subj: 'New order #{{order_number}}', html: LA_MAISON_ORDER_APP_NOTIFICATION_HTML, txt: 'New order #{{order_number}}\nTotal: ${{total}}\n{{store_name}}\n{{store_tagline}}\n{{store_address}}\n{{store_phone}}' }
+      setEmailOrderPreset('appNotification')
+      setEmailTemplateForm({ name: p.name, category: 'order', subject_template: p.subj, body_html_template: p.html, body_text_template: p.txt })
+      setEmailTemplateEditMode('visual')
+      setActiveEmailOrderSection('header')
+      setEmailOrderDesign({ store_name: receiptSettings.store_name || storeLocationSettings.store_name || '', store_tagline: receiptSettings.store_tagline || '', store_address: receiptSettings.store_address || storeLocationSettings.address || '', store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '', store_email: receiptSettings.store_email || storeLocationSettings.store_email || '', footer_message: receiptSettings.footer_message || '' })
+      return
+    }
+    if (!first) return
+    setEmailTemplateEditing(first.id)
+    setEmailTemplateForm({ name: first.name, category: first.category, subject_template: first.subject_template || '', body_html_template: first.body_html_template || '', body_text_template: first.body_text_template || '' })
+    if (first.category === 'receipt') {
+      setEmailTemplateEditMode('visual')
+      setActiveEmailReceiptSection('header')
+      const savedDesign = first.variables?.receiptDesign
+      setEmailReceiptDesign(savedDesign ? { ...DEFAULT_RECEIPT_TEMPLATE, ...receiptSettings, ...savedDesign, headerBg: savedDesign.headerBg || '#1e293b', headerTextColor: savedDesign.headerTextColor || '#ffffff', footerBg: savedDesign.footerBg || '#f8fafc', footerTextColor: savedDesign.footerTextColor || '#64748b' } : { ...DEFAULT_RECEIPT_TEMPLATE, ...receiptSettings, headerBg: '#1e293b', headerTextColor: '#ffffff', footerBg: '#f8fafc', footerTextColor: '#64748b' })
+    } else if (['order', 'schedule', 'clockin', 'report'].includes(first.category)) {
+      setEmailTemplateEditMode('visual')
+      setActiveEmailOrderSection('header')
+      const saved = first.variables?.orderDesign
+      const base = { store_name: receiptSettings.store_name || storeLocationSettings.store_name || '', store_tagline: receiptSettings.store_tagline || '', store_address: receiptSettings.store_address || storeLocationSettings.address || '', store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '', store_email: receiptSettings.store_email || storeLocationSettings.store_email || '', footer_message: receiptSettings.footer_message || '' }
+      setEmailOrderDesign(saved ? { ...base, ...saved } : base)
+    } else {
+      setEmailTemplateEditMode('html')
+    }
+  }, [emailTemplateModalOpen, emailTemplateCategory, emailTemplateEditing, emailTemplates, receiptSettings, storeLocationSettings])
+
+  useEffect(() => {
+    if (emailTemplateShowNewInput && emailTemplateNewInputRef.current) {
+      emailTemplateNewInputRef.current.focus()
+    }
+  }, [emailTemplateShowNewInput])
+
+  useEffect(() => {
+    if (!emailTemplateDropdownOpen) {
+      setEmailTemplateShowNewInput(false)
+      setEmailTemplateNewName('')
+      setEmailTemplateCreatePreset(null)
+    }
+  }, [emailTemplateDropdownOpen])
+
+  useEffect(() => {
+    if (!emailTemplateDropdownOpen) return
+    const handleClick = (e) => {
+      if (emailTemplateDropdownRef.current && !emailTemplateDropdownRef.current.contains(e.target)) {
+        setEmailTemplateDropdownOpen(false)
+      }
+    }
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
+  }, [emailTemplateDropdownOpen])
 
   // Refetch register data when user returns to this tab (e.g. after processing a cash sale on POS)
   useEffect(() => {
@@ -6240,13 +6450,14 @@ function Settings() {
                     ...modalContentStyle(isDarkMode, {
                       borderRadius: '12px',
                       maxWidth: '95vw',
-                      width: '720px',
-                      height: '72vh',
+                      width: receiptEditorView === 'email' ? '900px' : '720px',
+                      height: receiptEditorView === 'email' ? '85vh' : '72vh',
                       maxHeight: '90vh',
                       padding: 0,
                       display: 'flex',
                       flexDirection: 'column',
-                      overflow: 'hidden'
+                      overflow: 'hidden',
+                      transition: 'width 0.35s ease, height 0.35s ease'
                     }),
                     border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'
                   }}
@@ -6906,7 +7117,37 @@ function Settings() {
                       </div>
                     </div>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative', background: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff' }}>
-                      <div ref={receiptTemplateDropdownRef} style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, padding: '8px 12px' }}>
+                      <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, padding: '8px 12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => { setReceiptEditorView(receiptEditorView === 'print' ? 'email' : 'print'); setReceiptTemplateDropdownOpen(false) }}
+                          style={{
+                            padding: '6px 12px',
+                            fontSize: '13px',
+                            border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+                            borderRadius: '8px',
+                            background: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.08)'
+                          }}
+                        >
+                          {receiptEditorView === 'print' ? (
+                            <>
+                              <Mail size={14} />
+                              <span>Email</span>
+                            </>
+                          ) : (
+                            <>
+                              <Printer size={14} />
+                              <span>Receipt</span>
+                            </>
+                          )}
+                        </button>
+                        <div ref={receiptTemplateDropdownRef}>
                         <button
                           type="button"
                           onClick={() => setReceiptTemplateDropdownOpen(o => !o)}
@@ -6925,9 +7166,11 @@ function Settings() {
                           }}
                         >
                           <span>
-                            {receiptSettings.template_preset?.startsWith('template_')
-                              ? (savedTemplates.find(t => t.id === parseInt(receiptSettings.template_preset.replace('template_', ''), 10))?.name ?? 'Template')
-                              : (receiptSettings.template_preset === 'modern' ? 'Modern' : receiptSettings.template_preset === 'classic' ? 'Classic' : receiptSettings.template_preset === 'minimal' ? 'Minimal' : 'Custom')}
+                            {receiptEditorView === 'email'
+                              ? (receiptEditorEmailPreset === 'restaurantPromotion' ? 'Restaurant Promotion' : 'Premium')
+                              : (receiptSettings.template_preset?.startsWith('template_')
+                                ? (savedTemplates.find(t => t.id === parseInt(receiptSettings.template_preset.replace('template_', ''), 10))?.name ?? 'Template')
+                                : (receiptSettings.template_preset === 'modern' ? 'Modern' : receiptSettings.template_preset === 'classic' ? 'Classic' : receiptSettings.template_preset === 'minimal' ? 'Minimal' : 'Custom'))}
                           </span>
                           <ChevronDown size={14} style={{ opacity: 0.8 }} />
                         </button>
@@ -6947,6 +7190,38 @@ function Settings() {
                               overflow: 'hidden'
                             }}
                           >
+                            {receiptEditorView === 'email' ? (
+                              <>
+                                {['premium', 'restaurantPromotion'].map(presetId => {
+                                  const label = presetId === 'premium' ? 'Premium' : 'Restaurant Promotion'
+                                  const isActive = receiptEditorEmailPreset === presetId
+                                  return (
+                                    <button
+                                      key={presetId}
+                                      type="button"
+                                      onClick={() => {
+                                        setReceiptEditorEmailPreset(presetId)
+                                        setReceiptTemplateDropdownOpen(false)
+                                      }}
+                                      style={{
+                                        width: '100%',
+                                        padding: '10px 14px',
+                                        border: 'none',
+                                        background: isActive ? `rgba(${themeColorRgb}, 0.15)` : 'none',
+                                        fontSize: '13px',
+                                        textAlign: 'left',
+                                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                        cursor: 'pointer',
+                                        fontWeight: isActive ? 600 : 400
+                                      }}
+                                    >
+                                      {label}
+                                    </button>
+                                  )
+                                })}
+                              </>
+                            ) : (
+                              <>
                             {['modern', 'classic', 'minimal', 'custom'].map(preset => {
                               const label = preset === 'modern' ? 'Modern' : preset === 'classic' ? 'Classic' : preset === 'minimal' ? 'Minimal' : 'Custom'
                               const isActive = !receiptSettings.template_preset?.startsWith('template_') && receiptSettings.template_preset === preset
@@ -7121,18 +7396,68 @@ function Settings() {
                                 Save as new template…
                               </button>
                             )}
+                              </>
+                            )}
                           </div>
                         )}
+                        </div>
                       </div>
-                      <div className="checkout-ui-controls-scroll" style={{ flex: 1, overflow: 'auto', padding: '16px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start' }}>
-                        <ReceiptPreview
-                          settings={receiptSettings}
-                          id="receipt-preview-print"
-                          onSectionClick={(section) => setActiveReceiptSection(activeReceiptSection === section ? null : section)}
-                          activeSection={activeReceiptSection}
-                          isDarkMode={isDarkMode}
-                          themeColorRgb={themeColorRgb}
-                        />
+                      <div className="checkout-ui-controls-scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: receiptEditorView === 'email' ? 'stretch' : 'flex-start' }}>
+                        {receiptEditorView === 'print' ? (
+                          <ReceiptPreview
+                            settings={receiptSettings}
+                            id="receipt-preview-print"
+                            onSectionClick={(section) => setActiveReceiptSection(activeReceiptSection === section ? null : section)}
+                            activeSection={activeReceiptSection}
+                            isDarkMode={isDarkMode}
+                            themeColorRgb={themeColorRgb}
+                          />
+                        ) : (() => {
+                          const RECEIPT_EMAIL_SAMPLE = {
+                            store_name: receiptSettings.store_name || storeLocationSettings.store_name || 'La Maison',
+                            store_tagline: receiptSettings.store_tagline || 'Fine Dining & Provisions',
+                            order_number: 'RCP-2024-001234',
+                            receipt_date: 'February 12, 2026',
+                            receipt_time: '2:45 PM',
+                            location: 'Downtown - Main Street',
+                            employee_name: 'James Patterson',
+                            items_html: '<tr><td><div class="item-name">Grilled Atlantic Salmon @ $24.99</div><div class="item-description">Seasonal vegetables, lemon beurre blanc, wild rice</div></td><td>$24.99</td></tr><tr><td><div class="item-name">Classic Caesar Salad @ $12.50</div><div class="item-description">Romaine hearts, aged parmesan, garlic croutons</div></td><td>$12.50</td></tr><tr><td><div class="item-name">Cold Brew Coffee @ $4.50</div><div class="item-description">House blend, served over ice</div></td><td>$4.50</td></tr>',
+                            subtotal: '41.99',
+                            tax: '3.57',
+                            tip: '8.00',
+                            total: '53.56',
+                            payment_method: 'Paid by Card',
+                            barcode_html: '',
+                            signature_html: '',
+                            footer_message: receiptSettings.footer_message || 'Thank you for dining with us.',
+                            store_email: receiptSettings.store_email || storeLocationSettings.store_email || 'concierge@lamaison.com',
+                            formatted_store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '(555) 123-4567',
+                            store_address: receiptSettings.store_address || storeLocationSettings.address || [storeLocationSettings.address, storeLocationSettings.city, storeLocationSettings.state, storeLocationSettings.zip].filter(Boolean).join(', ') || '123 Main Street · Your City, ST 12345'
+                          }
+                          let emailHtml = receiptEditorEmailPreset === 'restaurantPromotion' ? LA_MAISON_RESTAURANT_PROMOTION_RECEIPT_HTML : LA_MAISON_RECEIPT_HTML
+                          Object.entries(RECEIPT_EMAIL_SAMPLE).forEach(([k, v]) => {
+                            emailHtml = emailHtml.replace(new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}', 'g'), String(v ?? ''))
+                          })
+                          emailHtml = emailHtml.replace(/\{\{[^}]*\}\}/g, '')
+                          return (
+                            <div style={{ flex: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+                              <iframe
+                                title="Receipt email preview"
+                                srcDoc={emailHtml}
+                                style={{
+                                  flex: 1,
+                                  minHeight: 0,
+                                  width: '100%',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  backgroundColor: '#fff',
+                                  boxShadow: '0 2px 12px rgba(0,0,0,0.15)'
+                                }}
+                                sandbox="allow-same-origin"
+                              />
+                            </div>
+                          )
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -7145,177 +7470,820 @@ function Settings() {
 
       {/* Notifications Tab */}
       {activeTab === 'notifications' && (
-        <div style={{ maxWidth: '560px' }}>
+        <div style={{ maxWidth: '560px', margin: '0 auto', width: '100%' }}>
           <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '8px' }}>
             Notifications
           </FormTitle>
-          <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '20px' }}>
+          <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
             Turn specific in-app notifications on or off. Use the Test button to see how each notification looks.
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {NOTIFICATION_OPTIONS.map((opt) => (
-              <div
-                key={opt.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  flexWrap: 'wrap',
-                  padding: '14px 16px',
-                  borderRadius: '12px',
-                  border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                  backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
-                }}
-              >
-                <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '2px' }}>
-                    {opt.label}
-                  </div>
-                  <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
-                    {opt.description}
-                  </div>
+
+          {/* Email & SMS - External Notifications */}
+          <div style={{
+            padding: '20px',
+            borderRadius: '12px',
+            border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa',
+            marginBottom: '24px'
+          }}>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '16px' }}>
+              Email & SMS Notifications
+            </div>
+            <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '16px' }}>
+              Email: Use Gmail to test, then switch to AWS SES for production. SMS: AWS SNS only (~$0.006/SMS). Toggle which events send notifications.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>Email service</FormLabel>
+                <select
+                  value={notificationChannelSettings.email_provider}
+                  onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, email_provider: e.target.value })}
+                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                >
+                  <option value="gmail">Gmail (test email)</option>
+                  <option value="aws_ses">AWS SES (production email)</option>
+                </select>
+                <p style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary)' : '#999', marginTop: '4px' }}>
+                  {notificationChannelSettings.email_provider === 'gmail'
+                    ? 'Test email delivery with Gmail before switching to AWS SES.'
+                    : 'Production email via AWS SES.'}
+                </p>
+              </div>
+
+              <div>
+                <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>SMS service</FormLabel>
+                <div style={{
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
+                  backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#f5f5f5',
+                  fontSize: '14px',
+                  color: isDarkMode ? 'var(--text-secondary)' : '#555'
+                }}>
+                  AWS SNS (~$0.006/SMS) — separate from email
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}>
-                  <div className="checkbox-wrapper-2">
+              </div>
+
+              {notificationChannelSettings.email_provider === 'gmail' && (
+                <>
+                  <div>
+                    <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>SMTP Server</FormLabel>
                     <input
-                      type="checkbox"
-                      className="sc-gJwTLC ikxBAC"
-                      checked={notificationSettings[opt.id] !== false}
-                      onChange={(e) => persistNotificationSettings({ ...notificationSettings, [opt.id]: e.target.checked })}
+                      type="text"
+                      value={notificationChannelSettings.smtp_server}
+                      onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, smtp_server: e.target.value })}
+                      placeholder="smtp.gmail.com"
+                      style={inputBaseStyle(isDarkMode, themeColorRgb)}
                     />
                   </div>
-                  <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
-                    {notificationSettings[opt.id] !== false ? 'On' : 'Off'}
-                  </span>
-                </label>
-                {opt.id === 'recent_new_order' ? (
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {[
-                      { id: 'doordash', label: 'DoorDash', src: '/doordash-logo.svg', alt: 'DoorDash' },
-                      { id: 'uber_eats', label: 'Uber Eats', src: '/uber-eats-logo.svg', alt: 'Uber Eats' },
-                      { id: 'shopify', label: 'Shopify', src: '/shopify-logo.svg', alt: 'Shopify' }
-                    ].map((int) => (
+                  <div>
+                    <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>Gmail Address</FormLabel>
+                    <input
+                      type="email"
+                      value={notificationChannelSettings.smtp_user}
+                      onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, smtp_user: e.target.value })}
+                      placeholder="your@gmail.com"
+                      style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    />
+                    <p style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary)' : '#999', marginTop: '4px' }}>
+                      Enable 2FA and create an App Password at Google Account → Security
+                    </p>
+                  </div>
+                  <div>
+                    <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>App Password</FormLabel>
+                    <input
+                      type="password"
+                      value={notificationChannelSettings.smtp_password === '***' ? '' : (notificationChannelSettings.smtp_password || '')}
+                      onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, smtp_password: e.target.value })}
+                      placeholder={notificationChannelSettings.smtp_password === '***' ? 'Leave blank to keep current' : '16-character app password'}
+                      style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* AWS credentials: for AWS SES (production email) and AWS SNS (SMS) */}
+              <>
+                  <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary)' : '#888', marginBottom: '10px' }}>
+                    Used for AWS SES (production email) and AWS SNS (SMS)
+                  </div>
+                  <div>
+                    <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>AWS Access Key ID</FormLabel>
+                    <input
+                      type="text"
+                      value={notificationChannelSettings.aws_access_key_id === '***' ? '' : (notificationChannelSettings.aws_access_key_id || '')}
+                      onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, aws_access_key_id: e.target.value })}
+                      placeholder={notificationChannelSettings.aws_access_key_id === '***' ? 'Leave blank to keep current' : 'AKIA...'}
+                      style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    />
+                  </div>
+                  <div>
+                    <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>AWS Secret Access Key</FormLabel>
+                    <input
+                      type="password"
+                      value={notificationChannelSettings.aws_secret_access_key === '***' ? '' : (notificationChannelSettings.aws_secret_access_key || '')}
+                      onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, aws_secret_access_key: e.target.value })}
+                      placeholder={notificationChannelSettings.aws_secret_access_key === '***' ? 'Leave blank to keep current' : 'Secret key'}
+                      style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                    />
+                  </div>
+                  <div>
+                    <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>AWS Region</FormLabel>
+                    <input
+                      type="text"
+                      value={notificationChannelSettings.aws_region}
+                      onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, aws_region: e.target.value })}
+                      placeholder="us-east-1"
+                      style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '140px' }}
+                    />
+                  </div>
+              </>
+
+              <div>
+                <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '10px', display: 'block' }}>Notify for</FormLabel>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {[
+                    { id: 'orders', label: 'Orders', desc: 'New orders (integrations, POS)' },
+                    { id: 'reports', label: 'Reports', desc: 'Scheduled or manual reports' },
+                    { id: 'scheduling', label: 'Scheduling', desc: 'Schedule published / changed' },
+                    { id: 'clockins', label: 'Clock-ins', desc: 'Employee clock in / out' },
+                    { id: 'receipts', label: 'Receipts', desc: 'Email receipts to customers' }
+                  ].map(({ id, label, desc }) => (
+                    <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, minWidth: '90px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>{label}</span>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={notificationChannelSettings.notification_preferences?.[id]?.email ?? false}
+                          onChange={(e) => setNotificationChannelSettings({
+                            ...notificationChannelSettings,
+                            notification_preferences: {
+                              ...notificationChannelSettings.notification_preferences,
+                              [id]: { ...notificationChannelSettings.notification_preferences?.[id], email: e.target.checked }
+                            }
+                          })}
+                        />
+                        <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Email</span>
+                      </label>
+                      {id !== 'receipts' && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={notificationChannelSettings.notification_preferences?.[id]?.sms ?? false}
+                            onChange={(e) => setNotificationChannelSettings({
+                              ...notificationChannelSettings,
+                              notification_preferences: {
+                                ...notificationChannelSettings.notification_preferences,
+                                [id]: { ...notificationChannelSettings.notification_preferences?.[id], sms: e.target.checked }
+                              }
+                            })}
+                          />
+                          <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>SMS</span>
+                        </label>
+                      )}
+                      <span style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary)' : '#999' }}>{desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  disabled={notificationChannelSaving}
+                  onClick={async () => {
+                    setNotificationChannelSaving(true)
+                    try {
+                      const token = localStorage.getItem('sessionToken')
+                      const res = await cachedFetch('/api/notification-settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
+                        body: JSON.stringify({
+                          session_token: token,
+                          store_id: 1,
+                          ...notificationChannelSettings,
+                          smtp_port: parseInt(notificationChannelSettings.smtp_port, 10) || 587,
+                          smtp_password: (notificationChannelSettings.smtp_password && notificationChannelSettings.smtp_password !== '') ? notificationChannelSettings.smtp_password : undefined
+                        })
+                      })
+                      const data = await res.json()
+                      if (data.success) {
+                        showToast('Settings saved', 'success')
+                      } else {
+                        showToast(data.message || 'Failed to save', 'error')
+                      }
+                    } catch (e) {
+                      showToast(e.message || 'Error saving', 'error')
+                    } finally {
+                      setNotificationChannelSaving(false)
+                    }
+                  }}
+                  style={compactPrimaryButtonStyle(themeColorRgb)}
+                >
+                  {notificationChannelSaving ? 'Saving…' : 'Save'}
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {showTestEmailInput ? (
+                    <>
+                      <input
+                        type="email"
+                        placeholder="Email to send test to"
+                        value={testEmailInput}
+                        onChange={(e) => setTestEmailInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setShowTestEmailInput(false) }}
+                        autoFocus
+                        style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px', padding: '6px 10px' }}
+                      />
                       <button
-                        key={int.id}
                         type="button"
+                        disabled={testEmailSending || !testEmailInput.trim()}
                         onClick={async () => {
-                          if (newOrderToastOptions.play_sound) await playNewOrderSound()
-                          showToast(`Order #${Math.floor(1000 + Math.random() * 9000)} from ${int.alt}`, 'success', { icon: { src: int.src, alt: int.alt } })
+                          const email = testEmailInput.trim()
+                          if (!email) return
+                          if (notificationChannelSettings.email_provider === 'gmail' && (!notificationChannelSettings.smtp_user || !notificationChannelSettings.smtp_password)) {
+                            showToast('Enter Gmail address and App Password first', 'error')
+                            return
+                          }
+                          setTestEmailSending(true)
+                          try {
+                            const token = localStorage.getItem('sessionToken')
+                            const body = {
+                              to_address: email,
+                              store_id: 1,
+                              session_token: token,
+                              email_provider: notificationChannelSettings.email_provider,
+                              smtp_server: notificationChannelSettings.smtp_server,
+                              smtp_port: notificationChannelSettings.smtp_port || 587,
+                              smtp_user: notificationChannelSettings.smtp_user,
+                              smtp_password: notificationChannelSettings.smtp_password,
+                              business_name: notificationChannelSettings.business_name || 'POS'
+                            }
+                            const res = await cachedFetch('/api/notifications/test-email', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
+                              body: JSON.stringify(body)
+                            })
+                            const data = await res.json()
+                            showToast(data.success ? 'Test email sent!' : (data.message || 'Failed to send'), data.success ? 'success' : 'error')
+                            if (data.success) { setShowTestEmailInput(false); setTestEmailInput('') }
+                          } catch (e) {
+                            showToast(e.message || 'Error sending test email', 'error')
+                          } finally {
+                            setTestEmailSending(false)
+                          }
                         }}
+                        style={compactPrimaryButtonStyle(themeColorRgb)}
+                      >
+                        {testEmailSending ? 'Sending…' : 'Send'}
+                      </button>
+                      <button type="button" onClick={() => { setShowTestEmailInput(false); setTestEmailInput('') }} style={compactCancelButtonStyle(isDarkMode)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowTestEmailInput(true)}
+                      style={compactCancelButtonStyle(isDarkMode)}
+                    >
+                      Test Email
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const phone = window.prompt('Phone number (10 digits) for test SMS:')
+                    if (!phone) return
+                    try {
+                      const token = localStorage.getItem('sessionToken')
+                      const res = await cachedFetch('/api/notifications/test-sms', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
+                        body: JSON.stringify({ phone_number: phone.replace(/\D/g, '').slice(-10), store_id: 1, session_token: token })
+                      })
+                      const data = await res.json()
+                      showToast(data.success ? 'Test SMS sent!' : (data.message || 'Failed to send'), data.success ? 'success' : 'error')
+                    } catch (e) {
+                      showToast(e.message || 'Error sending test SMS', 'error')
+                    }
+                  }}
+                  style={compactCancelButtonStyle(isDarkMode)}
+                >
+                  Test SMS
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Email Templates */}
+          <div style={{
+            padding: '20px',
+            borderRadius: '12px',
+            border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+            backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa',
+            marginBottom: '24px'
+          }}>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '8px' }}>
+              Email Templates
+            </div>
+            <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '16px' }}>
+              Customize email designs for order alerts, schedules, clock-ins, and reports. <strong>Receipt email:</strong> edit from POS tab → Receipt Preview → Email button.
+            </p>
+            <button type="button" onClick={() => { setEmailTemplateModalOpen(true); setEmailTemplateEditing(null); setEmailTemplateCategory('order'); setEmailTemplateForm({ name: '', category: 'order', subject_template: '', body_html_template: '', body_text_template: '' }); setEmailTemplateDropdownOpen(false); setEmailTemplateShowNewInput(false); setEmailTemplateNewName(''); setEmailTemplateCreatePreset(null) }} style={compactPrimaryButtonStyle(themeColorRgb)}>Edit all email templates</button>
+
+
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'center' }}>
+            {NOTIFICATION_SECTIONS.map((section) => {
+              const optionIds = NOTIFICATION_OPTIONS_BY_SECTION[section.id] || []
+              const opts = optionIds.map((id) => NOTIFICATION_OPTIONS_MAP[id]).filter(Boolean)
+              if (opts.length === 0) return null
+              return (
+                <div key={section.id} style={{ width: '100%', maxWidth: '560px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    {section.title}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {opts.map((opt) => (
+                      <Fragment key={opt.id}>
+                      <div
                         style={{
-                          padding: '8px 12px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          borderRadius: '8px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#e5e7eb',
-                          color: isDarkMode ? 'var(--text-primary)' : '#374151',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '6px'
+                          gap: '12px',
+                          flexWrap: 'wrap',
+                          padding: '14px 16px',
+                          borderRadius: '12px',
+                          border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
                         }}
                       >
-                        <img src={int.src} alt="" style={{ height: '16px', width: 'auto', maxWidth: '48px', objectFit: 'contain' }} />
-                        Test
-                      </button>
+                        <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                          <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '2px' }}>
+                            {opt.label}
+                          </div>
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
+                            {opt.description}
+                          </div>
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}>
+                          <div className="checkbox-wrapper-2">
+                            <input
+                              type="checkbox"
+                              className="sc-gJwTLC ikxBAC"
+                              checked={notificationSettings[opt.id] !== false}
+                              onChange={(e) => persistNotificationSettings({ ...notificationSettings, [opt.id]: e.target.checked })}
+                            />
+                          </div>
+                          <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
+                            {notificationSettings[opt.id] !== false ? 'On' : 'Off'}
+                          </span>
+                        </label>
+                        {opt.id === 'recent_new_order' ? (
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {[
+                              { id: 'doordash', label: 'DoorDash', src: '/doordash-logo.svg', alt: 'DoorDash' },
+                              { id: 'uber_eats', label: 'Uber Eats', src: '/uber-eats-logo.svg', alt: 'Uber Eats' },
+                              { id: 'shopify', label: 'Shopify', src: '/shopify-logo.svg', alt: 'Shopify' }
+                            ].map((int) => (
+                              <button
+                                key={int.id}
+                                type="button"
+                                onClick={async () => {
+                                  const soundOpts = { sound_type: newOrderToastOptions.sound_type ?? 'default', volume: newOrderToastOptions.volume ?? 0.5 }
+                                  if (newOrderToastOptions.play_sound && newOrderToastOptions.sound_type !== 'none') {
+                                    await playNewOrderSound(soundOpts)
+                                    if (newOrderToastOptions.sound_until_dismiss) {
+                                      const intervalId = setInterval(() => playNewOrderSound(soundOpts), 1200)
+                                      setTimeout(() => clearInterval(intervalId), 4000)
+                                    }
+                                  }
+                                  showToast(`Order #${Math.floor(1000 + Math.random() * 9000)} from ${int.alt}`, 'success', { icon: { src: int.src, alt: int.alt } })
+                                }}
+                                style={{
+                                  padding: '8px 12px',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  borderRadius: '8px',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                  backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#e5e7eb',
+                                  color: isDarkMode ? 'var(--text-primary)' : '#374151',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px'
+                                }}
+                              >
+                                <img src={int.src} alt="" style={{ height: '16px', width: 'auto', maxWidth: '48px', objectFit: 'contain' }} />
+                                Test
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => showToast(opt.sampleMessage, opt.toastType)}
+                            style={{
+                              padding: '8px 14px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              borderRadius: '8px',
+                              border: 'none',
+                              cursor: 'pointer',
+                              backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#e5e7eb',
+                              color: isDarkMode ? 'var(--text-primary)' : '#374151'
+                            }}
+                          >
+                            Test
+                          </button>
+                        )}
+                      </div>
+                      {opt.id === 'recent_new_order' && notificationSettings.recent_new_order !== false && (
+                        <div
+                          style={{
+                            padding: '16px',
+                            borderRadius: '12px',
+                            border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                            backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#f5f5f5'
+                          }}
+                        >
+                          <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '12px' }}>
+                            New order notification options
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
+                              <div className="checkbox-wrapper-2">
+                                <input
+                                  type="checkbox"
+                                  className="sc-gJwTLC ikxBAC"
+                                  checked={newOrderToastOptions.play_sound}
+                                  onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, play_sound: e.target.checked })}
+                                />
+                              </div>
+                              <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Play sound when a new order arrives</span>
+                            </label>
+                            {newOrderToastOptions.play_sound && (
+                              <>
+                                <div>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '6px' }}>Sound</div>
+                                  <select
+                                    value={newOrderToastOptions.sound_type ?? 'default'}
+                                    onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, sound_type: e.target.value })}
+                                    style={{
+                                      padding: '8px 12px',
+                                      borderRadius: '8px',
+                                      border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
+                                      backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                      color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                      fontSize: '14px',
+                                      minWidth: '180px'
+                                    }}
+                                  >
+                                    {NOTIFICATION_SOUND_OPTIONS.map((o) => (
+                                      <option key={o.value} value={o.value}>{o.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '6px' }}>
+                                    Volume {Math.round((newOrderToastOptions.volume ?? 0.5) * 100)}%
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={Math.round((newOrderToastOptions.volume ?? 0.5) * 100)}
+                                    onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, volume: parseInt(e.target.value, 10) / 100 })}
+                                    style={{ width: '180px', accentColor: isDarkMode ? 'var(--theme-color)' : undefined }}
+                                  />
+                                </div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
+                                  <div className="checkbox-wrapper-2">
+                                    <input
+                                      type="checkbox"
+                                      className="sc-gJwTLC ikxBAC"
+                                      checked={newOrderToastOptions.sound_until_dismiss === true}
+                                      onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, sound_until_dismiss: e.target.checked })}
+                                    />
+                                  </div>
+                                  <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Play sound repeatedly until I dismiss</span>
+                                </label>
+                              </>
+                            )}
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '6px' }}>Dismiss</div>
+                              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                  <input
+                                    type="radio"
+                                    name="new_order_dismiss"
+                                    checked={newOrderToastOptions.auto_dismiss_sec === 0}
+                                    onChange={() => persistNewOrderToastOptions({ ...newOrderToastOptions, auto_dismiss_sec: 0 })}
+                                  />
+                                  <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Only when I click</span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                  <input
+                                    type="radio"
+                                    name="new_order_dismiss"
+                                    checked={newOrderToastOptions.auto_dismiss_sec === 4}
+                                    onChange={() => persistNewOrderToastOptions({ ...newOrderToastOptions, auto_dismiss_sec: 4 })}
+                                  />
+                                  <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Auto-dismiss after 4 seconds</span>
+                                </label>
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '6px' }}>When I click the notification</div>
+                              <select
+                                value={newOrderToastOptions.click_action}
+                                onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, click_action: e.target.value })}
+                                style={{
+                                  padding: '8px 12px',
+                                  borderRadius: '8px',
+                                  border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
+                                  backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                  color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                  fontSize: '14px',
+                                  minWidth: '200px'
+                                }}
+                              >
+                                <option value="go_to_order">Go to order in Recent Orders</option>
+                                <option value="print_receipt">Print receipt</option>
+                                <option value="dismiss_only">Just dismiss</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </Fragment>
                     ))}
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => showToast(opt.sampleMessage, opt.toastType)}
-                    style={{
-                      padding: '8px 14px',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      borderRadius: '8px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#e5e7eb',
-                      color: isDarkMode ? 'var(--text-primary)' : '#374151'
-                    }}
-                  >
-                    Test
-                  </button>
-                )}
-              </div>
-            ))}
-            {/* New order (integrations) options - only when that notification is on */}
-            {notificationSettings.recent_new_order !== false && (
-              <div
-                style={{
-                  marginTop: '8px',
-                  padding: '16px',
-                  borderRadius: '12px',
-                  border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                  backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#f5f5f5'
-                }}
-              >
-                <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '12px' }}>
-                  New order notification options
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
-                    <div className="checkbox-wrapper-2">
-                      <input
-                        type="checkbox"
-                        className="sc-gJwTLC ikxBAC"
-                        checked={newOrderToastOptions.play_sound}
-                        onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, play_sound: e.target.checked })}
-                      />
-                    </div>
-                    <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Play sound when a new order arrives</span>
-                  </label>
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '6px' }}>Dismiss</div>
-                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                        <input
-                          type="radio"
-                          name="new_order_dismiss"
-                          checked={newOrderToastOptions.auto_dismiss_sec === 0}
-                          onChange={() => persistNewOrderToastOptions({ ...newOrderToastOptions, auto_dismiss_sec: 0 })}
-                        />
-                        <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Only when I click</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                        <input
-                          type="radio"
-                          name="new_order_dismiss"
-                          checked={newOrderToastOptions.auto_dismiss_sec === 4}
-                          onChange={() => persistNewOrderToastOptions({ ...newOrderToastOptions, auto_dismiss_sec: 4 })}
-                        />
-                        <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Auto-dismiss after 4 seconds</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '6px' }}>When I click the notification</div>
-                    <select
-                      value={newOrderToastOptions.click_action}
-                      onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, click_action: e.target.value })}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                        color: isDarkMode ? 'var(--text-primary)' : '#333',
-                        fontSize: '14px',
-                        minWidth: '200px'
-                      }}
-                    >
-                      <option value="go_to_order">Go to order in Recent Orders</option>
-                      <option value="print_receipt">Print receipt</option>
-                      <option value="dismiss_only">Just dismiss</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
+              )
+            })}
           </div>
         </div>
       )}
+
+      {/* Email Template Modal – top level so it opens from receipt editor (POS tab) or notifications */}
+      {emailTemplateModalOpen && createPortal((() => {
+        const CATEGORIES = [{ id: 'order', label: 'Order alert' }, { id: 'schedule', label: 'Schedule' }, { id: 'clockin', label: 'Clock-in' }, { id: 'report', label: 'Report' }]
+        const RECEIPT_EMAIL_PRESETS = [
+          { name: 'Receipt (Premium)', subj: 'Your receipt – Order #{{order_number}}', html: LA_MAISON_RECEIPT_HTML, txt: '{{store_name}}\n{{store_tagline}}\n{{receipt_type_label}} #{{order_number}} · {{receipt_date}} {{receipt_time}}\n\n{{items_text}}\n\n{{subtotal_label}}: ${{subtotal}}\n{{discount_line}}{{tax_label}}: ${{tax}}\n{{transaction_fee_line}}Tip: ${{tip}}\n{{total_label}}: ${{total}}\n\n{{payment_method}}\n{{footer_message}}' },
+          { name: 'Receipt (Restaurant Promotion)', subj: 'Your receipt – Order #{{order_number}}', html: LA_MAISON_RESTAURANT_PROMOTION_RECEIPT_HTML, txt: '{{store_name}}\n{{store_tagline}}\nOrder #{{order_number}} · {{receipt_date}} {{receipt_time}}\n\n{{items_text}}\n\nSubtotal: ${{subtotal}}\nTax: ${{tax}}\nTip: ${{tip}}\nTotal: ${{total}}\n\n{{payment_method}}\n{{footer_message}}' }
+        ]
+        const ORDER_EMAIL_PRESETS = [
+          { name: 'Order Alert (App Notification)', subj: 'New order #{{order_number}}', html: LA_MAISON_ORDER_APP_NOTIFICATION_HTML, txt: 'New order #{{order_number}}\nTotal: ${{total}}\n{{store_name}}\n{{store_tagline}}\n{{store_address}}\n{{store_phone}}' },
+          { name: 'Order Alert (Classic)', subj: 'New order #{{order_number}}', html: LA_MAISON_ORDER_HTML, txt: 'Order #{{order_number}}\nTotal: ${{total}}\n{{store_name}}\n{{store_tagline}}\n{{store_address}}\n{{store_phone}}' }
+        ]
+        const DEF = { receipt: RECEIPT_EMAIL_PRESETS[0], order: ORDER_EMAIL_PRESETS[0], schedule: { name: 'Schedule', subj: 'Schedule updated', html: LA_MAISON_SCHEDULE_APP_NOTIFICATION_HTML, txt: 'Schedule\n{{message}}\n{{store_name}}\n{{store_tagline}}\n{{store_address}}\n{{store_phone}}' }, clockin: { name: 'Clock-in', subj: 'Clock {{action}}', html: LA_MAISON_CLOCKIN_APP_NOTIFICATION_HTML, txt: '{{employee_name}} {{action}}\n{{store_name}}\n{{store_tagline}}\n{{store_address}}\n{{store_phone}}' }, report: { name: 'Report', subj: '{{report_name}} – {{report_date}}', html: LA_MAISON_REPORT_APP_NOTIFICATION_HTML, txt: '{{report_name}}\n{{report_date}}\n{{store_name}}\n{{store_tagline}}\n{{store_address}}\n{{store_phone}}' } }
+        const SAMPLE = { receipt: { store_name: 'La Maison', store_tagline: 'Fine Dining & Provisions', order_number: 'RCP-2024-001234', order_date: '2025-02-12 14:30', receipt_date: 'February 12, 2026', receipt_time: '2:45 PM', receipt_type_label: 'Receipt', location: 'Downtown - Main Street', employee_name: 'James Patterson', customer_info_html: '', items_html: '<tr><td><div class="item-name">Grilled Atlantic Salmon @ $24.99</div><div class="item-description">Seasonal vegetables, lemon beurre blanc, wild rice</div></td><td>$24.99</td></tr><tr><td><div class="item-name">Classic Caesar Salad @ $12.50</div><div class="item-description">Romaine hearts, aged parmesan, garlic croutons</div></td><td>$12.50</td></tr><tr><td><div class="item-name">Cold Brew Coffee @ $4.50</div><div class="item-description">House blend, served over ice</div></td><td>$4.50</td></tr>', items_text: 'Grilled Atlantic Salmon @ $24.99 $24.99\nClassic Caesar Salad @ $12.50 $12.50\nCold Brew Coffee @ $4.50 $4.50', subtotal: '41.99', subtotal_label: 'Subtotal', tax: '3.57', tax_label: 'Tax', tip: '8.00', total: '53.56', total_label: 'Total', barcode_html: '', signature_html: '', discount_row: '', discount_line: '', transaction_fee_row: '', transaction_fee_line: '', payment_method: 'Paid by Card', payment_extra_lines: '', footer_message: 'Thank you for dining with us.', store_address: '123 Main Street · Your City, ST 12345', store_phone: '(555) 123-4567', formatted_store_phone: '(555) 123-4567', store_email: 'concierge@lamaison.com', store_website: 'https://lamaison.com' }, order: { order_number: 'ORD-12345', total: '49.99', subtotal: '41.99', tax: '3.57', tip: '4.43', store_name: 'La Maison', store_tagline: 'Fine Dining & Provisions', store_address: '123 Main Street · Your City, ST 12345', store_phone: '(555) 123-4567', formatted_store_phone: '(555) 123-4567', store_email: 'concierge@lamaison.com', footer_message: 'Thank you for dining with us.', items_html: '<tr><td><div class="item-line">Grilled Atlantic Salmon x 1</div><div class="item-notes">No onions, extra sauce</div></td><td>$24.99</td></tr><tr><td><div class="item-line">Classic Caesar Salad x 1</div></td><td>$12.50</td></tr><tr><td><div class="item-line">Cold Brew Coffee x 2</div><div class="item-notes">Iced</div></td><td>$9.00</td></tr>', barcode_html: '<div style="font-size:11px;color:#546e7a;margin-top:8px">ORD-12345</div>', order_url: '#', order_source_logo_html: '<img src="/doordash-email-logo.svg" alt="DoorDash" style="height:40px;width:auto;vertical-align:middle" />', order_details_html: '<div><strong>Customer:</strong> John Smith</div><div><strong>Phone:</strong> (555) 987-6543</div><div><strong>Due:</strong> 6:30 PM</div><div><strong>Delivery</strong></div>' }, schedule: { message: 'Your shifts updated.', store_name: 'La Maison', store_tagline: 'Fine Dining & Provisions', store_address: '123 Main Street · Your City, ST 12345', store_phone: '(555) 123-4567', formatted_store_phone: '(555) 123-4567', store_email: 'concierge@lamaison.com', footer_message: 'Thank you for dining with us.' }, clockin: { employee_name: 'John Doe', action: 'clocked in', store_name: 'La Maison', store_tagline: 'Fine Dining & Provisions', store_address: '123 Main Street · Your City, ST 12345', store_phone: '(555) 123-4567', formatted_store_phone: '(555) 123-4567', store_email: 'concierge@lamaison.com', footer_message: 'Thank you for dining with us.' }, report: { report_name: 'Sales Report', report_date: '2025-02-12', store_name: 'La Maison', store_tagline: 'Fine Dining & Provisions', store_address: '123 Main Street · Your City, ST 12345', store_phone: '(555) 123-4567', formatted_store_phone: '(555) 123-4567', store_email: 'concierge@lamaison.com', footer_message: 'Thank you for dining with us.' } }
+        const renderPrev = (s, cat) => { if (!s) return ''; let o = s; Object.entries(SAMPLE[cat] || {}).forEach(([k, v]) => { o = o.replace(new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}', 'g'), String(v ?? '')) }); return o.replace(new RegExp('\\{\\{[^}]+\\}\\}', 'g'), '') }
+        const token = localStorage.getItem('sessionToken') || ''
+        const refetch = () => cachedFetch(`/api/email-templates?store_id=1&session_token=${encodeURIComponent(token)}`, { headers: { 'X-Session-Token': token } }).then(r => r.json()).then(d => { if (d?.templates) setEmailTemplates(d.templates) }).catch(() => {})
+        const sel = emailTemplateEditing !== null || emailReceiptPreset !== null || emailOrderPreset !== null || (emailTemplateForm.name && emailTemplateForm.category)
+        const getReceiptLayout = () => { if (emailReceiptPreset) return emailReceiptPreset; const html = emailTemplateForm.body_html_template || ''; return html.includes('hero-section') ? 'restaurantPromotion' : 'premium' }
+        const buildReceiptHtmlFromDesign = () => (getReceiptLayout() === 'restaurantPromotion' ? LA_MAISON_RESTAURANT_PROMOTION_RECEIPT_HTML : LA_MAISON_RECEIPT_HTML)
+        const getOrderHtml = () => { if (emailOrderPreset === 'classic') return LA_MAISON_ORDER_HTML; if (emailOrderPreset === 'appNotification') return LA_MAISON_ORDER_APP_NOTIFICATION_HTML; return (emailTemplateForm.body_html_template || '').includes('glass-card') ? LA_MAISON_ORDER_APP_NOTIFICATION_HTML : LA_MAISON_ORDER_HTML }
+        const buildOrderHtmlFromDesign = (d) => { let h = getOrderHtml(); ['store_name','store_tagline','store_address','store_phone','formatted_store_phone','store_email','footer_message'].forEach(k => { h = h.replace(new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}', 'g'), String((d || {})[k] ?? '')) }); return h }
+        const receiptHtmlForPreview = emailTemplateForm.category === 'receipt' && emailTemplateEditMode === 'visual' ? buildReceiptHtmlFromDesign() : (emailTemplateForm.category === 'order' && emailTemplateEditMode === 'visual' ? buildOrderHtmlFromDesign(emailOrderDesign) : (['schedule','clockin','report'].includes(emailTemplateForm.category) && emailTemplateEditMode === 'visual' ? (() => { let h = { schedule: LA_MAISON_SCHEDULE_APP_NOTIFICATION_HTML, clockin: LA_MAISON_CLOCKIN_APP_NOTIFICATION_HTML, report: LA_MAISON_REPORT_APP_NOTIFICATION_HTML }[emailTemplateForm.category] || ''; ['store_name','store_tagline','store_address','store_phone','formatted_store_phone','store_email','footer_message'].forEach(k => { h = h.replace(new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}', 'g'), String((emailOrderDesign || {})[k] ?? '')) }); return h })() : emailTemplateForm.body_html_template))
+        const storeSample = { store_name: receiptSettings.store_name || storeLocationSettings.store_name || 'La Maison', store_tagline: receiptSettings.store_tagline || 'Fine Dining & Provisions', store_address: receiptSettings.store_address || storeLocationSettings.address || [storeLocationSettings.address, storeLocationSettings.city, storeLocationSettings.state, storeLocationSettings.zip].filter(Boolean).join(', ') || '123 Main Street · Your City, ST 12345', store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '(555) 123-4567', formatted_store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '(555) 123-4567', store_email: receiptSettings.store_email || storeLocationSettings.store_email || 'concierge@lamaison.com', footer_message: receiptSettings.footer_message || 'Thank you for dining with us.' }
+        const sampleForPreview = emailTemplateForm.category === 'receipt' && emailTemplateEditMode === 'visual' ? { ...(SAMPLE.receipt || {}), ...storeSample, store_name: emailReceiptDesign.store_name || storeSample.store_name, store_tagline: emailReceiptDesign.store_tagline || storeSample.store_tagline, store_address: emailReceiptDesign.store_address || storeSample.store_address, store_phone: emailReceiptDesign.store_phone || storeSample.store_phone, formatted_store_phone: emailReceiptDesign.store_phone || storeSample.formatted_store_phone, store_email: emailReceiptDesign.store_email || storeSample.store_email, footer_message: emailReceiptDesign.footer_message || storeSample.footer_message } : (['order','schedule','clockin','report'].includes(emailTemplateForm.category) ? { ...(SAMPLE[emailTemplateForm.category] || {}), ...storeSample, ...(emailTemplateEditMode === 'visual' ? { store_name: emailOrderDesign.store_name || storeSample.store_name, store_tagline: emailOrderDesign.store_tagline || storeSample.store_tagline, store_address: emailOrderDesign.store_address || storeSample.store_address, store_phone: emailOrderDesign.store_phone || storeSample.store_phone, formatted_store_phone: emailOrderDesign.store_phone || storeSample.formatted_store_phone, store_email: emailOrderDesign.store_email || storeSample.store_email, footer_message: emailOrderDesign.footer_message || storeSample.footer_message } : {}) } : (SAMPLE[emailTemplateForm.category] || {}))
+        const pHtml = sel ? (() => { let o = receiptHtmlForPreview || ''; Object.entries(sampleForPreview).forEach(([k, v]) => { o = o.replace(new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}', 'g'), String(v ?? '')) }); return o.replace(new RegExp('\\{\\{[^}]+\\}\\}', 'g'), '') })() : ''
+        const pSubj = sel ? renderPrev(emailTemplateForm.subject_template, emailTemplateForm.category) : ''
+        const emptyHtmlPlaceholder = '<em style="color:#999">Enter HTML above</em>'
+        const selectReceiptPreset = (presetId) => {
+          const p = RECEIPT_EMAIL_PRESETS.find(x => (presetId === 'premium' && x.name.includes('Premium')) || (presetId === 'restaurantPromotion' && x.name.includes('Restaurant'))) || RECEIPT_EMAIL_PRESETS[0]
+          setEmailReceiptPreset(presetId); setEmailTemplateEditing(null); setEmailOrderPreset(null)
+          setF({ name: p.name, category: 'receipt', subject_template: p.subj, body_html_template: p.html, body_text_template: p.txt })
+          setActiveEmailReceiptSection('header')
+          const savedDesign = null
+          setRd(savedDesign ? { ...DEFAULT_RECEIPT_TEMPLATE, ...receiptSettings, ...savedDesign, headerBg: '#1e293b', headerTextColor: '#ffffff', footerBg: '#f8fafc', footerTextColor: '#64748b' } : { ...DEFAULT_RECEIPT_TEMPLATE, ...receiptSettings, headerBg: '#1e293b', headerTextColor: '#ffffff', footerBg: '#f8fafc', footerTextColor: '#64748b' })
+        }
+        const selectOrderPreset = (presetId) => {
+          const p = presetId === 'classic' ? ORDER_EMAIL_PRESETS[1] : ORDER_EMAIL_PRESETS[0]
+          setEmailOrderPreset(presetId); setEmailTemplateEditing(null); setEmailReceiptPreset(null)
+          setF({ name: p.name, category: 'order', subject_template: p.subj, body_html_template: p.html, body_text_template: p.txt })
+          setActiveEmailOrderSection('header')
+          setOd({ store_name: receiptSettings.store_name || storeLocationSettings.store_name || '', store_tagline: receiptSettings.store_tagline || '', store_address: receiptSettings.store_address || storeLocationSettings.address || '', store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '', store_email: receiptSettings.store_email || storeLocationSettings.store_email || '', footer_message: receiptSettings.footer_message || '' })
+        }
+        const selectTemplate = (t, cat) => {
+          const c = cat ?? t?.category ?? emailTemplateCategory
+          if (!t) { setEmailTemplateEditing(null); setEmailReceiptPreset(null); setEmailOrderPreset(null); setF({ name: '', category: c, subject_template: '', body_html_template: '', body_text_template: '' }); if (['order','schedule','clockin','report'].includes(c)) { setEmailTemplateEditMode('visual'); setActiveEmailOrderSection('header'); setOd({ store_name: receiptSettings.store_name || storeLocationSettings.store_name || '', store_tagline: receiptSettings.store_tagline || '', store_address: receiptSettings.store_address || storeLocationSettings.address || '', store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '', store_email: receiptSettings.store_email || storeLocationSettings.store_email || '', footer_message: receiptSettings.footer_message || '' }) } return }
+          setEmailTemplateEditing(t.id); setEmailReceiptPreset(null); setEmailOrderPreset(null); setF({ name: t.name, category: t.category, subject_template: t.subject_template || '', body_html_template: t.body_html_template || '', body_text_template: t.body_text_template || '' })
+          if (t.category === 'receipt') { setActiveEmailReceiptSection('header'); const savedDesign = t.variables?.receiptDesign; setRd(savedDesign ? { ...DEFAULT_RECEIPT_TEMPLATE, ...receiptSettings, ...savedDesign, headerBg: savedDesign.headerBg || '#1e293b', headerTextColor: savedDesign.headerTextColor || '#ffffff', footerBg: savedDesign.footerBg || '#f8fafc', footerTextColor: savedDesign.footerTextColor || '#64748b' } : { ...DEFAULT_RECEIPT_TEMPLATE, ...receiptSettings, headerBg: '#1e293b', headerTextColor: '#ffffff', footerBg: '#f8fafc', footerTextColor: '#64748b' }) } else if (['order','schedule','clockin','report'].includes(t.category)) { setEmailTemplateEditMode('visual'); setActiveEmailOrderSection('header'); const saved = t.variables?.orderDesign; const base = { store_name: receiptSettings.store_name || storeLocationSettings.store_name || '', store_tagline: receiptSettings.store_tagline || '', store_address: receiptSettings.store_address || storeLocationSettings.address || '', store_phone: receiptSettings.store_phone || storeLocationSettings.store_phone || '', store_email: receiptSettings.store_email || storeLocationSettings.store_email || '', footer_message: receiptSettings.footer_message || '' }; setOd(saved ? { ...base, ...saved } : base) } else setEmailTemplateEditMode('html')
+        }
+        const onCategoryChange = (id) => { setEmailTemplateCategory(id); setEmailTemplateDropdownOpen(false); if (id === 'receipt') { selectReceiptPreset('premium') } else if (id === 'order') { selectOrderPreset('appNotification') } else { const templates = emailTemplates.filter((t) => t.category === id); const first = templates.find((t) => t.is_default) || templates[0]; selectTemplate(first || null, id); setEmailOrderPreset(null) } }
+        const setRd = (v) => { if (!emailTemplateRestoringRef.current) pushEmailTemplateUndo(); setEmailReceiptDesign(typeof v === 'function' ? v(emailReceiptDesign) : v) }
+        const setOd = (v) => { if (!emailTemplateRestoringRef.current) pushEmailTemplateUndo(); setEmailOrderDesign(typeof v === 'function' ? v(emailOrderDesign) : v) }
+        const setF = (v) => { if (!emailTemplateRestoringRef.current) pushEmailTemplateUndo(); setEmailTemplateForm(typeof v === 'function' ? v(emailTemplateForm) : v) }
+        return (
+          <div style={{ ...modalOverlayStyle(isDarkMode, 99999), padding: '24px' }} onClick={() => setEmailTemplateModalOpen(false)}>
+            <div style={{ ...modalContentStyle(isDarkMode, { borderRadius: '12px', maxWidth: '95vw', width: '960px', height: '85vh', maxHeight: '90vh', padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }), border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd' }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                {/* Left: scrollable tabs + editor (like receipt editor) */}
+                <div style={{ flex: '0 0 360px', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRight: `1px solid ${isDarkMode ? 'var(--border-color)' : '#e0e0e0'}` }}>
+                  <div style={{ padding: '12px 16px 8px', flexShrink: 0 }}>
+                    <div style={{ position: 'relative' }}>
+                      <div className="checkout-ui-tabs-scroll" style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', overflowX: 'auto', paddingBottom: 0, scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                        {CATEGORIES.map(({ id, label }) => { const isActive = emailTemplateCategory === id; return (
+                          <button key={id} type="button" onClick={() => onCategoryChange(id)} style={{ padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', backgroundColor: isActive ? `rgba(${themeColorRgb}, 0.7)` : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'), border: isActive ? `1px solid rgba(${themeColorRgb}, 0.5)` : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px', fontSize: '14px', fontWeight: isActive ? 600 : 500, color: isActive ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'), cursor: 'pointer', transition: 'all 0.3s ease', boxShadow: isActive ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none' }}>
+                            {label}
+                          </button>
+                        )})}
+                      </div>
+                      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '20px', background: `linear-gradient(to right, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`, pointerEvents: 'none', zIndex: 1 }} />
+                      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '20px', background: `linear-gradient(to left, ${isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff'} 0%, ${isDarkMode ? 'rgba(26, 26, 26, 0.3)' : 'rgba(255, 255, 255, 0.3)'} 50%, transparent 100%)`, pointerEvents: 'none', zIndex: 1 }} />
+                    </div>
+                  </div>
+                  <div className="checkout-ui-controls-scroll" style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
+                  {sel ? (
+                    <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}><div style={{ display: 'flex', gap: '4px' }}><div style={{ flex: 1 }}><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '2px', display: 'block', fontSize: '11px' }}>Name</FormLabel><input value={emailTemplateForm.name} onChange={e => setF({ ...emailTemplateForm, name: e.target.value })} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', padding: '4px 8px', fontSize: '13px' }} /></div><div style={{ flex: 1 }}><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '2px', display: 'block', fontSize: '11px' }}>Subject</FormLabel><input value={emailTemplateForm.subject_template} onChange={e => setF({ ...emailTemplateForm, subject_template: e.target.value })} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', padding: '4px 8px', fontSize: '13px' }} placeholder="Your receipt – Order #{{order_number}}" /></div></div></div>
+                          {emailTemplateForm.category === 'receipt' ? (
+                            <>
+                              <div style={{ display: 'flex', gap: '6px', marginBottom: '4px' }}>
+                                <button type="button" onClick={() => setEmailTemplateEditMode('visual')} style={{ padding: '4px 10px', borderRadius: '6px', border: emailTemplateEditMode === 'visual' ? `2px solid rgba(${themeColorRgb}, 0.6)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, background: emailTemplateEditMode === 'visual' ? `rgba(${themeColorRgb}, 0.15)` : 'transparent', color: isDarkMode ? 'var(--text-primary)' : '#333', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Visual</button>
+                                <button type="button" onClick={() => setEmailTemplateEditMode('html')} style={{ padding: '4px 10px', borderRadius: '6px', border: emailTemplateEditMode === 'html' ? `2px solid rgba(${themeColorRgb}, 0.6)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, background: emailTemplateEditMode === 'html' ? `rgba(${themeColorRgb}, 0.15)` : 'transparent', color: isDarkMode ? 'var(--text-primary)' : '#333', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>HTML</button>
+                              </div>
+                              {emailTemplateEditMode === 'visual' ? (
+                                <>
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', overflowX: 'auto', paddingBottom: '4px' }}>{['header', 'customer_order', 'body_items', 'body_totals', 'body_barcode', 'footer', 'styling'].map(s => { const labels = { header: 'Header', customer_order: 'Customer & Order', body_items: 'Line items', body_totals: 'Totals', body_barcode: 'Date & barcode', footer: 'Footer', styling: 'Styling' }; const isActive = activeEmailReceiptSection === s; return <button key={s} type="button" onClick={() => setActiveEmailReceiptSection(s)} style={{ padding: '4px 10px', borderRadius: '6px', border: isActive ? `1px solid rgba(${themeColorRgb}, 0.5)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, background: isActive ? `rgba(${themeColorRgb}, 0.2)` : 'transparent', color: isDarkMode ? 'var(--text-primary)' : '#333', fontSize: '11px', fontWeight: isActive ? 600 : 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>{labels[s]}</button> })}</div>
+                                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px', minHeight: 0 }}>
+                                    {activeEmailReceiptSection === 'header' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Store name</FormLabel><input value={emailReceiptDesign.store_name} onChange={e => setRd({ ...emailReceiptDesign, store_name: e.target.value })} placeholder="La Maison" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Store tagline</FormLabel><input value={emailReceiptDesign.store_tagline || ''} onChange={e => setRd({ ...emailReceiptDesign, store_tagline: e.target.value })} placeholder="Fine Dining & Provisions" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Store address</FormLabel><textarea value={emailReceiptDesign.store_address} onChange={e => setRd({ ...emailReceiptDesign, store_address: e.target.value })} placeholder="123 Main Street · Your City, ST 12345" rows={2} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', resize: 'vertical', minHeight: '48px' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Phone</FormLabel><input value={emailReceiptDesign.store_phone} onChange={e => setRd({ ...emailReceiptDesign, store_phone: e.target.value })} placeholder="+1 (555) 123-4567" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField></>)}
+                                    {activeEmailReceiptSection === 'customer_order' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Order type line</FormLabel><TextFormattingToolbar font={emailReceiptDesign.order_type_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, order_type_font: e.target.value })} fontSize={emailReceiptDesign.order_type_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, order_type_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.order_type_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, order_type_bold: !emailReceiptDesign.order_type_bold })} italic={emailReceiptDesign.order_type_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, order_type_italic: !emailReceiptDesign.order_type_italic })} align={emailReceiptDesign.order_type_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, order_type_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Customer name</FormLabel><TextFormattingToolbar font={emailReceiptDesign.customer_name_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, customer_name_font: e.target.value })} fontSize={emailReceiptDesign.customer_name_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, customer_name_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.customer_name_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, customer_name_bold: !emailReceiptDesign.customer_name_bold })} italic={emailReceiptDesign.customer_name_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, customer_name_italic: !emailReceiptDesign.customer_name_italic })} align={emailReceiptDesign.customer_name_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, customer_name_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Phone line</FormLabel><TextFormattingToolbar font={emailReceiptDesign.customer_phone_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, customer_phone_font: e.target.value })} fontSize={emailReceiptDesign.customer_phone_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, customer_phone_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.customer_phone_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, customer_phone_bold: !emailReceiptDesign.customer_phone_bold })} italic={emailReceiptDesign.customer_phone_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, customer_phone_italic: !emailReceiptDesign.customer_phone_italic })} align={emailReceiptDesign.customer_phone_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, customer_phone_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Address line</FormLabel><TextFormattingToolbar font={emailReceiptDesign.customer_address_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, customer_address_font: e.target.value })} fontSize={emailReceiptDesign.customer_address_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, customer_address_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.customer_address_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, customer_address_bold: !emailReceiptDesign.customer_address_bold })} italic={emailReceiptDesign.customer_address_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, customer_address_italic: !emailReceiptDesign.customer_address_italic })} align={emailReceiptDesign.customer_address_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, customer_address_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField></>)}
+                                    {activeEmailReceiptSection === 'body_items' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Item name</FormLabel><TextFormattingToolbar font={emailReceiptDesign.item_name_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, item_name_font: e.target.value })} fontSize={emailReceiptDesign.item_name_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, item_name_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.item_name_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, item_name_bold: !emailReceiptDesign.item_name_bold })} italic={emailReceiptDesign.item_name_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, item_name_italic: !emailReceiptDesign.item_name_italic })} align={emailReceiptDesign.item_name_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, item_name_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Item description</FormLabel><TextFormattingToolbar font={emailReceiptDesign.item_desc_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, item_desc_font: e.target.value })} fontSize={emailReceiptDesign.item_desc_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, item_desc_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 10)) })} bold={emailReceiptDesign.item_desc_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, item_desc_bold: !emailReceiptDesign.item_desc_bold })} italic={emailReceiptDesign.item_desc_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, item_desc_italic: !emailReceiptDesign.item_desc_italic })} align={emailReceiptDesign.item_desc_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, item_desc_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Item SKU</FormLabel><TextFormattingToolbar font={emailReceiptDesign.item_sku_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, item_sku_font: e.target.value })} fontSize={emailReceiptDesign.item_sku_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, item_sku_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 10)) })} bold={emailReceiptDesign.item_sku_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, item_sku_bold: !emailReceiptDesign.item_sku_bold })} italic={emailReceiptDesign.item_sku_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, item_sku_italic: !emailReceiptDesign.item_sku_italic })} align={emailReceiptDesign.item_sku_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, item_sku_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Item price</FormLabel><TextFormattingToolbar font={emailReceiptDesign.item_price_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, item_price_font: e.target.value })} fontSize={emailReceiptDesign.item_price_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, item_price_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.item_price_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, item_price_bold: !emailReceiptDesign.item_price_bold })} italic={emailReceiptDesign.item_price_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, item_price_italic: !emailReceiptDesign.item_price_italic })} align={emailReceiptDesign.item_price_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, item_price_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField></>)}
+                                    {activeEmailReceiptSection === 'body_totals' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Subtotal</FormLabel><TextFormattingToolbar font={emailReceiptDesign.subtotal_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, subtotal_font: e.target.value })} fontSize={emailReceiptDesign.subtotal_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, subtotal_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.subtotal_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, subtotal_bold: !emailReceiptDesign.subtotal_bold })} italic={emailReceiptDesign.subtotal_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, subtotal_italic: !emailReceiptDesign.subtotal_italic })} align={emailReceiptDesign.subtotal_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, subtotal_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Tax</FormLabel><TextFormattingToolbar font={emailReceiptDesign.tax_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, tax_font: e.target.value })} fontSize={emailReceiptDesign.tax_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, tax_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.tax_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, tax_bold: !emailReceiptDesign.tax_bold })} italic={emailReceiptDesign.tax_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, tax_italic: !emailReceiptDesign.tax_italic })} align={emailReceiptDesign.tax_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, tax_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Tip</FormLabel><TextFormattingToolbar font={emailReceiptDesign.tip_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, tip_font: e.target.value })} fontSize={emailReceiptDesign.tip_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, tip_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.tip_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, tip_bold: !emailReceiptDesign.tip_bold })} italic={emailReceiptDesign.tip_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, tip_italic: !emailReceiptDesign.tip_italic })} align={emailReceiptDesign.tip_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, tip_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Total</FormLabel><TextFormattingToolbar font={emailReceiptDesign.total_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, total_font: e.target.value })} fontSize={emailReceiptDesign.total_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, total_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 14)) })} bold={emailReceiptDesign.total_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, total_bold: !emailReceiptDesign.total_bold })} italic={emailReceiptDesign.total_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, total_italic: !emailReceiptDesign.total_italic })} align={emailReceiptDesign.total_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, total_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Payment method</FormLabel><TextFormattingToolbar font={emailReceiptDesign.payment_method_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, payment_method_font: e.target.value })} fontSize={emailReceiptDesign.payment_method_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, payment_method_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 11)) })} bold={emailReceiptDesign.payment_method_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, payment_method_bold: !emailReceiptDesign.payment_method_bold })} italic={emailReceiptDesign.payment_method_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, payment_method_italic: !emailReceiptDesign.payment_method_italic })} align={emailReceiptDesign.payment_method_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, payment_method_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Amount given</FormLabel><TextFormattingToolbar font={emailReceiptDesign.cash_amount_given_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, cash_amount_given_font: e.target.value })} fontSize={emailReceiptDesign.cash_amount_given_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, cash_amount_given_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 11)) })} bold={emailReceiptDesign.cash_amount_given_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, cash_amount_given_bold: !emailReceiptDesign.cash_amount_given_bold })} italic={emailReceiptDesign.cash_amount_given_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, cash_amount_given_italic: !emailReceiptDesign.cash_amount_given_italic })} align={emailReceiptDesign.cash_amount_given_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, cash_amount_given_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Change</FormLabel><TextFormattingToolbar font={emailReceiptDesign.cash_change_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, cash_change_font: e.target.value })} fontSize={emailReceiptDesign.cash_change_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, cash_change_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 11)) })} bold={emailReceiptDesign.cash_change_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, cash_change_bold: !emailReceiptDesign.cash_change_bold })} italic={emailReceiptDesign.cash_change_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, cash_change_italic: !emailReceiptDesign.cash_change_italic })} align={emailReceiptDesign.cash_change_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, cash_change_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField></>)}
+                                    {activeEmailReceiptSection === 'body_barcode' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Date & Time</FormLabel><TextFormattingToolbar font={emailReceiptDesign.date_line_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, date_line_font: e.target.value })} fontSize={emailReceiptDesign.date_line_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, date_line_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 10)) })} bold={emailReceiptDesign.date_line_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, date_line_bold: !emailReceiptDesign.date_line_bold })} italic={emailReceiptDesign.date_line_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, date_line_italic: !emailReceiptDesign.date_line_italic })} align={emailReceiptDesign.date_line_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, date_line_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Barcode</FormLabel><TextFormattingToolbar font={emailReceiptDesign.barcode_number_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, barcode_number_font: e.target.value })} fontSize={emailReceiptDesign.barcode_number_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, barcode_number_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 10)) })} bold={emailReceiptDesign.barcode_number_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, barcode_number_bold: !emailReceiptDesign.barcode_number_bold })} italic={emailReceiptDesign.barcode_number_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, barcode_number_italic: !emailReceiptDesign.barcode_number_italic })} align={emailReceiptDesign.barcode_number_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, barcode_number_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField></>)}
+                                    {activeEmailReceiptSection === 'footer' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Footer background</FormLabel><input type="text" value={emailReceiptDesign.footerBg} onChange={e => setRd({ ...emailReceiptDesign, footerBg: e.target.value })} placeholder="#f8fafc" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Footer text color</FormLabel><input type="text" value={emailReceiptDesign.footerTextColor} onChange={e => setRd({ ...emailReceiptDesign, footerTextColor: e.target.value })} placeholder="#64748b" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Custom message</FormLabel><textarea value={emailReceiptDesign.footer_message} onChange={e => setRd({ ...emailReceiptDesign, footer_message: e.target.value })} placeholder="Thank you for your business!" rows={2} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', resize: 'vertical', minHeight: '48px' }} /><TextFormattingToolbar font={emailReceiptDesign.footer_message_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, footer_message_font: e.target.value })} fontSize={emailReceiptDesign.footer_message_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, footer_message_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.footer_message_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, footer_message_bold: !emailReceiptDesign.footer_message_bold })} italic={emailReceiptDesign.footer_message_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, footer_message_italic: !emailReceiptDesign.footer_message_italic })} align={emailReceiptDesign.footer_message_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, footer_message_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Return policy</FormLabel><textarea value={emailReceiptDesign.return_policy} onChange={e => setRd({ ...emailReceiptDesign, return_policy: e.target.value })} placeholder="Returns within 30 days with receipt" rows={2} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', resize: 'vertical', minHeight: '48px' }} /><TextFormattingToolbar font={emailReceiptDesign.return_policy_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, return_policy_font: e.target.value })} fontSize={emailReceiptDesign.return_policy_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, return_policy_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.return_policy_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, return_policy_bold: !emailReceiptDesign.return_policy_bold })} italic={emailReceiptDesign.return_policy_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, return_policy_italic: !emailReceiptDesign.return_policy_italic })} align={emailReceiptDesign.return_policy_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, return_policy_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Website</FormLabel><input value={emailReceiptDesign.store_website} onChange={e => setRd({ ...emailReceiptDesign, store_website: e.target.value })} placeholder="https://..." style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /><TextFormattingToolbar font={emailReceiptDesign.store_website_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, store_website_font: e.target.value })} fontSize={emailReceiptDesign.store_website_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, store_website_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.store_website_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, store_website_bold: !emailReceiptDesign.store_website_bold })} italic={emailReceiptDesign.store_website_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, store_website_italic: !emailReceiptDesign.store_website_italic })} align={emailReceiptDesign.store_website_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, store_website_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Email</FormLabel><input type="email" value={emailReceiptDesign.store_email} onChange={e => setRd({ ...emailReceiptDesign, store_email: e.target.value })} placeholder="store@example.com" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /><TextFormattingToolbar font={emailReceiptDesign.store_email_font} onFontChange={(e) => setRd({ ...emailReceiptDesign, store_email_font: e.target.value })} fontSize={emailReceiptDesign.store_email_font_size} onFontSizeChange={(e) => setRd({ ...emailReceiptDesign, store_email_font_size: Math.min(24, Math.max(8, Number(e.target.value) || 12)) })} bold={emailReceiptDesign.store_email_bold} onBoldToggle={() => setRd({ ...emailReceiptDesign, store_email_bold: !emailReceiptDesign.store_email_bold })} italic={emailReceiptDesign.store_email_italic} onItalicToggle={() => setRd({ ...emailReceiptDesign, store_email_italic: !emailReceiptDesign.store_email_italic })} align={emailReceiptDesign.store_email_align} onAlignChange={(a) => setRd({ ...emailReceiptDesign, store_email_align: a })} isDarkMode={isDarkMode} themeColorRgb={themeColorRgb} /></FormField></>)}
+                                    {activeEmailReceiptSection === 'styling' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Line spacing</FormLabel><input type="number" min={1} max={2} step={0.1} value={emailReceiptDesign.line_spacing ?? 1.2} onChange={(e) => setRd({ ...emailReceiptDesign, line_spacing: Math.min(2, Math.max(1, Number(e.target.value) || 1.2)) })} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField></>)}
+                                  </div>
+                                </>
+                              ) : (
+                                <><div style={{ marginTop: '8px' }}><label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>HTML body</label><textarea value={emailTemplateForm.body_html_template} onChange={e => setF({ ...emailTemplateForm, body_html_template: e.target.value })} rows={10} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }} /></div><div><label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Plain text</label><textarea value={emailTemplateForm.body_text_template} onChange={e => setF({ ...emailTemplateForm, body_text_template: e.target.value })} rows={4} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }} /></div></>
+                              )}
+                            </>
+                          ) : ['order', 'schedule', 'clockin', 'report'].includes(emailTemplateForm.category) ? (
+                            <>
+                              <div style={{ display: 'flex', gap: '6px', marginBottom: '4px' }}>
+                                <button type="button" onClick={() => setEmailTemplateEditMode('visual')} style={{ padding: '4px 10px', borderRadius: '6px', border: emailTemplateEditMode === 'visual' ? `2px solid rgba(${themeColorRgb}, 0.6)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, background: emailTemplateEditMode === 'visual' ? `rgba(${themeColorRgb}, 0.15)` : 'transparent', color: isDarkMode ? 'var(--text-primary)' : '#333', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Visual</button>
+                                <button type="button" onClick={() => setEmailTemplateEditMode('html')} style={{ padding: '4px 10px', borderRadius: '6px', border: emailTemplateEditMode === 'html' ? `2px solid rgba(${themeColorRgb}, 0.6)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, background: emailTemplateEditMode === 'html' ? `rgba(${themeColorRgb}, 0.15)` : 'transparent', color: isDarkMode ? 'var(--text-primary)' : '#333', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>HTML</button>
+                              </div>
+                              {emailTemplateEditMode === 'visual' ? (
+                                <>
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>{['header', 'footer'].map(s => { const isActive = activeEmailOrderSection === s; return <button key={s} type="button" onClick={() => setActiveEmailOrderSection(s)} style={{ padding: '4px 10px', borderRadius: '6px', border: isActive ? `1px solid rgba(${themeColorRgb}, 0.5)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, background: isActive ? `rgba(${themeColorRgb}, 0.2)` : 'transparent', color: isDarkMode ? 'var(--text-primary)' : '#333', fontSize: '11px', fontWeight: isActive ? 600 : 500, cursor: 'pointer' }}>{s === 'header' ? 'Header & store info' : 'Footer'}</button> })}</div>
+                                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px', minHeight: 0 }}>
+                                    {activeEmailOrderSection === 'header' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Store name</FormLabel><input value={emailOrderDesign.store_name} onChange={e => setOd({ ...emailOrderDesign, store_name: e.target.value })} placeholder="La Maison" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Store tagline</FormLabel><input value={emailOrderDesign.store_tagline || ''} onChange={e => setOd({ ...emailOrderDesign, store_tagline: e.target.value })} placeholder="Fine Dining & Provisions" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Store address</FormLabel><textarea value={emailOrderDesign.store_address || ''} onChange={e => setOd({ ...emailOrderDesign, store_address: e.target.value })} placeholder="123 Main Street · Your City, ST 12345" rows={2} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', resize: 'vertical', minHeight: '48px' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Phone</FormLabel><input value={emailOrderDesign.store_phone || ''} onChange={e => setOd({ ...emailOrderDesign, store_phone: e.target.value })} placeholder="(555) 123-4567" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Email</FormLabel><input type="email" value={emailOrderDesign.store_email || ''} onChange={e => setOd({ ...emailOrderDesign, store_email: e.target.value })} placeholder="concierge@lamaison.com" style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%' }} /></FormField></>)}
+                                    {activeEmailOrderSection === 'footer' && (<><FormField><FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '4px' }}>Footer message</FormLabel><textarea value={emailOrderDesign.footer_message || ''} onChange={e => setOd({ ...emailOrderDesign, footer_message: e.target.value })} placeholder="Thank you for dining with us." rows={2} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', resize: 'vertical', minHeight: '48px' }} /></FormField></>)}
+                                  </div>
+                                </>
+                              ) : (
+                                <><div style={{ marginTop: '8px' }}><label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>HTML body</label><textarea value={emailTemplateForm.body_html_template} onChange={e => setF({ ...emailTemplateForm, body_html_template: e.target.value })} rows={10} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }} /></div><div><label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Plain text</label><textarea value={emailTemplateForm.body_text_template} onChange={e => setF({ ...emailTemplateForm, body_text_template: e.target.value })} rows={4} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }} /></div></>
+                              )}
+                            </>
+                          ) : (
+                            <><div style={{ marginTop: '8px' }}><label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>HTML body</label><textarea value={emailTemplateForm.body_html_template} onChange={e => setF({ ...emailTemplateForm, body_html_template: e.target.value })} rows={10} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }} /></div><div><label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Plain text</label><textarea value={emailTemplateForm.body_text_template} onChange={e => setF({ ...emailTemplateForm, body_text_template: e.target.value })} rows={4} style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100%', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }} /></div></>
+                          )}
+                    </>
+                  ) : (
+                    <div style={{ color: isDarkMode ? 'var(--text-tertiary)' : '#999', fontSize: '14px' }}>No templates for this category. Use the dropdown on the right to create one.</div>
+                  )}
+                  </div>
+                  <div style={{ padding: '12px 16px', borderTop: `1px solid ${isDarkMode ? 'var(--border-color)' : '#e0e0e0'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
+                    <button type="button" onClick={handleEmailTemplateUndo} disabled={emailTemplateUndoStack.length === 0} title="Undo" style={{ padding: 0, border: 'none', background: 'none', color: emailTemplateUndoStack.length === 0 ? (isDarkMode ? 'var(--text-tertiary, #666)' : '#999') : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'), cursor: emailTemplateUndoStack.length === 0 ? 'default' : 'pointer', opacity: emailTemplateUndoStack.length === 0 ? 0.5 : 1 }}><Undo2 size={18} strokeWidth={2.5} /></button>
+                    <button type="button" onClick={handleEmailTemplateRedo} disabled={emailTemplateRedoStack.length === 0} title="Redo" style={{ padding: 0, border: 'none', background: 'none', color: emailTemplateRedoStack.length === 0 ? (isDarkMode ? 'var(--text-tertiary, #666)' : '#999') : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'), cursor: emailTemplateRedoStack.length === 0 ? 'default' : 'pointer', opacity: emailTemplateRedoStack.length === 0 ? 0.5 : 1 }}><Redo2 size={18} strokeWidth={2.5} /></button>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginLeft: 'auto' }}>
+                      <button type="button" className="button-26 button-26--header" role="button" onClick={() => setEmailTemplateModalOpen(false)}><div className="button-26__content"><span className="button-26__text text">Cancel</span></div></button>
+                      {sel && emailTemplateEditing != null && <button type="button" className="button-26 button-26--header" role="button" onClick={async () => { if (!emailTemplateEditing) return; const toSave = { ...emailTemplateForm }; if (emailTemplateForm.category === 'receipt' && emailTemplateEditMode === 'visual') { toSave.body_html_template = buildReceiptHtmlFromDesign(); toSave.body_text_template = (emailTemplateForm.body_text_template || '').trim() || `{{store_name}}\n{{store_tagline}}\nOrder #{{order_number}} · {{receipt_date}} {{receipt_time}}\n\n{{items_text}}\n\nSubtotal: \${{subtotal}}\nTax: \${{tax}}\nTip: \${{tip}}\nTotal: \${{total}}\n\n{{footer_message}}`; toSave.variables = { receiptDesign: emailReceiptDesign }; } else if (['order','schedule','clockin','report'].includes(emailTemplateForm.category) && emailTemplateEditMode === 'visual') { const tplHtml = { order: getOrderHtml(), schedule: LA_MAISON_SCHEDULE_APP_NOTIFICATION_HTML, clockin: LA_MAISON_CLOCKIN_APP_NOTIFICATION_HTML, report: LA_MAISON_REPORT_APP_NOTIFICATION_HTML }[emailTemplateForm.category] || ''; toSave.body_html_template = tplHtml; toSave.variables = { ...(toSave.variables || {}), orderDesign: emailOrderDesign }; } try { const r = await cachedFetch(`/api/email-templates/${emailTemplateEditing}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Session-Token': token }, body: JSON.stringify({ ...toSave, is_default: true, session_token: token }) }); const d = await r.json(); if (d.success) { showToast('Saved', 'success'); await refetch() } else showToast(d.message || 'Failed', 'error') } catch (e) { showToast(e?.message || 'Error', 'error') } }}><div className="button-26__content"><span className="button-26__text text">Save</span></div></button>}
+                    </div>
+                  </div>
+                </div>
+                {/* Right: preview with dropdown floating top-right */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: isDarkMode ? 'var(--bg-secondary)' : '#f5f5f5', minWidth: 0, position: 'relative' }}>
+                  <div ref={emailTemplateDropdownRef} style={{ position: 'absolute', top: '12px', right: '16px', zIndex: 10, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {emailTemplateCategory === 'order' && (
+                      showOrderTestEmailInput ? (
+                        <>
+                          <input
+                            type="email"
+                            placeholder="Email to send test to"
+                            value={orderTestEmailInput}
+                            onChange={(e) => setOrderTestEmailInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setShowOrderTestEmailInput(false) }}
+                            autoFocus
+                            style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
+                          />
+                          <button
+                            type="button"
+                            disabled={orderTestEmailSending || !orderTestEmailInput.trim()}
+                            onClick={async () => {
+                              const email = orderTestEmailInput.trim()
+                              if (!email) return
+                              setOrderTestEmailSending(true)
+                              try {
+                                const body = { to_address: email, subject: pSubj || 'New order #ORD-12345', body_html: pHtml || '', store_id: 1 }
+                                const r = await cachedFetch('/api/email-templates/send-test', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' }, body: JSON.stringify(body) })
+                                const d = await r.json()
+                                showToast(d.success ? 'Test email sent!' : (d.message || 'Failed to send'), d.success ? 'success' : 'error')
+                                if (d.success) { setShowOrderTestEmailInput(false); setOrderTestEmailInput('') }
+                              } catch (e) {
+                                showToast(e?.message || 'Error sending', 'error')
+                              } finally {
+                                setOrderTestEmailSending(false)
+                              }
+                            }}
+                            style={{ padding: '6px 12px', fontSize: '12px', border: 'none', borderRadius: '6px', background: `rgba(${themeColorRgb}, 0.8)`, color: '#fff', cursor: orderTestEmailSending || !orderTestEmailInput.trim() ? 'default' : 'pointer', opacity: orderTestEmailSending || !orderTestEmailInput.trim() ? 0.6 : 1 }}
+                          >
+                            {orderTestEmailSending ? 'Sending…' : 'Send'}
+                          </button>
+                          <button type="button" onClick={() => { setShowOrderTestEmailInput(false); setOrderTestEmailInput('') }} style={{ padding: '6px 10px', fontSize: '12px', border: `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, borderRadius: '6px', background: 'none', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Cancel</button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => setShowOrderTestEmailInput(true)} style={{ padding: '6px 12px', fontSize: '13px', border: `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, borderRadius: '8px', background: isDarkMode ? 'var(--bg-primary)' : '#fff', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Send Test</button>
+                      )
+                    )}
+                    <button type="button" onClick={() => setEmailTemplateDropdownOpen(o => !o)} style={{ padding: '6px 12px', fontSize: '13px', border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`, borderRadius: '8px', background: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                      <span>{emailReceiptPreset ? (emailReceiptPreset === 'premium' ? 'Premium' : 'Restaurant Promotion') : emailOrderPreset ? (emailOrderPreset === 'appNotification' ? 'App Notification' : 'Classic') : emailTemplateEditing != null ? (emailTemplates.find(t => t.id === emailTemplateEditing)?.name || 'Template') : emailTemplateCategory === 'receipt' ? 'Select template…' : emailTemplateCategory === 'order' ? 'Select template…' : (emailTemplates.filter(t => t.category === emailTemplateCategory).length > 0 ? 'Select template…' : 'Create new…')}</span>
+                      <ChevronDown size={14} style={{ opacity: 0.8 }} />
+                    </button>
+                    {emailTemplateDropdownOpen && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', minWidth: '220px', background: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff', border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '8px', boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.15)', zIndex: 99999, overflow: 'hidden' }}>
+                          {emailTemplateCategory === 'receipt' ? (
+                            <>
+                              {['premium', 'restaurantPromotion'].map(presetId => {
+                                const label = presetId === 'premium' ? 'Premium' : 'Restaurant Promotion'
+                                const isActive = emailReceiptPreset === presetId
+                                return (
+                                  <button key={presetId} type="button" onClick={() => { selectReceiptPreset(presetId); setEmailTemplateDropdownOpen(false) }} style={{ width: '100%', padding: '10px 14px', border: 'none', background: isActive ? `rgba(${themeColorRgb}, 0.15)` : 'none', fontSize: '13px', textAlign: 'left', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', cursor: 'pointer', fontWeight: isActive ? 600 : 400 }}>{label}</button>
+                                )
+                              })}
+                              {emailTemplates.filter(t => t.category === 'receipt' && !['Receipt (Premium)', 'Receipt (Restaurant Promotion)'].includes(t.name)).length > 0 && (
+                                <>
+                                  <div style={{ borderTop: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#eee'}` }} />
+                                  {emailTemplates.filter(t => t.category === 'receipt' && !['Receipt (Premium)', 'Receipt (Restaurant Promotion)'].includes(t.name)).map(t => (
+                                    <button key={t.id} type="button" onClick={() => { selectTemplate(t); setEmailTemplateDropdownOpen(false) }} style={{ width: '100%', padding: '10px 14px', border: 'none', background: emailTemplateEditing === t.id ? `rgba(${themeColorRgb}, 0.15)` : 'none', fontSize: '13px', textAlign: 'left', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', cursor: 'pointer', fontWeight: emailTemplateEditing === t.id ? 600 : 400 }}>{t.name}{t.is_default ? ' ★' : ''}</button>
+                                  ))}
+                                </>
+                              )}
+                            </>
+                          ) : emailTemplateCategory === 'order' ? (
+                            <>
+                              {['appNotification', 'classic'].map(presetId => {
+                                const label = presetId === 'appNotification' ? 'App Notification' : 'Classic'
+                                const isActive = emailOrderPreset === presetId
+                                return (
+                                  <button key={presetId} type="button" onClick={() => { selectOrderPreset(presetId); setEmailTemplateDropdownOpen(false) }} style={{ width: '100%', padding: '10px 14px', border: 'none', background: isActive ? `rgba(${themeColorRgb}, 0.15)` : 'none', fontSize: '13px', textAlign: 'left', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', cursor: 'pointer', fontWeight: isActive ? 600 : 400 }}>{label}</button>
+                                )
+                              })}
+                              {emailTemplates.filter(t => t.category === 'order' && !['Order Alert (App Notification)', 'Order Alert (Classic)'].includes(t.name)).length > 0 && (
+                                <>
+                                  <div style={{ borderTop: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#eee'}` }} />
+                                  {emailTemplates.filter(t => t.category === 'order' && !['Order Alert (App Notification)', 'Order Alert (Classic)'].includes(t.name)).map(t => (
+                                    <button key={t.id} type="button" onClick={() => { selectTemplate(t); setEmailTemplateDropdownOpen(false) }} style={{ width: '100%', padding: '10px 14px', border: 'none', background: emailTemplateEditing === t.id ? `rgba(${themeColorRgb}, 0.15)` : 'none', fontSize: '13px', textAlign: 'left', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', cursor: 'pointer', fontWeight: emailTemplateEditing === t.id ? 600 : 400 }}>{t.name}{t.is_default ? ' ★' : ''}</button>
+                                  ))}
+                                </>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {emailTemplates.filter(t => t.category === emailTemplateCategory).map(t => (
+                                <button key={t.id} type="button" onClick={() => { selectTemplate(t); setEmailTemplateDropdownOpen(false) }} style={{ width: '100%', padding: '10px 14px', border: 'none', background: emailTemplateEditing === t.id ? `rgba(${themeColorRgb}, 0.15)` : 'none', fontSize: '13px', textAlign: 'left', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', cursor: 'pointer', fontWeight: emailTemplateEditing === t.id ? 600 : 400 }}>{t.name}{t.is_default ? ' ★' : ''}</button>
+                              ))}
+                            </>
+                          )}
+                          <div style={{ borderTop: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#eee'}` }} />
+                          {emailTemplateShowNewInput ? (
+                            <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <input ref={emailTemplateNewInputRef} type="text" value={emailTemplateNewName} onChange={e => setEmailTemplateNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && emailTemplateNewName.trim()) { const name = emailTemplateNewName.trim(); const bodyHtml = (emailTemplateCategory === 'receipt' && emailTemplateEditMode === 'visual') ? buildReceiptHtmlFromDesign() : (emailTemplateCategory === 'receipt' ? emailTemplateForm.body_html_template : (emailTemplateCategory === 'order' && emailTemplateForm.body_html_template ? emailTemplateForm.body_html_template : (DEF[emailTemplateCategory]?.html || emailTemplateForm.body_html_template))); const bodyTxt = emailTemplateForm.body_text_template || (DEF[emailTemplateCategory]?.txt || ''); const subj = emailTemplateForm.subject_template || (DEF[emailTemplateCategory]?.subj || ''); const toSave = { store_id: 1, name, category: emailTemplateCategory, subject_template: subj, body_html_template: bodyHtml, body_text_template: bodyTxt, is_default: 0, session_token: token }; if (emailTemplateCategory === 'receipt' && emailTemplateEditMode === 'visual') toSave.variables = { receiptDesign: emailReceiptDesign }; setEmailTemplateAdding(true); cachedFetch('/api/email-templates', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': token }, body: JSON.stringify(toSave) }).then(r => r.json()).then(data => { if (data.success) { showToast('Created', 'success'); refetch(); setEmailTemplateEditing(data.id); setEmailReceiptPreset(null); setF({ name, category: emailTemplateCategory, subject_template: subj, body_html_template: bodyHtml, body_text_template: bodyTxt }); setEmailTemplateDropdownOpen(false); setEmailTemplateNewName(''); setEmailTemplateShowNewInput(false) } else showToast(data.message || 'Failed', 'error'); setEmailTemplateAdding(false) }).catch(() => { showToast('Error', 'error'); setEmailTemplateAdding(false) }) } else if (e.key === 'Escape') { setEmailTemplateShowNewInput(false); setEmailTemplateNewName('') } }} placeholder="Template name" style={{ padding: '8px 12px', fontSize: '13px', border: `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, borderRadius: '6px', background: isDarkMode ? 'var(--bg-secondary)' : '#fff', color: isDarkMode ? 'var(--text-primary)' : '#333', outline: 'none' }} />
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                                <button type="button" onClick={() => { setEmailTemplateShowNewInput(false); setEmailTemplateNewName('') }} style={{ padding: '6px 10px', fontSize: '12px', border: `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, borderRadius: '6px', background: 'none', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Cancel</button>
+                                <button type="button" disabled={!emailTemplateNewName.trim() || emailTemplateAdding} onClick={async () => { const name = emailTemplateNewName.trim(); if (!name) return; const bodyHtml = (emailTemplateCategory === 'receipt' && emailTemplateEditMode === 'visual') ? buildReceiptHtmlFromDesign() : (emailTemplateCategory === 'receipt' ? emailTemplateForm.body_html_template : (emailTemplateCategory === 'order' && emailTemplateForm.body_html_template ? emailTemplateForm.body_html_template : (DEF[emailTemplateCategory]?.html || emailTemplateForm.body_html_template))); const bodyTxt = emailTemplateForm.body_text_template || (DEF[emailTemplateCategory]?.txt || ''); const subj = emailTemplateForm.subject_template || (DEF[emailTemplateCategory]?.subj || ''); const toSave = { store_id: 1, name, category: emailTemplateCategory, subject_template: subj, body_html_template: bodyHtml, body_text_template: bodyTxt, is_default: 0, session_token: token }; if (emailTemplateCategory === 'receipt' && emailTemplateEditMode === 'visual') toSave.variables = { receiptDesign: emailReceiptDesign }; setEmailTemplateAdding(true); setEmailTemplateNewName(''); setEmailTemplateShowNewInput(false); try { const r = await cachedFetch('/api/email-templates', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': token }, body: JSON.stringify(toSave) }); const data = await r.json(); if (data.success) { showToast('Created', 'success'); await refetch(); setEmailTemplateEditing(data.id); setEmailReceiptPreset(null); setF({ name, category: emailTemplateCategory, subject_template: subj, body_html_template: bodyHtml, body_text_template: bodyTxt }); setEmailTemplateDropdownOpen(false) } else showToast(data.message || 'Failed', 'error') } catch (e) { showToast(e?.message || 'Error', 'error') } finally { setEmailTemplateAdding(false) } }} style={{ padding: '6px 12px', fontSize: '12px', border: 'none', borderRadius: '6px', background: `rgba(${themeColorRgb}, 0.8)`, color: '#fff', cursor: emailTemplateNewName.trim() && !emailTemplateAdding ? 'pointer' : 'default', opacity: emailTemplateNewName.trim() && !emailTemplateAdding ? 1 : 0.6 }}>Create</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button type="button" disabled={emailTemplateAdding} onClick={() => { setEmailTemplateShowNewInput(true); setEmailTemplateNewName(''); setTimeout(() => emailTemplateNewInputRef.current?.focus(), 0) }} style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'none', fontSize: '13px', textAlign: 'left', color: `rgba(${themeColorRgb}, 1)`, cursor: emailTemplateAdding ? 'wait' : 'pointer', fontWeight: 500 }}>Save as new template…</button>
+                          )}
+                        </div>
+                      )}
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '24px', display: 'flex', justifyContent: 'center', alignContent: 'flex-start' }}>
+                    {sel ? (
+                      <div style={{ width: '100%', maxWidth: emailTemplateForm.category === 'receipt' ? '560px' : '420px', minHeight: '200px', background: '#fff', borderRadius: '8px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', overflowX: 'hidden', overflowY: 'visible' }}>
+                        <div style={{ padding: '12px 16px', borderBottom: '1px solid #eee', fontSize: '13px', color: '#666' }}>{pSubj || '(Subject)'}</div>
+                        <div style={{ padding: '16px', fontFamily: 'sans-serif', fontSize: '14px', lineHeight: 1.5, color: '#333', overflowX: 'hidden', maxWidth: '100%' }} dangerouslySetInnerHTML={{ __html: pHtml || emptyHtmlPlaceholder }}></div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: isDarkMode ? 'var(--text-tertiary)' : '#999', fontSize: '15px', flex: 1 }}>Select a template from the dropdown or create a new one</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })(), document.body)}
 
       {/* Integrations Tab */}
       {activeTab === 'integration' && (

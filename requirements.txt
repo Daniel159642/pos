@@ -47,9 +47,10 @@ qrcode>=7.4.0       # QR code generation for receipts
 python-barcode>=0.15.0  # Barcode generation (Code128, Code39, etc.)
 Pillow>=9.0.0       # Image processing (already listed above, but needed for qrcode and barcode)
 
-# SMS CRM dependencies:
-# Email-to-SMS uses built-in smtplib (no additional packages needed)
-# boto3>=1.26.0     # Optional: Only needed when migrating to AWS SNS (~$0.006/SMS)
+# Email & SMS notifications (Settings > Notifications):
+# Gmail: built-in smtplib. AWS SES/SNS: boto3
+boto3>=1.26.0       # For AWS SES (email) and AWS SNS (SMS) in production
+cairosvg>=2.7.0     # SVG→PNG for email logos (Gmail blocks SVG/data URIs)
 
 # Payment processing dependencies:
 stripe>=7.0.0       # Stripe API for payment processing

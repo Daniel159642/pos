@@ -55,6 +55,18 @@ html {
     --shadow-hover: rgba(0, 0, 0, 0.4);
 }
 
+.notification-panel .notification-card:hover {
+    background: rgba(255, 255, 255, 0.95);
+}
+.dark-theme .notification-panel .notification-empty,
+.dark-theme .notification-panel .notification-card {
+    background: rgba(26, 26, 26, 0.85);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.dark-theme .notification-panel .notification-card:hover {
+    background: rgba(36, 36, 36, 0.9);
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
     background: var(--bg-secondary);

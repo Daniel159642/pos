@@ -50,9 +50,13 @@ function isCacheableUrl(url) {
   return CACHEABLE_PATTERNS.some((re) => re.test(path))
 }
 
-function getSessionHeaders() {
+function getSessionHeaders(opts = {}) {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionToken') : null
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = {}
+  // GET requests must not send Content-Type: application/json (Flask will try to parse empty body as JSON and return 400)
+  if (!opts.skipContentType) {
+    headers['Content-Type'] = 'application/json'
+  }
   if (token) {
     headers['X-Session-Token'] = token
     headers['Authorization'] = `Bearer ${token}`
@@ -84,7 +88,7 @@ export async function cachedFetch(url, options = {}, opts = {}) {
       })
       Object.defineProperty(res, '_fromCache', { value: true })
       if (navigator.onLine) {
-        fetch(fullUrl, { ...options, headers: getSessionHeaders() })
+        fetch(fullUrl, { ...options, headers: getSessionHeaders({ skipContentType: true }) })
           .then(async (r) => {
             if (r.ok) {
               const data = await r.json()
@@ -108,7 +112,7 @@ export async function cachedFetch(url, options = {}, opts = {}) {
       })
       Object.defineProperty(res, '_fromCache', { value: true })
       if (navigator.onLine) {
-        fetch(fullUrl, { ...options, headers: getSessionHeaders() })
+        fetch(fullUrl, { ...options, headers: getSessionHeaders({ skipContentType: true }) })
           .then(async (r) => {
             if (r.ok) {
               const data = await r.json()
@@ -163,7 +167,7 @@ export async function cachedFetch(url, options = {}, opts = {}) {
 
   const res = await fetch(fullUrl, {
     ...options,
-    headers: { ...getSessionHeaders(), ...(options.headers || {}) }
+    headers: { ...getSessionHeaders({ skipContentType: method === 'GET' }), ...(options.headers || {}) }
   })
 
   if (method === 'GET' && res.ok && isCacheableUrl(url) && !opts.skipCache) {
