@@ -929,18 +929,69 @@ def get_or_create_product_for_shopify(
         conn.close()
 
 
+def get_or_create_product_for_doordash(
+    establishment_id: int, external_id: str, name: str, price: float
+) -> int:
+    """
+    Get product_id by SKU for establishment, or create a placeholder for DoorDash.
+    SKU is DD-{external_id} to avoid collision with Shopify. Returns product_id.
+    """
+    sku = (external_id or "").strip() or f"DD-{(name or 'item')[:30]}"
+    sku = f"DD-{sku}" if not sku.startswith("DD-") else sku
+    sku = sku[:255]
+    pid = get_product_id_by_sku(establishment_id, sku)
+    if pid is not None:
+        return pid
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        name_clean = (name or "DoorDash item")[:255]
+        cursor.execute(
+            """
+            INSERT INTO inventory
+            (establishment_id, product_name, sku, product_price, product_cost, vendor_id, photo,
+             current_quantity, category, barcode, item_type, unit, sell_at_pos)
+            VALUES (%s, %s, %s, %s, 0, NULL, NULL, 999, NULL, NULL, 'product', NULL, true)
+            ON CONFLICT (establishment_id, sku) DO UPDATE SET product_name = EXCLUDED.product_name, product_price = EXCLUDED.product_price
+            RETURNING product_id
+            """,
+            (establishment_id, name_clean, sku, float(price)),
+        )
+        row = cursor.fetchone()
+        conn.commit()
+        product_id = row[0] if row and not isinstance(row, dict) else (row.get("product_id") if row else None)
+        if not product_id:
+            raise ValueError("Insert did not return product_id")
+        return product_id
+    except Exception as e:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Product variants (sizes with different prices) and ingredients (recipes)
 # ---------------------------------------------------------------------------
 
 def get_product_variants(product_id: int) -> List[Dict[str, Any]]:
-    """Get all size/variant options for a product. Returns list of dicts with variant_id, variant_name, price, cost, sort_order."""
+    """Get all size/variant options for a product. Returns list of dicts with variant_id, variant_name, price, cost, sort_order and optional DoorDash recipe fields."""
     from psycopg2.extras import RealDictCursor
     conn = get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cursor.execute("""
-            SELECT variant_id, product_id, variant_name, price, cost, sort_order, created_at
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'product_variants'
+            AND column_name IN ('photo', 'doordash_default_quantity', 'doordash_charge_above', 'doordash_recipe_default',
+                'doordash_calorific_display_type', 'doordash_calorific_lower_range', 'doordash_calorific_higher_range', 'doordash_classification_tags')
+        """)
+        extra_cols = [r[0] for r in cursor.fetchall()]
+        cols = "variant_id, product_id, variant_name, price, cost, sort_order, created_at"
+        if extra_cols:
+            cols += ", " + ", ".join(extra_cols)
+        cursor.execute(f"""
+            SELECT {cols}
             FROM product_variants WHERE product_id = %s ORDER BY sort_order, variant_name
         """, (product_id,))
         rows = cursor.fetchall()
@@ -970,8 +1021,15 @@ def add_product_variant(product_id: int, variant_name: str, price: float, cost: 
 
 
 def update_product_variant(variant_id: int, variant_name: Optional[str] = None, price: Optional[float] = None,
-                           cost: Optional[float] = None, sort_order: Optional[int] = None) -> bool:
-    """Update a product variant."""
+                           cost: Optional[float] = None, sort_order: Optional[int] = None, photo: Optional[str] = None,
+                           doordash_default_quantity: Optional[int] = None, doordash_charge_above: Optional[int] = None,
+                           doordash_recipe_default: Optional[bool] = None,
+                           doordash_calorific_display_type: Optional[str] = None,
+                           doordash_calorific_lower_range: Optional[int] = None,
+                           doordash_calorific_higher_range: Optional[int] = None,
+                           doordash_classification_tags: Optional[List[str]] = None) -> bool:
+    """Update a product variant. photo: optional path/URL for DoorDash modifier images.
+    doordash_*: recipe quantity_info and default; calorific and classification_tags for DoorDash nutritional/dietary info."""
     conn = get_connection()
     cursor = conn.cursor()
     updates, values = [], []
@@ -987,6 +1045,56 @@ def update_product_variant(variant_id: int, variant_name: Optional[str] = None, 
     if sort_order is not None:
         updates.append("sort_order = %s")
         values.append(sort_order)
+    if photo is not None:
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'product_variants' AND column_name = 'photo'
+        """)
+        if cursor.fetchone():
+            updates.append("photo = %s")
+            values.append(photo.strip() if isinstance(photo, str) else None)
+    for col, val in (
+        ("doordash_default_quantity", doordash_default_quantity),
+        ("doordash_charge_above", doordash_charge_above),
+        ("doordash_recipe_default", doordash_recipe_default),
+    ):
+        if val is None:
+            continue
+        cursor.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'product_variants' AND column_name = %s
+        """, (col,))
+        if cursor.fetchone():
+            if col == "doordash_recipe_default":
+                updates.append(f"{col} = %s")
+                values.append(bool(val))
+            else:
+                updates.append(f"{col} = %s")
+                values.append(int(val) if val is not None else None)
+    for col, val in (
+        ("doordash_calorific_display_type", doordash_calorific_display_type),
+        ("doordash_calorific_lower_range", doordash_calorific_lower_range),
+        ("doordash_calorific_higher_range", doordash_calorific_higher_range),
+        ("doordash_classification_tags", doordash_classification_tags),
+    ):
+        if val is None and col != "doordash_calorific_display_type":
+            continue
+        if col == "doordash_calorific_display_type" and val is None:
+            continue
+        cursor.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'product_variants' AND column_name = %s
+        """, (col,))
+        if cursor.fetchone():
+            if col == "doordash_classification_tags":
+                updates.append(f"{col} = %s::jsonb")
+                values.append(json.dumps(val) if val is not None and isinstance(val, list) else None)
+            elif col == "doordash_calorific_display_type":
+                updates.append(f"{col} = %s")
+                values.append((val or "").strip()[:50] if val is not None else None)
+            else:
+                updates.append(f"{col} = %s")
+                values.append(int(val) if val is not None else None)
     if not updates:
         conn.close()
         return False
@@ -1110,16 +1218,48 @@ def update_product(product_id: int, employee_id: Optional[int] = None, auto_extr
     # Build update query dynamically
     allowed_fields = ['product_name', 'sku', 'product_price', 'product_cost',
                      'vendor_id', 'photo', 'current_quantity', 'category', 'barcode',
-                     'item_type', 'unit', 'sell_at_pos']
+                     'item_type', 'unit', 'sell_at_pos', 'item_special_hours', 'doordash_operation_context',
+                     'doordash_calorific_display_type', 'doordash_calorific_lower_range', 'doordash_calorific_higher_range', 'doordash_classification_tags']
     
     updates = []
     values = []
     new_values = {}
     
+    cursor.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'doordash_operation_context'
+    """)
+    has_doordash_operation_context = cursor.fetchone() is not None
+    cursor.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'doordash_calorific_lower_range'
+    """)
+    has_doordash_nutrition = cursor.fetchone() is not None
+
     for field, value in kwargs.items():
         if field in allowed_fields:
-            updates.append(f"{field} = %s")
-            values.append(value)
+            if field == 'doordash_operation_context' and not has_doordash_operation_context:
+                continue
+            if field in ('doordash_calorific_display_type', 'doordash_calorific_lower_range', 'doordash_calorific_higher_range', 'doordash_classification_tags') and not has_doordash_nutrition:
+                continue
+            if field == 'item_special_hours':
+                updates.append("item_special_hours = %s::jsonb")
+                values.append(json.dumps(value) if value is not None and isinstance(value, (list, dict)) else value)
+            elif field == 'doordash_operation_context':
+                updates.append("doordash_operation_context = %s::jsonb")
+                values.append(json.dumps(value) if value is not None and isinstance(value, (list, dict)) else None)
+            elif field == 'doordash_classification_tags':
+                updates.append("doordash_classification_tags = %s::jsonb")
+                values.append(json.dumps(value) if value is not None and isinstance(value, list) else None)
+            elif field == 'doordash_calorific_lower_range' or field == 'doordash_calorific_higher_range':
+                updates.append(f"{field} = %s")
+                values.append(int(value) if value is not None else None)
+            elif field == 'doordash_calorific_display_type':
+                updates.append("doordash_calorific_display_type = %s")
+                values.append((value or "").strip()[:50] if value is not None else None)
+            else:
+                updates.append(f"{field} = %s")
+                values.append(value)
             new_values[field] = value
     
     if not updates:
@@ -4471,6 +4611,11 @@ def create_order(
     order_source: Optional[str] = None,
     prepare_by: Optional[str] = None,
     establishment_id_override: Optional[int] = None,
+    external_order_id: Optional[str] = None,
+    integration_experience: Optional[str] = None,
+    doordash_promo_details: Optional[Dict[str, Any]] = None,
+    doordash_total_merchant_funded_discount_cents: Optional[int] = None,
+    doordash_total_doordash_funded_discount_cents: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Create a new order and process payment
@@ -4825,14 +4970,25 @@ def create_order(
         else:
             order_id = result[0] if result else None
 
-        # Set order_source and prepare_by for integration orders (columns added by migration)
-        if order_id and (order_source is not None or prepare_by is not None):
+        # Set order_source, prepare_by, external_order_id, integration_experience, DoorDash promo columns for integration orders (columns added by migration)
+        if order_id and (order_source is not None or prepare_by is not None or external_order_id is not None or integration_experience is not None or doordash_promo_details is not None or doordash_total_merchant_funded_discount_cents is not None or doordash_total_doordash_funded_discount_cents is not None):
             cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'orders' AND table_schema = 'public'")
             ocols = [r[0] if isinstance(r, tuple) else r.get('column_name') for r in cursor.fetchall()]
             if order_source is not None and 'order_source' in ocols:
                 cursor.execute("UPDATE orders SET order_source = %s WHERE order_id = %s", (order_source.strip().lower(), order_id))
             if prepare_by is not None and 'prepare_by' in ocols:
                 cursor.execute("UPDATE orders SET prepare_by = %s WHERE order_id = %s", (prepare_by, order_id))
+            if external_order_id is not None and 'external_order_id' in ocols:
+                cursor.execute("UPDATE orders SET external_order_id = %s WHERE order_id = %s", (str(external_order_id).strip()[:512], order_id))
+            if integration_experience is not None and 'integration_experience' in ocols:
+                cursor.execute("UPDATE orders SET integration_experience = %s WHERE order_id = %s", (str(integration_experience).strip()[:64], order_id))
+            if doordash_promo_details is not None and 'doordash_promo_details' in ocols:
+                from psycopg2.extras import Json
+                cursor.execute("UPDATE orders SET doordash_promo_details = %s WHERE order_id = %s", (Json(doordash_promo_details), order_id))
+            if doordash_total_merchant_funded_discount_cents is not None and 'doordash_total_merchant_funded_discount_cents' in ocols:
+                cursor.execute("UPDATE orders SET doordash_total_merchant_funded_discount_cents = %s WHERE order_id = %s", (doordash_total_merchant_funded_discount_cents, order_id))
+            if doordash_total_doordash_funded_discount_cents is not None and 'doordash_total_doordash_funded_discount_cents' in ocols:
+                cursor.execute("UPDATE orders SET doordash_total_doordash_funded_discount_cents = %s WHERE order_id = %s", (doordash_total_doordash_funded_discount_cents, order_id))
         
         # Add order items (triggers will update inventory)
         # Check if order_items has variant_id and notes columns (optional migrations)
@@ -6335,6 +6491,307 @@ def upsert_integration(
     except Exception as e:
         conn.rollback()
         return {'success': False, 'message': str(e)}
+    finally:
+        conn.close()
+
+
+def set_doordash_menu_uuid(establishment_id: int, menu_uuid: str) -> bool:
+    """Store DoorDash menu UUID for an establishment (from Menu Status webhook). Used in Menu Pull response as menus[].id."""
+    if not menu_uuid or not isinstance(menu_uuid, str):
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE pos_integrations
+            SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('doordash_menu_uuid', %s::text), updated_at = now()
+            WHERE provider = 'doordash' AND establishment_id = %s
+        """, (menu_uuid.strip(), establishment_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def save_doordash_order_lines(order_id: int, lines: List[Dict[str, Any]]) -> bool:
+    """Store DoorDash line_item_id/line_option_id for an order (for adjustment API). Lines: [{ line_item_id?, line_option_id?, product_id, quantity, unit_price_cents }]."""
+    if not order_id or not lines:
+        return True
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'doordash_order_lines'
+        """)
+        if not cursor.fetchone():
+            conn.close()
+            return False
+        for row in lines:
+            line_item_id = (row.get("line_item_id") or "").strip() or None
+            line_option_id = (row.get("line_option_id") or "").strip() or None
+            product_id = int(row.get("product_id", 0))
+            quantity = int(row.get("quantity", 1))
+            unit_price_cents = int(row.get("unit_price_cents", 0))
+            if product_id <= 0:
+                continue
+            cursor.execute("""
+                INSERT INTO doordash_order_lines (order_id, line_item_id, line_option_id, product_id, quantity, unit_price_cents)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (order_id, line_item_id, line_option_id, product_id, quantity, unit_price_cents))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def get_doordash_order_lines(order_id: int) -> List[Dict[str, Any]]:
+    """Return stored DoorDash line IDs for an order (for adjustment UI/API)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'doordash_order_lines'
+        """)
+        if not cursor.fetchone():
+            return []
+        from psycopg2.extras import RealDictCursor
+        cursor.close()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT id, order_id, line_item_id, line_option_id, product_id, quantity, unit_price_cents
+            FROM doordash_order_lines WHERE order_id = %s ORDER BY id
+        """, (order_id,))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows] if rows else []
+    finally:
+        conn.close()
+
+
+def get_order_by_external_order_id(external_order_id: str) -> Optional[Dict[str, Any]]:
+    """Find POS order by DoorDash (or other) external_order_id. Returns dict with order_id, establishment_id, etc. or None."""
+    if not external_order_id or not str(external_order_id).strip():
+        return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'external_order_id'
+        """)
+        if not cursor.fetchone():
+            return None
+        from psycopg2.extras import RealDictCursor
+        cursor.close()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT order_id, establishment_id FROM orders
+            WHERE external_order_id = %s AND order_source = 'doordash' LIMIT 1
+        """, (str(external_order_id).strip(),))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_order_dasher_status(
+    external_order_id: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    dasher_status: Optional[str] = None,
+    created_at: Optional[str] = None,
+    dasher_info: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Update dasher_status, dasher_status_at, dasher_info on a DoorDash order.
+    Finds order by external_order_id or client_order_id (merchant_supplied_id / order_id or order_number).
+    Returns True if order was found and updated.
+    """
+    from psycopg2.extras import Json
+    order_id = None
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'dasher_status'
+        """)
+        if not cursor.fetchone():
+            return False
+        if external_order_id and str(external_order_id).strip():
+            cursor.execute(
+                "SELECT order_id FROM orders WHERE external_order_id = %s AND order_source = 'doordash' LIMIT 1",
+                (str(external_order_id).strip(),),
+            )
+            row = cursor.fetchone()
+            if row:
+                order_id = row[0]
+        if order_id is None and client_order_id and str(client_order_id).strip():
+            cid = str(client_order_id).strip()
+            cursor.execute("""
+                SELECT order_id FROM orders
+                WHERE order_source = 'doordash' AND (CAST(order_id AS TEXT) = %s OR order_number = %s)
+                LIMIT 1
+            """, (cid, cid))
+            row = cursor.fetchone()
+            if row:
+                order_id = row[0]
+        if order_id is None:
+            return False
+        status_val = (dasher_status or "").strip() or None
+        at_val = (created_at or "").strip() or None  # PostgreSQL accepts ISO timestamp strings
+        info_val = Json(dasher_info) if dasher_info else None
+        cursor.execute("""
+            UPDATE orders SET dasher_status = %s, dasher_status_at = %s::timestamptz, dasher_info = %s
+            WHERE order_id = %s
+        """, (status_val, at_val, info_val, order_id))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def replace_doordash_order_lines(order_id: int, lines: List[Dict[str, Any]]) -> bool:
+    """Replace all DoorDash line records for an order (e.g. after Order Adjustment webhook). Deletes existing then inserts."""
+    if not order_id:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'doordash_order_lines'
+        """)
+        if not cursor.fetchone():
+            conn.close()
+            return False
+        cursor.execute("DELETE FROM doordash_order_lines WHERE order_id = %s", (order_id,))
+        for row in lines:
+            line_item_id = (row.get("line_item_id") or "").strip() or None
+            line_option_id = (row.get("line_option_id") or "").strip() or None
+            product_id = int(row.get("product_id", 0))
+            quantity = int(row.get("quantity", 1))
+            unit_price_cents = int(row.get("unit_price_cents", 0))
+            if product_id <= 0:
+                continue
+            cursor.execute("""
+                INSERT INTO doordash_order_lines (order_id, line_item_id, line_option_id, product_id, quantity, unit_price_cents)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (order_id, line_item_id, line_option_id, product_id, quantity, unit_price_cents))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def update_order_totals_from_doordash(order_id: int, subtotal_cents: int, tax_cents: int) -> bool:
+    """Update order subtotal, tax_amount, and total from DoorDash adjustment payload (cents). Preserves tip in total."""
+    if order_id is None:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT subtotal, tax_amount, total, tip FROM orders WHERE order_id = %s", (order_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return False
+        tip = float(row[3] or 0)
+        subtotal = subtotal_cents / 100.0
+        tax_amount = tax_cents / 100.0
+        total = subtotal + tax_amount + tip
+        cursor.execute("""
+            UPDATE orders SET subtotal = %s, tax_amount = %s, total = %s WHERE order_id = %s
+        """, (subtotal, tax_amount, total, order_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def insert_doordash_store_deactivation_event(
+    establishment_id: int,
+    doordash_store_id: Optional[int] = None,
+    merchant_supplied_id: Optional[str] = None,
+    reason_id: Optional[int] = None,
+    reason: Optional[str] = None,
+    notes: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+) -> bool:
+    """
+    Insert a DoorDash "Store Temporarily Deactivated" webhook event.
+    start_time/end_time: ISO datetime strings (stored as timestamptz).
+    Returns True if inserted.
+    """
+    if establishment_id is None:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'doordash_store_deactivation_events'
+        """)
+        if not cursor.fetchone():
+            return False
+        msid = (merchant_supplied_id or "").strip() or None
+        reason_str = (reason or "").strip() or None
+        notes_str = (notes or "").strip() or None
+        st = (start_time or "").strip() or None
+        et = (end_time or "").strip() or None
+        cursor.execute("""
+            INSERT INTO doordash_store_deactivation_events
+            (establishment_id, doordash_store_id, merchant_supplied_id, reason_id, reason, notes, start_time, end_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
+        """, (establishment_id, doordash_store_id, msid, reason_id, reason_str, notes_str, st, et))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def get_latest_doordash_store_deactivation(establishment_id: int) -> Optional[Dict[str, Any]]:
+    """Return the most recent store temporarily deactivated event for this establishment, or None."""
+    if establishment_id is None:
+        return None
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'doordash_store_deactivation_events'
+        """)
+        if not cursor.fetchone():
+            return None
+        cursor.execute("""
+            SELECT id, establishment_id, doordash_store_id, merchant_supplied_id, reason_id, reason, notes, start_time, end_time, created_at
+            FROM doordash_store_deactivation_events
+            WHERE establishment_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (establishment_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
 

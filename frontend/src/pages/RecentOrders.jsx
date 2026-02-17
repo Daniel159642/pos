@@ -65,6 +65,14 @@ function RecentOrders() {
   const [creatingDemoOrders, setCreatingDemoOrders] = useState(false)
   const [statusPhaseModal, setStatusPhaseModal] = useState(null) // { row, orderId } when open; null when closed
   const [statusPhaseModalLoadingItems, setStatusPhaseModalLoadingItems] = useState(false)
+  const [doordashCancelModal, setDoordashCancelModal] = useState(null) // { orderId } when open
+  const [doordashCancelReason, setDoordashCancelReason] = useState('OTHER')
+  const [doordashCancelDetails, setDoordashCancelDetails] = useState('')
+  const [doordashCancelLoading, setDoordashCancelLoading] = useState(false)
+  const [doordashOrderManagerModal, setDoordashOrderManagerModal] = useState(null) // { orderId, loading?, url?, error? }
+  const [dasherPopoverOrderId, setDasherPopoverOrderId] = useState(null) // orderId when Dasher popover is open
+  const [doordashAdjustModalOrderId, setDoordashAdjustModalOrderId] = useState(null) // orderId when Adjust info modal is open
+  const dasherPopoverRef = useRef(null)
 
   // Return modal state
   const [order, setOrder] = useState(null)
@@ -268,6 +276,9 @@ function RecentOrders() {
       if (actionsDropdownOrderId != null && actionsDropdownRef.current && !actionsDropdownRef.current.contains(event.target)) {
         setActionsDropdownOrderId(null)
       }
+      if (dasherPopoverOrderId != null && dasherPopoverRef.current && !dasherPopoverRef.current.contains(event.target)) {
+        setDasherPopoverOrderId(null)
+      }
       // Close condition dropdowns (trigger is in ref; dropdown may be in portal)
       const isInsideConditionPortal = conditionDropdownPortalRef.current?.contains(event.target)
       Object.keys(conditionDropdownRefs.current).forEach(itemId => {
@@ -294,7 +305,7 @@ function RecentOrders() {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [actionsDropdownOrderId])
+  }, [actionsDropdownOrderId, dasherPopoverOrderId])
 
   // Load all order items when products are scanned (for filtering)
   const loadAllOrderItems = async () => {
@@ -754,6 +765,9 @@ function RecentOrders() {
         receipt_phone: row.receipt_phone ?? null,
         prepare_by: row.prepare_by ?? null,
         order_source: row.order_source ?? row.orderSource ?? null,
+        dasher_status: row.dasher_status ?? null,
+        dasher_status_at: row.dasher_status_at ?? null,
+        dasher_info: row.dasher_info ?? null,
         items: orderItems
       }
       if (!isNaN(normalizedOrderId) && orderItems.length > 0) {
@@ -812,7 +826,10 @@ function RecentOrders() {
       })
       const result = await res.json()
       if (result.success) {
-        setToast({ message: 'Status updated', type: 'success' })
+        const msg = order_status === 'ready' && result.doordash_ready_sent
+          ? 'Status updated. DoorDash notified: order ready for pickup.'
+          : 'Status updated'
+        setToast({ message: msg, type: 'success' })
         await invalidateOrders()
         setOrderDetails(prev => ({
           ...prev,
@@ -831,6 +848,61 @@ function RecentOrders() {
       setToast({ message: 'Failed to update status', type: 'error' })
     } finally {
       setStatusUpdatingOrderId(null)
+    }
+  }
+
+  const cancelDoordashOrder = async (orderId) => {
+    if (!orderId || doordashCancelLoading) return
+    setDoordashCancelLoading(true)
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const res = await fetch(`/api/orders/${orderId}/doordash-cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+        body: JSON.stringify({
+          cancel_reason: doordashCancelReason,
+          cancel_details: doordashCancelDetails.trim() || undefined
+        })
+      })
+      const result = await res.json()
+      if (result.success) {
+        setToast({ message: 'Order cancelled with DoorDash', type: 'success' })
+        setDoordashCancelModal(null)
+        setDoordashCancelReason('OTHER')
+        setDoordashCancelDetails('')
+        await invalidateOrders()
+        setOrderDetails(prev => ({
+          ...prev,
+          [orderId]: prev[orderId] ? { ...prev[orderId], order_status: 'voided' } : prev[orderId]
+        }))
+      } else {
+        setToast({ message: result.message || 'DoorDash cancellation failed', type: 'error' })
+      }
+    } catch (err) {
+      console.error(err)
+      setToast({ message: 'Failed to cancel with DoorDash', type: 'error' })
+    } finally {
+      setDoordashCancelLoading(false)
+    }
+  }
+
+  const openDoordashOrderManager = async (orderId) => {
+    if (!orderId) return
+    setDoordashOrderManagerModal({ orderId, loading: true })
+    try {
+      const token = localStorage.getItem('sessionToken')
+      const res = await fetch(`/api/orders/${orderId}/doordash-order-manager-url`, {
+        headers: { ...(token && { Authorization: `Bearer ${token}` }) }
+      })
+      const result = await res.json()
+      if (result.success && result.url) {
+        setDoordashOrderManagerModal(prev => ({ ...prev, loading: false, url: result.url, error: null }))
+      } else {
+        setDoordashOrderManagerModal(prev => ({ ...prev, loading: false, url: null, error: result.message || 'Could not load Order Manager' }))
+      }
+    } catch (err) {
+      console.error(err)
+      setDoordashOrderManagerModal(prev => ({ ...prev, loading: false, url: null, error: 'Order Manager is unavailable. Please try again or contact support.' }))
     }
   }
 
@@ -1354,6 +1426,20 @@ function RecentOrders() {
     if (source === 'shopify') return { src: '/shopify-logo.svg', alt: 'Shopify', textOnly: false }
     if (source === 'uber_eats' || source === 'ubereats') return { src: '/uber-eats-logo.svg', alt: 'Uber Eats', textOnly: false }
     return null
+  }
+
+  // DoorDash Dasher Status webhook: human-readable label for dasher_status
+  const getDasherStatusLabel = (status) => {
+    if (!status || typeof status !== 'string') return ''
+    const s = status.toLowerCase().trim()
+    const map = {
+      dasher_confirmed: 'Dasher confirmed',
+      arriving_at_store: 'Arriving at store',
+      arrived_at_store: 'Arrived at store',
+      dasher_out_for_delivery: 'Out for delivery',
+      dropoff: 'Dropped off'
+    }
+    return map[s] || status
   }
 
   // Filter out hidden fields and insert Status column (replacing order_status / payment_method)
@@ -2167,6 +2253,65 @@ function RecentOrders() {
                           Prepare by: {formatOrderDate(row.prepare_by)}
                         </div>
                       )}
+                      {cardSource === 'doordash' && (row.dasher_status || row.dasher_info) && (
+                        <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginTop: '4px' }}>
+                          {row.dasher_status && <span>Dasher: {getDasherStatusLabel(row.dasher_status)}</span>}
+                          {row.dasher_status && row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name || (row.dasher_info.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model))) && ' · '}
+                          {row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name) && (
+                            <span>{[row.dasher_info.first_name, row.dasher_info.last_name].filter(Boolean).join(' ')}</span>
+                          )}
+                          {row.dasher_info?.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model) && (
+                            <span> · {[row.dasher_info.vehicle.make, row.dasher_info.vehicle.model].filter(Boolean).join(' ')}</span>
+                          )}
+                        </div>
+                      )}
+                      {/* DoorDash order action buttons on card */}
+                      {cardSource === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px', alignItems: 'center' }}>
+                          <div style={{ position: 'relative' }} ref={dasherPopoverOrderId === normalizedOrderId ? dasherPopoverRef : null}>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setDasherPopoverOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId) }}
+                              style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${cardThemeColor}`, background: 'transparent', color: cardThemeColor, fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >
+                              Dasher
+                            </button>
+                            {dasherPopoverOrderId === normalizedOrderId && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  bottom: '100%',
+                                  left: 0,
+                                  marginBottom: '4px',
+                                  padding: '8px 10px',
+                                  minWidth: '160px',
+                                  backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                  border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
+                                  borderRadius: '8px',
+                                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                                  zIndex: 60,
+                                  fontSize: '12px',
+                                  color: isDarkMode ? 'var(--text-primary)' : '#333'
+                                }}
+                              >
+                                {row.dasher_status && <div><strong>Status:</strong> {getDasherStatusLabel(row.dasher_status)}</div>}
+                                {row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name) && (
+                                  <div><strong>Name:</strong> {[row.dasher_info.first_name, row.dasher_info.last_name].filter(Boolean).join(' ')}</div>
+                                )}
+                                {row.dasher_info?.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model) && (
+                                  <div><strong>Vehicle:</strong> {[row.dasher_info.vehicle.make, row.dasher_info.vehicle.model].filter(Boolean).join(' ')}</div>
+                                )}
+                                {row.dasher_info?.phone_number && <div style={{ marginTop: '4px' }}><strong>Phone:</strong> {row.dasher_info.phone_number}</div>}
+                                {!row.dasher_status && !row.dasher_info && <div>No dasher info yet</div>}
+                              </div>
+                            )}
+                          </div>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '11px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); openDoordashOrderManager(normalizedOrderId) }} style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}>Order Manager</button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}>Adjust</button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails('') }} style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #b91c1c', background: isDarkMode ? '#5c1a1a' : '#fef2f2', color: isDarkMode ? '#fca5a5' : '#b91c1c', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}>Cancel</button>
+                        </div>
+                      )}
                       {/* Product info + actions ellipsis inline (bottom right when collapsed) */}
                       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '8px', marginTop: '10px', paddingTop: '10px', borderTop: `1px solid ${cardThemeColor}` }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -2283,6 +2428,15 @@ function RecentOrders() {
                                 >
                                   Reprint receipt
                                 </button>
+                                {cardSource === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
+                                  <>
+                                    <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Mark ready</button>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails('') }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                  </>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2670,6 +2824,22 @@ function RecentOrders() {
                                     <div>
                                       <strong>Customer ID:</strong> {details.customer_id || 'N/A'}
                                     </div>
+                                    {(details.customer_name || details.customerName) && (
+                                      <div>
+                                        <strong>Customer:</strong> {details.customer_name || details.customerName}
+                                      </div>
+                                    )}
+                                    {(details.customer_phone || details.customerPhone) && (
+                                      <div style={{ gridColumn: '1 / -1' }}>
+                                        <strong>Customer phone:</strong>{' '}
+                                        <a href={`tel:${(details.customer_phone || details.customerPhone).replace(/\s/g, '')}`} style={{ color: isDarkMode ? '#93c5fd' : '#2563eb', textDecoration: 'none' }}>
+                                          {details.customer_phone || details.customerPhone}
+                                        </a>
+                                        {(details.order_source || details.orderSource)?.toString().toLowerCase().trim() === 'doordash' && (
+                                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '6px' }}>(masked; call from store number)</span>
+                                        )}
+                                      </div>
+                                    )}
                                     <div>
                                       <strong>Subtotal:</strong> ${(parseFloat(details.subtotal) || 0).toFixed(2)}
                                     </div>
@@ -2694,6 +2864,29 @@ function RecentOrders() {
                                     {details.prepare_by && (
                                       <div style={{ gridColumn: '1 / -1' }}>
                                         <strong>Prepare by:</strong> {formatOrderDate(details.prepare_by)}
+                                      </div>
+                                    )}
+                                    {(details.order_source || details.orderSource)?.toString().toLowerCase().trim() === 'doordash' && (details.dasher_status || details.dasher_info) && (
+                                      <div style={{ gridColumn: '1 / -1' }}>
+                                        <strong>Dasher:</strong>{' '}
+                                        {details.dasher_status && getDasherStatusLabel(details.dasher_status)}
+                                        {details.dasher_status && details.dasher_info && (details.dasher_info.first_name || details.dasher_info.last_name || (details.dasher_info.vehicle && (details.dasher_info.vehicle.make || details.dasher_info.vehicle.model))) && ' · '}
+                                        {details.dasher_info && (details.dasher_info.first_name || details.dasher_info.last_name) && (
+                                          <span>{[details.dasher_info.first_name, details.dasher_info.last_name].filter(Boolean).join(' ')}</span>
+                                        )}
+                                        {details.dasher_info?.vehicle && (details.dasher_info.vehicle.make || details.dasher_info.vehicle.model) && (
+                                          <span> · {[details.dasher_info.vehicle.make, details.dasher_info.vehicle.model].filter(Boolean).join(' ')}</span>
+                                        )}
+                                        {details.dasher_info?.phone_number && (
+                                          <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>
+                                            Phone: {details.dasher_info.phone_number} (call from store number)
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    {(details.order_type || details.orderType || '').toLowerCase() === 'delivery' && (details.customer_address || details.customerAddress) && (
+                                      <div style={{ gridColumn: '1 / -1' }}>
+                                        <strong>Delivery address:</strong> {details.customer_address || details.customerAddress}
                                       </div>
                                     )}
                                     {/* Status / phase update for pickup & delivery */}
@@ -2733,6 +2926,13 @@ function RecentOrders() {
                                         {(details.order_source || details.orderSource) && (
                                           <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
                                             <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
+                                            {(details.order_source || details.orderSource).toString().toLowerCase().trim() === 'doordash' && (details.order_status || '').toLowerCase() !== 'voided' && (
+                                              <>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); openDoordashOrderManager(normalizedOrderId); }} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: 'pointer' }}>Order Manager</button>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); setDoordashAdjustModalOrderId(normalizedOrderId); }} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: 'pointer' }}>Adjust</button>
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#8b2e2e' : '#c53030'}`, background: isDarkMode ? '#5c1a1a' : '#fef2f2', color: isDarkMode ? '#fca5a5' : '#b91c1c', fontSize: '12px', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                              </>
+                                            )}
                                             {(details.order_type || '').toLowerCase() === 'delivery' && (
                                               <>
                                                 <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'out_for_delivery') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Out for delivery'}</button>
@@ -2934,6 +3134,127 @@ function RecentOrders() {
           </div>
         )
       })()}
+
+      {/* DoorDash cancel order modal */}
+      {doordashCancelModal && (
+        <div
+          style={modalOverlayStyle(isDarkMode)}
+          onClick={() => !doordashCancelLoading && setDoordashCancelModal(null)}
+        >
+          <div
+            style={modalContentStyle(isDarkMode, { padding: isMobile ? '16px' : '24px', maxWidth: isMobile ? '95%' : '400px' })}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={formTitleStyle(isDarkMode)}>Cancel order with DoorDash</h3>
+            <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>
+              This tells DoorDash to cancel the order. STORE_CLOSED deactivates the store 12 hrs; KITCHEN_BUSY for 15 min.
+            </p>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>Reason</FormLabel>
+              <select
+                value={doordashCancelReason}
+                onChange={(e) => setDoordashCancelReason(e.target.value)}
+                disabled={doordashCancelLoading}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
+                  background: isDarkMode ? '#2d2d2d' : '#fff',
+                  color: isDarkMode ? '#fff' : '#333',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="ITEM_OUT_OF_STOCK">Item out of stock</option>
+                <option value="STORE_CLOSED">Store closed</option>
+                <option value="KITCHEN_BUSY">Kitchen busy</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </FormField>
+            <FormField>
+              <FormLabel isDarkMode={isDarkMode}>Details (optional)</FormLabel>
+              <textarea
+                value={doordashCancelDetails}
+                onChange={(e) => setDoordashCancelDetails(e.target.value)}
+                disabled={doordashCancelLoading}
+                placeholder="e.g. Store closed due to low capacity"
+                rows={2}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
+                  background: isDarkMode ? '#2d2d2d' : '#fff',
+                  color: isDarkMode ? '#fff' : '#333',
+                  fontSize: '14px',
+                  resize: 'vertical'
+                }}
+              />
+            </FormField>
+            <CompactFormActions
+              onCancel={() => !doordashCancelLoading && setDoordashCancelModal(null)}
+              onPrimary={() => cancelDoordashOrder(doordashCancelModal.orderId)}
+              primaryLabel={doordashCancelLoading ? 'Cancelling…' : 'Cancel with DoorDash'}
+              primaryDisabled={doordashCancelLoading}
+              primaryType="button"
+              isDarkMode={isDarkMode}
+              themeColorRgb={themeColorRgb}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* DoorDash Adjust info modal */}
+      {doordashAdjustModalOrderId && (
+        <div role="dialog" aria-modal="true" style={modalOverlayStyle} onClick={() => setDoordashAdjustModalOrderId(null)}>
+          <div style={{ ...modalContentStyle(isDarkMode), maxWidth: '360px' }} onClick={(e) => e.stopPropagation()}>
+            <p style={{ margin: '0 0 12px', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+              To adjust items (change quantity, remove item, or substitute), use DoorDash Order Manager.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setDoordashAdjustModalOrderId(null)} style={{ padding: '8px 14px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: 'transparent', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer' }}>Close</button>
+              <button type="button" onClick={() => { openDoordashOrderManager(doordashAdjustModalOrderId); setDoordashAdjustModalOrderId(null); }} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #FF3008', background: '#FF3008', color: '#fff', cursor: 'pointer' }}>Open Order Manager</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* DoorDash Live Order Manager modal (iframe) */}
+      {doordashOrderManagerModal && (
+        <div
+          style={modalOverlayStyle(isDarkMode)}
+          onClick={() => setDoordashOrderManagerModal(null)}
+        >
+          <div
+            style={{
+              ...modalContentStyle(isDarkMode, { padding: 0, maxWidth: '96vw', width: '96vw', height: '90vh', display: 'flex', flexDirection: 'column' }),
+              overflow: 'hidden'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
+              <span style={{ fontWeight: 600, fontSize: '16px' }}>DoorDash Order Manager</span>
+              <button type="button" onClick={() => setDoordashOrderManagerModal(null)} style={{ padding: '6px 12px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: '14px' }}>Close</button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+              {doordashOrderManagerModal.loading && <p style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Loading Order Manager…</p>}
+              {doordashOrderManagerModal.error && (
+                <div style={{ textAlign: 'center' }}>
+                  <p style={{ color: isDarkMode ? '#fca5a5' : '#b91c1c', marginBottom: '12px' }}>{doordashOrderManagerModal.error}</p>
+                  <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>Order Manager is unavailable at this time. Please reach out to support to update this order.</p>
+                </div>
+              )}
+              {doordashOrderManagerModal.url && !doordashOrderManagerModal.loading && (
+                <iframe
+                  title="DoorDash Order Manager"
+                  src={doordashOrderManagerModal.url}
+                  style={{ width: '100%', height: '100%', minHeight: '500px', border: 'none', borderRadius: '8px' }}
+                  allowFullScreen
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Return Form Modal */}
       {order && (

@@ -74,7 +74,10 @@ function Inventory() {
     vendor_id: null,
     photo: null,
     item_type: 'product',
-    unit: ''
+    unit: '',
+    sell_at_pos: true,
+    item_special_hours: '',
+    item_special_hours_entries: []
   })
   const [inventoryFilter, setInventoryFilter] = useState('all') // 'all' | 'product' | 'ingredient' | 'archived'
   const [inventoryPage, setInventoryPage] = useState(0)
@@ -156,6 +159,7 @@ function Inventory() {
     queryFn: async () => {
       let url = '/api/inventory?limit=' + PAGE_SIZE + '&offset=' + inventoryPage * PAGE_SIZE
       if (inventoryFilter === 'archived') url += '&archived=1'
+      else if (inventoryFilter === 'doordash') url += '&sell_at_pos=1&item_type=product'
       else if (inventoryFilter && inventoryFilter !== 'all') url += '&item_type=' + inventoryFilter
       const res = await cachedFetch(url)
       const result = await res.json()
@@ -298,7 +302,21 @@ function Inventory() {
       vendor_id: product.vendor_id || null,
       photo: null,
       item_type: product.item_type || 'product',
-      unit: product.unit || ''
+      unit: product.unit || '',
+      sell_at_pos: product.sell_at_pos !== false,
+      item_special_hours: product.item_special_hours ? (typeof product.item_special_hours === 'string' ? product.item_special_hours : JSON.stringify(product.item_special_hours, null, 2)) : '',
+      item_special_hours_entries: (() => {
+        const raw = product.item_special_hours
+        if (!raw) return []
+        try {
+          const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
+          return Array.isArray(arr) ? arr.map((e) => ({
+            day_index: e.day_index || 'MON',
+            start_time: (e.start_time || '00:00').substring(0, 5),
+            end_time: (e.end_time || '23:59').substring(0, 5)
+          })) : []
+        } catch (_) { return [] }
+      })()
     })
     // Set photo preview from existing product photo if available
     if (product.photo) {
@@ -698,13 +716,9 @@ function Inventory() {
   }, [editResizingHandle])
 
   const handleEditChange = (e) => {
-    const { name, value } = e.target
-    setEditFormData(prev => ({
-      ...prev,
-      [name]: name === 'product_price' || name === 'product_cost' || name === 'current_quantity' || name === 'vendor_id'
-        ? (value === '' ? null : parseFloat(value))
-        : value
-    }))
+    const { name, value, type } = e.target
+    const val = type === 'checkbox' ? e.target.checked : (name === 'product_price' || name === 'product_cost' || name === 'current_quantity' || name === 'vendor_id' ? (value === '' ? null : parseFloat(value)) : value)
+    setEditFormData(prev => ({ ...prev, [name]: val }))
   }
 
   const handleAddVariant = async () => {
@@ -817,6 +831,16 @@ function Inventory() {
       if (editFormData.photo) {
         formData.append('photo', editFormData.photo)
       }
+      formData.append('sell_at_pos', editFormData.sell_at_pos !== false ? 'true' : 'false')
+      const hoursEntries = editFormData.item_special_hours_entries
+      if (Array.isArray(hoursEntries) && hoursEntries.length > 0) {
+        const cleaned = hoursEntries.filter((e) => e && (e.day_index || e.start_time || e.end_time)).map((e) => ({
+          day_index: e.day_index || 'MON',
+          start_time: (e.start_time || '00:00').substring(0, 8),
+          end_time: (e.end_time || '23:59').substring(0, 8)
+        }))
+        if (cleaned.length) formData.append('item_special_hours', JSON.stringify(cleaned))
+      }
       formData.append('session_token', sessionToken)
 
       const response = await fetch(`/api/inventory/${editingProduct.product_id}`, {
@@ -867,6 +891,16 @@ function Inventory() {
       if (createProductData.photo) {
         formData.append('photo', createProductData.photo)
       }
+      formData.append('sell_at_pos', createProductData.sell_at_pos !== false ? 'true' : 'false')
+      const createHoursEntries = createProductData.item_special_hours_entries
+      if (Array.isArray(createHoursEntries) && createHoursEntries.length > 0) {
+        const cleaned = createHoursEntries.filter((e) => e && (e.day_index || e.start_time || e.end_time)).map((e) => ({
+          day_index: e.day_index || 'MON',
+          start_time: (e.start_time || '00:00').substring(0, 8),
+          end_time: (e.end_time || '23:59').substring(0, 8)
+        }))
+        if (cleaned.length) formData.append('item_special_hours', JSON.stringify(cleaned))
+      }
 
       const response = await fetch('/api/inventory', {
         method: 'POST',
@@ -914,7 +948,10 @@ function Inventory() {
         vendor_id: null,
         photo: null,
         item_type: 'product',
-        unit: ''
+        unit: '',
+        sell_at_pos: true,
+        item_special_hours: '',
+        item_special_hours_entries: []
       })
       setCreateVariants([])
       setCreateRecipeRows([])
@@ -2274,6 +2311,63 @@ function Inventory() {
                     </FormField>
                   )}
 
+                  {createProductData.item_type === 'product' && (
+                    <div style={{ ...compactFormSectionStyle(isDarkMode), marginTop: '8px' }}>
+                      <h4 style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginBottom: '8px' }}>DoorDash</h4>
+                      <FormField style={compactFormFieldStyle}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={createProductData.sell_at_pos !== false} onChange={(e) => setCreateProductData({ ...createProductData, sell_at_pos: e.target.checked })} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                          <span style={compactFormLabelStyle(isDarkMode)}>Include on DoorDash (available at POS / in menu)</span>
+                        </label>
+                        <p style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginTop: '4px' }}>When on, this item is included in DoorDash Menu Pull.</p>
+                      </FormField>
+                      <FormField style={compactFormFieldStyle}>
+                        <label style={compactFormLabelStyle(isDarkMode)}>Time-of-day restriction (optional)</label>
+                        <p style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginBottom: '8px' }}>Only show this item on DoorDash during these windows. Leave empty for no restriction.</p>
+                        {(createProductData.item_special_hours_entries || []).map((entry, idx) => (
+                          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                            <select
+                              value={entry.day_index || 'MON'}
+                              onChange={(e) => setCreateProductData((prev) => {
+                                const entries = [...(prev.item_special_hours_entries || [])]
+                                entries[idx] = { ...entries[idx], day_index: e.target.value }
+                                return { ...prev, item_special_hours_entries: entries }
+                              })}
+                              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), minWidth: '90px', padding: '6px 8px' }}
+                            >
+                              {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map((d) => (
+                                <option key={d} value={d}>{d}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="time"
+                              value={(entry.start_time || '09:00').substring(0, 5)}
+                              onChange={(e) => setCreateProductData((prev) => {
+                                const entries = [...(prev.item_special_hours_entries || [])]
+                                entries[idx] = { ...entries[idx], start_time: e.target.value + ':00' }
+                                return { ...prev, item_special_hours_entries: entries }
+                              })}
+                              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100px', padding: '6px 8px' }}
+                            />
+                            <span style={{ color: isDarkMode ? '#888' : '#666', fontSize: '12px' }}>to</span>
+                            <input
+                              type="time"
+                              value={(entry.end_time || '17:00').substring(0, 5)}
+                              onChange={(e) => setCreateProductData((prev) => {
+                                const entries = [...(prev.item_special_hours_entries || [])]
+                                entries[idx] = { ...entries[idx], end_time: e.target.value + ':00' }
+                                return { ...prev, item_special_hours_entries: entries }
+                              })}
+                              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100px', padding: '6px 8px' }}
+                            />
+                            <button type="button" onClick={() => setCreateProductData((prev) => ({ ...prev, item_special_hours_entries: (prev.item_special_hours_entries || []).filter((_, i) => i !== idx) }))} style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: 'pointer' }}>Remove</button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => setCreateProductData((prev) => ({ ...prev, item_special_hours_entries: [...(prev.item_special_hours_entries || []), { day_index: 'MON', start_time: '09:00:00', end_time: '17:00:00' }] }))} style={{ padding: '6px 12px', borderRadius: '6px', border: `1px solid rgba(${themeColorRgb}, 0.6)`, background: `rgba(${themeColorRgb}, 0.15)`, color: `rgba(${themeColorRgb}, 1)`, fontSize: '12px', cursor: 'pointer', fontWeight: 500 }}>Add time window</button>
+                      </FormField>
+                    </div>
+                  )}
+
                   <FormField style={compactFormFieldStyle}>
                     <label style={compactFormLabelStyle(isDarkMode)}>
                       SKU <span style={{ color: '#f44336' }}>*</span>
@@ -2886,6 +2980,63 @@ function Inventory() {
                     </FormField>
                   )}
 
+                  {(editFormData.item_type || 'product') === 'product' && (
+                    <div style={{ ...compactFormSectionStyle(isDarkMode), marginTop: '12px' }}>
+                      <h4 style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginBottom: '10px' }}>DoorDash</h4>
+                      <FormField style={compactFormFieldStyle}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input type="checkbox" name="sell_at_pos" checked={editFormData.sell_at_pos !== false} onChange={handleEditChange} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                          <span style={compactFormLabelStyle(isDarkMode)}>Include on DoorDash (available at POS / in menu)</span>
+                        </label>
+                        <p style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginTop: '4px' }}>When on, this item is included in DoorDash Menu Pull and can be sold via DoorDash.</p>
+                      </FormField>
+                      <FormField style={compactFormFieldStyle}>
+                        <label style={compactFormLabelStyle(isDarkMode)}>Time-of-day restriction</label>
+                        <p style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginBottom: '8px' }}>Only show this item on DoorDash during these windows. Leave empty for no restriction (available all day).</p>
+                        {(editFormData.item_special_hours_entries || []).map((entry, idx) => (
+                          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                            <select
+                              value={entry.day_index || 'MON'}
+                              onChange={(e) => setEditFormData((prev) => {
+                                const entries = [...(prev.item_special_hours_entries || [])]
+                                entries[idx] = { ...entries[idx], day_index: e.target.value }
+                                return { ...prev, item_special_hours_entries: entries }
+                              })}
+                              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), minWidth: '90px', padding: '6px 8px' }}
+                            >
+                              {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map((d) => (
+                                <option key={d} value={d}>{d}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="time"
+                              value={(entry.start_time || '00:00').substring(0, 5)}
+                              onChange={(e) => setEditFormData((prev) => {
+                                const entries = [...(prev.item_special_hours_entries || [])]
+                                entries[idx] = { ...entries[idx], start_time: e.target.value + ':00' }
+                                return { ...prev, item_special_hours_entries: entries }
+                              })}
+                              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100px', padding: '6px 8px' }}
+                            />
+                            <span style={{ color: isDarkMode ? '#888' : '#666', fontSize: '12px' }}>to</span>
+                            <input
+                              type="time"
+                              value={(entry.end_time || '23:59').substring(0, 5)}
+                              onChange={(e) => setEditFormData((prev) => {
+                                const entries = [...(prev.item_special_hours_entries || [])]
+                                entries[idx] = { ...entries[idx], end_time: e.target.value + ':00' }
+                                return { ...prev, item_special_hours_entries: entries }
+                              })}
+                              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100px', padding: '6px 8px' }}
+                            />
+                            <button type="button" onClick={() => setEditFormData((prev) => ({ ...prev, item_special_hours_entries: (prev.item_special_hours_entries || []).filter((_, i) => i !== idx) }))} style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: 'pointer' }}>Remove</button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => setEditFormData((prev) => ({ ...prev, item_special_hours_entries: [...(prev.item_special_hours_entries || []), { day_index: 'MON', start_time: '09:00:00', end_time: '17:00:00' }] }))} style={{ padding: '6px 12px', borderRadius: '6px', border: `1px solid rgba(${themeColorRgb}, 0.6)`, background: `rgba(${themeColorRgb}, 0.15)`, color: `rgba(${themeColorRgb}, 1)`, fontSize: '12px', cursor: 'pointer', fontWeight: 500 }}>Add time window</button>
+                      </FormField>
+                    </div>
+                  )}
+
                   <div style={compactFormGridStyle('12px')}>
                     <FormField style={compactFormFieldStyle}>
                       <label style={compactFormLabelStyle(isDarkMode)}>
@@ -3118,7 +3269,7 @@ function Inventory() {
         }}>
           {/* Item type filter: All | Products | Ingredients | Archived */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', marginTop: '3px' }}>
-            {['all', 'product', 'ingredient', 'archived'].map((f) => (
+            {['all', 'product', 'ingredient', 'doordash', 'archived'].map((f) => (
               <button
                 key={f}
                 type="button"
@@ -3135,7 +3286,7 @@ function Inventory() {
                   cursor: 'pointer'
                 }}
               >
-                {f === 'all' ? 'All items' : f === 'product' ? 'Products' : f === 'ingredient' ? 'Ingredients' : 'Archived'}
+                {f === 'all' ? 'All items' : f === 'product' ? 'Products' : f === 'ingredient' ? 'Ingredients' : f === 'doordash' ? 'DoorDash' : 'Archived'}
               </button>
             ))}
           </div>

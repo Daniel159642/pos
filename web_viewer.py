@@ -390,6 +390,12 @@ def get_table_data_for_admin(table_name):
 @app.route('/')
 def index():
     """Serve React app or redirect to dev server"""
+    # If Shopify OAuth sent user to app root with code/shop (embedded app), forward to callback
+    code = request.args.get('code')
+    shop = request.args.get('shop') or ''
+    if code and shop.strip() and 'myshopify' in shop.lower():
+        qs = request.query_string.decode('utf-8') if request.query_string else ''
+        return redirect('/api/integrations/shopify/callback' + ('?' + qs if qs else ''))
     if HAS_BUILD:
         return send_from_directory(BUILD_DIR, 'index.html')
     else:
@@ -552,6 +558,11 @@ def api_inventory():
                     sql += " AND (i.item_type = 'product' OR i.item_type IS NULL)"
                 elif has_item_type and item_type_filter == 'ingredient':
                     sql += " AND i.item_type = 'ingredient'"
+                sell_at_pos_only = request.args.get('sell_at_pos', '').lower() in ('1', 'true', 'yes')
+                cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'sell_at_pos'")
+                has_sell_at_pos = cursor.fetchone() is not None
+                if has_sell_at_pos and sell_at_pos_only:
+                    sql += " AND (i.sell_at_pos IS TRUE)"
                 if has_item_type:
                     sql += " ORDER BY i.item_type NULLS LAST, i.product_name"
                 else:
@@ -585,6 +596,8 @@ def api_inventory():
                             count_sql += " AND (i.item_type = 'product' OR i.item_type IS NULL)"
                         elif has_item_type and item_type_filter == 'ingredient':
                             count_sql += " AND i.item_type = 'ingredient'"
+                        if has_sell_at_pos and sell_at_pos_only:
+                            count_sql += " AND (i.sell_at_pos IS TRUE)"
                         cursor.execute(count_sql, count_params)
                         row = cursor.fetchone()
                         total = row['c'] if row else len(data)
@@ -671,9 +684,21 @@ def api_update_inventory(product_id):
             return jsonify({'success': False, 'message': 'Employee ID not found in session'}), 401
         
         # Get update fields (exclude session_token and product_id)
-        update_fields = {k: v for k, v in data.items() 
+        update_fields = {k: v for k, v in data.items()
                         if k not in ['session_token', 'product_id'] and v is not None}
-        
+        # Parse item_special_hours JSON string for DoorDash time-of-day restrictions
+        if 'item_special_hours' in update_fields and isinstance(update_fields['item_special_hours'], str):
+            raw = (update_fields['item_special_hours'] or '').strip()
+            if not raw:
+                update_fields['item_special_hours'] = None
+            else:
+                try:
+                    import json
+                    update_fields['item_special_hours'] = json.loads(raw)
+                except (ValueError, TypeError):
+                    pass  # leave as string; DB may reject or coerce
+        if 'sell_at_pos' in update_fields and isinstance(update_fields['sell_at_pos'], str):
+            update_fields['sell_at_pos'] = update_fields['sell_at_pos'].lower() in ('true', '1', 'yes')
         if not update_fields:
             return jsonify({'success': False, 'message': 'No fields to update'}), 400
         
@@ -803,6 +828,28 @@ def api_product_variant_by_id(variant_id):
             updates['cost'] = float(data['cost'])
         if 'sort_order' in data:
             updates['sort_order'] = int(data['sort_order'])
+        if 'photo' in data:
+            updates['photo'] = data['photo'] if data['photo'] is None or isinstance(data['photo'], str) else str(data['photo'])
+        if 'doordash_default_quantity' in data:
+            v = data['doordash_default_quantity']
+            updates['doordash_default_quantity'] = int(v) if v is not None and str(v).strip() != '' else None
+        if 'doordash_charge_above' in data:
+            v = data['doordash_charge_above']
+            updates['doordash_charge_above'] = int(v) if v is not None and str(v).strip() != '' else None
+        if 'doordash_recipe_default' in data:
+            updates['doordash_recipe_default'] = bool(data['doordash_recipe_default'])
+        if 'doordash_calorific_display_type' in data:
+            v = data['doordash_calorific_display_type']
+            updates['doordash_calorific_display_type'] = (v or '').strip()[:50] if v is not None else None
+        if 'doordash_calorific_lower_range' in data:
+            v = data['doordash_calorific_lower_range']
+            updates['doordash_calorific_lower_range'] = int(v) if v is not None and str(v).strip() != '' else None
+        if 'doordash_calorific_higher_range' in data:
+            v = data['doordash_calorific_higher_range']
+            updates['doordash_calorific_higher_range'] = int(v) if v is not None and str(v).strip() != '' else None
+        if 'doordash_classification_tags' in data:
+            v = data['doordash_classification_tags']
+            updates['doordash_classification_tags'] = v if isinstance(v, list) else None
         if not updates:
             return jsonify({'success': False, 'message': 'No fields to update'}), 400
         ok = update_product_variant(variant_id, **updates)
@@ -3145,16 +3192,25 @@ def api_orders():
                 total = count_orders(order_status=order_status or None, order_status_in=order_status_in, order_type_in=order_type_in)
                 out['total'] = total
             return jsonify(out)
-        # Ensure every order has order_source and prepare_by (for logos in table/cards)
+        # Ensure every order has order_source, prepare_by, dasher fields (for logos and Dasher status in table/cards)
         for o in orders:
             if isinstance(o, dict):
                 o.setdefault('order_source', None)
                 o.setdefault('prepare_by', None)
+                o.setdefault('dasher_status', None)
+                o.setdefault('dasher_status_at', None)
+                o.setdefault('dasher_info', None)
         columns = list(orders[0].keys())
         if 'order_source' not in columns:
             columns.append('order_source')
         if 'prepare_by' not in columns:
             columns.append('prepare_by')
+        if 'dasher_status' not in columns:
+            columns.append('dasher_status')
+        if 'dasher_status_at' not in columns:
+            columns.append('dasher_status_at')
+        if 'dasher_info' not in columns:
+            columns.append('dasher_info')
         out = {'columns': columns, 'data': orders}
         if limit is not None:
             total = count_orders(order_status=order_status or None, order_status_in=order_status_in, order_type_in=order_type_in)
@@ -3289,7 +3345,7 @@ def api_update_order_status(order_id):
                 employee_id = session_data.get('employee_id')
         if not employee_id:
             employee_id = data.get('employee_id')
-        from database import update_order_status
+        from database import update_order_status, get_order_details
         result = update_order_status(
             order_id=order_id,
             order_status=order_status.strip(),
@@ -3304,6 +3360,37 @@ def api_update_order_status(order_id):
             except Exception as je:
                 print(f"Accounting journalize_sale (order {order_id}) after mark-paid: {je}")
         if result.get('success'):
+            new_status = order_status.strip().lower()
+            if new_status == 'ready':
+                try:
+                    o = get_order_details(order_id)
+                    if o and (o.get('order_source') or '').strip().lower() == 'doordash' and (o.get('external_order_id') or '').strip():
+                        from database import get_integrations
+                        establishment_id = o.get('establishment_id')
+                        if establishment_id is not None:
+                            integrations = get_integrations(establishment_id)
+                            dd = next((i for i in (integrations or []) if i.get('provider') == 'doordash' and i.get('enabled')), None)
+                            if dd and isinstance(dd.get('config'), dict):
+                                from doordash_service import notify_doordash_order_ready
+                                merchant_id = str(o.get('order_id') or o.get('order_number') or '')
+                                if notify_doordash_order_ready(o.get('external_order_id'), merchant_id, dd['config']):
+                                    result['doordash_ready_sent'] = True
+                except Exception as ex:
+                    print(f"Doordash order ready notify error: {ex}")
+            if new_status == 'voided':
+                try:
+                    o = get_order_details(order_id)
+                    if o and (o.get('order_source') or '').strip().lower() == 'doordash' and (o.get('external_order_id') or '').strip():
+                        from database import get_integrations
+                        establishment_id = o.get('establishment_id')
+                        if establishment_id is not None:
+                            integrations = get_integrations(establishment_id)
+                            dd = next((i for i in (integrations or []) if i.get('provider') == 'doordash' and i.get('enabled')), None)
+                            if dd and isinstance(dd.get('config'), dict):
+                                from doordash_service import cancel_doordash_order
+                                cancel_doordash_order(o.get('external_order_id'), 'OTHER', 'Voided in POS', dd['config'])
+                except Exception as ex:
+                    print(f"Doordash cancel order error: {ex}")
             return jsonify(result), 200
         return jsonify(result), 400
     except Exception as e:
@@ -3312,23 +3399,160 @@ def api_update_order_status(order_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
-def _shopify_oauth_url(shop: str) -> str:
-    """Build Shopify OAuth authorize URL. Returns URL string."""
+@app.route('/api/orders/<int:order_id>/doordash-lines', methods=['GET'])
+def api_order_doordash_lines(order_id):
+    """Return stored DoorDash line_item_id/line_option_id for this order (for building adjustment payloads). Only for DoorDash orders."""
+    try:
+        from database import get_order_details, get_doordash_order_lines
+        o = get_order_details(order_id)
+        if not o or (o.get('order_source') or '').strip().lower() != 'doordash':
+            return jsonify({'success': False, 'message': 'Order not found or not a DoorDash order'}), 404
+        lines = get_doordash_order_lines(order_id)
+        return jsonify({'success': True, 'data': lines, 'external_order_id': o.get('external_order_id')}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/orders/<int:order_id>/doordash-adjustment', methods=['POST'])
+def api_order_doordash_adjustment(order_id):
+    """
+    Send a Merchant Order Adjustment to DoorDash (PATCH .../orders/{id}/adjustment).
+    Body: { "items": [ { "line_item_id": "...", "adjustment_type": "ITEM_UPDATE"|"ITEM_REMOVE"|"ITEM_SUBSTITUTE", "quantity"?: n, "options"?: [ { "line_option_id": "...", "adjustment_type": "ITEM_UPDATE", "quantity": n } ], "substituted_item"?: { "name", "merchant_supplied_id", "price" (cents), "quantity" } } ] }.
+    """
+    try:
+        data = request.get_json() or {}
+        items = data.get('items')
+        if not items or not isinstance(items, list):
+            return jsonify({'success': False, 'message': 'items array required'}), 400
+        from database import get_order_details, get_integrations
+        o = get_order_details(order_id)
+        if not o or (o.get('order_source') or '').strip().lower() != 'doordash':
+            return jsonify({'success': False, 'message': 'Order not found or not a DoorDash order'}), 404
+        external_order_id = (o.get('external_order_id') or '').strip()
+        if not external_order_id:
+            return jsonify({'success': False, 'message': 'Order has no DoorDash external_order_id'}), 400
+        establishment_id = o.get('establishment_id')
+        if establishment_id is None:
+            return jsonify({'success': False, 'message': 'Order establishment unknown'}), 400
+        integrations = get_integrations(establishment_id)
+        dd = next((i for i in (integrations or []) if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not dd or not isinstance(dd.get('config'), dict):
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled for this store'}), 400
+        from doordash_service import adjust_doordash_order
+        success, status_code, message = adjust_doordash_order(external_order_id, items, dd['config'])
+        if success:
+            return jsonify({'success': True, 'message': message, 'status_code': status_code}), 200
+        return jsonify({'success': False, 'message': message, 'status_code': status_code}), (status_code if status_code in (400, 404, 500) else 400)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/orders/<int:order_id>/doordash-cancel', methods=['POST'])
+def api_order_doordash_cancel(order_id):
+    """
+    Merchant order cancellation: cancel a previously accepted DoorDash order.
+    Body: { "cancel_reason": "ITEM_OUT_OF_STOCK"|"STORE_CLOSED"|"KITCHEN_BUSY"|"OTHER", "cancel_details": "optional string" }.
+    DoorDash responds 202 on success. STORE_CLOSED deactivates store 12 hrs; KITCHEN_BUSY 15 min. Requires allowlist.
+    """
+    try:
+        data = request.get_json() or {}
+        cancel_reason = (data.get('cancel_reason') or 'OTHER').strip().upper()
+        valid = ('ITEM_OUT_OF_STOCK', 'STORE_CLOSED', 'KITCHEN_BUSY', 'OTHER')
+        if cancel_reason not in valid:
+            cancel_reason = 'OTHER'
+        cancel_details = (data.get('cancel_details') or '').strip() or None
+        from database import get_order_details, get_integrations
+        o = get_order_details(order_id)
+        if not o or (o.get('order_source') or '').strip().lower() != 'doordash':
+            return jsonify({'success': False, 'message': 'Order not found or not a DoorDash order'}), 404
+        external_order_id = (o.get('external_order_id') or '').strip()
+        if not external_order_id:
+            return jsonify({'success': False, 'message': 'Order has no DoorDash external_order_id'}), 400
+        establishment_id = o.get('establishment_id')
+        if establishment_id is None:
+            return jsonify({'success': False, 'message': 'Order establishment unknown'}), 400
+        integrations = get_integrations(establishment_id)
+        dd = next((i for i in (integrations or []) if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not dd or not isinstance(dd.get('config'), dict):
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled for this store'}), 400
+        from doordash_service import cancel_doordash_order
+        success, status_code = cancel_doordash_order(external_order_id, cancel_reason, cancel_details, dd['config'])
+        if success:
+            return jsonify({'success': True, 'message': 'Order cancelled with DoorDash', 'status_code': status_code}), 200
+        return jsonify({'success': False, 'message': 'DoorDash cancellation failed', 'status_code': status_code}), (status_code if status_code in (400, 404, 500) else 400)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/orders/<int:order_id>/doordash-order-manager-url', methods=['GET'])
+def api_order_doordash_order_manager_url(order_id):
+    """
+    Live Order Manager for POS: return URL with JWT for iframe/webview.
+    Requires DoorDash order with external_order_id and config.order_manager_jwt_secret (from DoorDash support).
+    DoorDash must allowlist your domain for iframe embedding.
+    """
+    try:
+        from database import get_order_details, get_integrations
+        o = get_order_details(order_id)
+        if not o or (o.get('order_source') or '').strip().lower() != 'doordash':
+            return jsonify({'success': False, 'message': 'Order not found or not a DoorDash order'}), 404
+        external_order_id = (o.get('external_order_id') or '').strip()
+        if not external_order_id:
+            return jsonify({'success': False, 'message': 'Order has no DoorDash external_order_id'}), 400
+        establishment_id = o.get('establishment_id')
+        if establishment_id is None:
+            return jsonify({'success': False, 'message': 'Order establishment unknown'}), 400
+        integrations = get_integrations(establishment_id)
+        dd = next((i for i in (integrations or []) if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not dd or not isinstance(dd.get('config'), dict):
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled for this store'}), 400
+        from doordash_service import build_live_order_manager_url
+        url, err = build_live_order_manager_url(external_order_id, dd['config'])
+        if err:
+            return jsonify({'success': False, 'message': err}), 400
+        return jsonify({'success': True, 'url': url, 'external_order_id': external_order_id}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+def _shopify_oauth_redirect_uri() -> str:
+    """Return the redirect_uri used for Shopify OAuth. Uses .env only so it never depends on frontend origin (e.g. 5173)."""
+    uri = os.environ.get('SHOPIFY_REDIRECT_URI', '').strip()
+    if uri:
+        return uri
+    # Never use request.host_url: if the app is open at frontend (e.g. :5173), that would send the wrong URI.
+    # Default to backend callback on 5001; user must whitelist this in Shopify and set SHOPIFY_REDIRECT_URI in .env to match.
+    return "http://localhost:5001/api/integrations/shopify/callback"
+
+
+def _shopify_oauth_url(shop: str, from_tauri: bool = False) -> str:
+    """Build Shopify OAuth authorize URL. Returns URL string. If from_tauri, state encodes it so callback can redirect to pos://."""
     establishment_id = get_current_establishment() if get_current_establishment else None
     establishment_id = establishment_id or 1
-    state = str(establishment_id)
+    state = str(establishment_id) + ("_tauri" if from_tauri else "")
     client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
-    redirect_uri = os.environ.get('SHOPIFY_REDIRECT_URI') or (request.host_url.rstrip('/') + '/api/integrations/shopify/callback')
+    redirect_uri = _shopify_oauth_redirect_uri()
     scope = 'read_orders,read_products,write_products'
     from urllib.parse import quote
-    # Log so you can whitelist this exact URL in Shopify Partners
-    print(f"[Shopify OAuth] redirect_uri={redirect_uri!r} (whitelist this exact URL in Shopify)")
-    return f"https://{shop}/admin/oauth/authorize?client_id={client_id}&scope={scope}&redirect_uri={quote(redirect_uri)}&state={state}"
+    # Use default quote (safe='/') so slashes stay as / in the URL
+    encoded_uri = quote(redirect_uri)
+    full_url = f"https://{shop}/admin/oauth/authorize?client_id={client_id}&scope={scope}&redirect_uri={encoded_uri}&state={state}"
+    # Debug: log exact redirect_uri and full URL so we can compare with Shopify whitelist
+    print(f"[Shopify OAuth] redirect_uri (raw) = {redirect_uri!r}")
+    print(f"[Shopify OAuth] redirect_uri (encoded) = {encoded_uri!r}")
+    print(f"[Shopify OAuth] full URL: {full_url}")
+    return full_url
 
 
 @app.route('/api/integrations/shopify/connect-url', methods=['GET'])
 def api_shopify_connect_url():
-    """Return Shopify OAuth URL as JSON. Use this to open in system browser (avoids Tauri webview WebKit issues)."""
+    """Return Shopify OAuth URL as JSON. Use this to open in system browser (avoids Tauri webview WebKit issues). Pass from=tauri to redirect back to Tauri app after OAuth."""
     try:
         shop = (request.args.get('shop') or '').strip().lower()
         if not shop:
@@ -3339,7 +3563,8 @@ def api_shopify_connect_url():
         client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
         if not client_id:
             return jsonify({'success': False, 'message': 'SHOPIFY_CLIENT_ID not configured'}), 500
-        url = _shopify_oauth_url(shop)
+        from_tauri = (request.args.get('from') or '').strip().lower() == 'tauri'
+        url = _shopify_oauth_url(shop, from_tauri=from_tauri)
         return jsonify({'success': True, 'url': url}), 200
     except Exception as e:
         import traceback
@@ -3350,20 +3575,85 @@ def api_shopify_connect_url():
 @app.route('/api/integrations/shopify/debug-redirect-uri', methods=['GET'])
 def api_shopify_debug_redirect_uri():
     """Return the redirect_uri being used (for whitelisting in Shopify Partners)."""
-    redirect_uri = os.environ.get('SHOPIFY_REDIRECT_URI') or (request.host_url.rstrip('/') + '/api/integrations/shopify/callback')
+    redirect_uri = _shopify_oauth_redirect_uri()
     return jsonify({
         'redirect_uri': redirect_uri,
+        'copy_paste': redirect_uri,
         'source': 'SHOPIFY_REDIRECT_URI' if os.environ.get('SHOPIFY_REDIRECT_URI') else 'request.host_url',
-        'instructions': 'Add this EXACT URL to Shopify Partners → Apps → Swiftly → Configuration → Allowed redirection URL(s)'
+        'instructions': 'In Shopify: Partners → Apps → your app → Configuration. Under Redirect URLs add the copy_paste value exactly (no trailing slash, no spaces). If it still fails, set SHOPIFY_REDIRECT_URI in .env to this exact value and restart the backend.',
     }), 200
+
+
+@app.route('/api/integrations/shopify/debug-oauth', methods=['GET'])
+def api_shopify_debug_oauth():
+    """
+    Debug: exact values we send to Shopify so you can compare with Partners.
+    Open this in the browser, then compare redirect_uri_raw with Shopify's Redirect URLs list.
+    """
+    from urllib.parse import quote
+    shop = (request.args.get('shop') or 'swiftly-9876.myshopify.com').strip().lower()
+    if '.myshopify.com' not in shop:
+        shop = shop + '.myshopify.com'
+    redirect_uri = _shopify_oauth_redirect_uri()
+    encoded_uri = quote(redirect_uri)
+    client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
+    state = '1'
+    scope = 'read_orders,read_products,write_products'
+    full_url = f"https://{shop}/admin/oauth/authorize?client_id={client_id}&scope={scope}&redirect_uri={encoded_uri}&state={state}"
+    redirect_uri_bytes = redirect_uri.encode('utf-8')
+    return jsonify({
+        'redirect_uri_raw': redirect_uri,
+        'redirect_uri_length': len(redirect_uri),
+        'redirect_uri_hex': redirect_uri_bytes.hex(),
+        'redirect_uri_encoded_in_url': encoded_uri,
+        'client_id': client_id,
+        'shop': shop,
+        'full_authorize_url': full_url,
+        'critical': (
+            'Redirect URL must be on the app with Client ID ' + client_id + '. '
+            'Application URL and redirect_uri must have matching hosts AND same scheme (both http or both https).'
+        ),
+        'checklist': [
+            '1. Application URL: In Partners → your app → Configuration, set App URL to http://localhost:5001 (NOT https).',
+            '2. Redirect URLs: Add exactly: ' + redirect_uri + ' (no trailing slash).',
+            '3. Push config via CLI so it matches exactly: npx shopify app config link --client-id ' + client_id + ' then npm run shopify:deploy',
+            '4. If you had App URL as https://localhost:5001, change it to http://localhost:5001 and save.',
+        ],
+    }), 200
+
+
+@app.route('/shopify-connect-test')
+def shopify_connect_test():
+    """
+    Open this page in the browser at http://localhost:5001 so the request hits the backend directly
+    (no frontend proxy). Click the link to go to Shopify OAuth. If it still says redirect_uri not
+    whitelisted, the issue is in Shopify Partners config; use manual token in Settings instead.
+    """
+    shop = (request.args.get('shop') or 'swiftly-9876.myshopify.com').strip()
+    if '.myshopify.com' not in shop:
+        shop = shop + '.myshopify.com'
+    redirect_uri = _shopify_oauth_redirect_uri()
+    client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
+    from urllib.parse import quote
+    encoded_uri = quote(redirect_uri)
+    auth_url = f"https://{shop}/admin/oauth/authorize?client_id={client_id}&scope=read_orders,read_products,write_products&redirect_uri={encoded_uri}&state=1"
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Shopify OAuth test</title></head>
+<body style="font-family:sans-serif; padding: 2rem;">
+  <h1>Shopify OAuth test</h1>
+  <p>This page is served by the backend at localhost:5001. Click below to try OAuth.</p>
+  <p><strong>redirect_uri we send:</strong> <code>{redirect_uri}</code></p>
+  <p><a href="{auth_url}" style="padding:8px 16px; background:#008060; color:white; text-decoration:none; border-radius:4px;">Open Shopify OAuth</a></p>
+  <p>If you still get &quot;redirect_uri is not whitelisted&quot;, use <strong>manual token</strong> in POS Settings: Shopify Admin → Settings → Apps and sales channels → Develop apps → Create app → Configure Admin API scopes (read_orders, read_products, write_products) → Install app → Reveal token → paste in POS.</p>
+</body></html>"""
+    return Response(html, mimetype='text/html')
 
 
 @app.route('/api/integrations/shopify/connect', methods=['GET'])
 def api_shopify_connect():
     """
     OAuth connect: redirects user to Shopify to install/approve the app.
-    Query: shop (required) - e.g. mystore or mystore.myshopify.com
-    For Tauri/desktop, prefer connect-url + open in system browser.
+    Query: shop (required), from=tauri (optional) to redirect back to Tauri app after OAuth.
     """
     try:
         shop = (request.args.get('shop') or '').strip().lower()
@@ -3375,7 +3665,8 @@ def api_shopify_connect():
         client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
         if not client_id:
             return jsonify({'success': False, 'message': 'SHOPIFY_CLIENT_ID not configured. Add it to .env (from Swiftly/Partners app API credentials).'}), 500
-        auth_url = _shopify_oauth_url(shop)
+        from_tauri = (request.args.get('from') or '').strip().lower() == 'tauri'
+        auth_url = _shopify_oauth_url(shop, from_tauri=from_tauri)
         return redirect(auth_url)
     except Exception as e:
         import traceback
@@ -3393,7 +3684,10 @@ def api_shopify_callback():
         shop = (request.args.get('shop') or '').strip().lower()
         state = request.args.get('state') or '1'
 
+        from_tauri = '_tauri' in (state or '')
         if not code or not shop:
+            if from_tauri:
+                return redirect('pos://settings?tab=integration&shopify=error&msg=missing_code_or_shop')
             return redirect('/settings?tab=integration&shopify=error&msg=missing_code_or_shop')
         if '.myshopify.com' not in shop:
             shop = shop + '.myshopify.com'
@@ -3402,6 +3696,8 @@ def api_shopify_callback():
         client_id = os.environ.get('SHOPIFY_CLIENT_ID') or 'adbc3619701b075ebb8f9882030ee370'
         client_secret = os.environ.get('SHOPIFY_CLIENT_SECRET') or ''
         if not client_id or not client_secret:
+            if from_tauri:
+                return redirect('pos://settings?tab=integration&shopify=error&msg=oauth_not_configured')
             return redirect('/settings?tab=integration&shopify=error&msg=oauth_not_configured')
 
         import requests
@@ -3412,19 +3708,29 @@ def api_shopify_callback():
         data = r.json()
         access_token = data.get('access_token')
         if not access_token:
+            if from_tauri:
+                return redirect('pos://settings?tab=integration&shopify=error&msg=no_token')
             return redirect('/settings?tab=integration&shopify=error&msg=no_token')
 
-        establishment_id = int(state) if state.isdigit() else 1
+        establishment_id = int(state.replace('_tauri', '')) if state and state.replace('_tauri', '').isdigit() else 1
         store_url = f"https://{shop}"
         from database import upsert_integration
         config = {'store_url': store_url, 'api_key': access_token, 'price_multiplier': 1}
         upsert_integration(establishment_id, 'shopify', True, config)
 
+        if from_tauri:
+            return redirect('pos://settings?tab=integration&shopify=connected')
         return redirect('/settings?tab=integration&shopify=connected')
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return redirect('/settings?tab=integration&shopify=error&msg=' + str(e)[:50])
+        from urllib.parse import quote
+        state = request.args.get('state') or ''
+        from_tauri = '_tauri' in state
+        msg = quote(str(e)[:50], safe='')
+        if from_tauri:
+            return redirect('pos://settings?tab=integration&shopify=error&msg=' + msg)
+        return redirect('/settings?tab=integration&shopify=error&msg=' + msg)
 
 
 @app.route('/api/integrations', methods=['GET'])
@@ -3791,6 +4097,691 @@ def api_webhooks_shopify_orders():
         import traceback
         traceback.print_exc()
         return jsonify({'ok': False}), 500
+
+
+@app.route('/api/webhooks/doordash/orders', methods=['POST'])
+def api_webhooks_doordash_orders():
+    """
+    DoorDash webhook: OrderCreate. Payload format { "event": { "type": "OrderCreate", "status": "NEW" }, "order": <Order json> }.
+    Also accepts raw order object as body. Creates POS order, journalize, confirms with DoorDash (sync). Keep order.id for confirm/ready/cancel.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        event = data.get("event") or {}
+        order = data.get("order")
+        if order is None and isinstance(data, dict) and "id" in data and "categories" in data:
+            order = data
+        if isinstance(order, str) and order.strip():
+            import json
+            try:
+                order = json.loads(order)
+            except Exception:
+                order = None
+        if not order or not isinstance(order, dict):
+            return jsonify({'ok': True}), 200
+        if event and (event.get("type") or "").strip().upper() != "ORDERCREATE":
+            return jsonify({'ok': True}), 200
+        from database import get_connection, get_integrations, create_order
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT establishment_id, config FROM pos_integrations WHERE provider = 'doordash' AND enabled = true ORDER BY establishment_id LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({'ok': False, 'message': 'No enabled DoorDash integration'}), 400
+        establishment_id = row.get('establishment_id') if isinstance(row, dict) else row[0]
+        config = (row.get('config') or {}) if isinstance(row, dict) else (row[1] if len(row) > 1 else {})
+        if not isinstance(config, dict):
+            config = {}
+        price_multiplier = float(config.get('price_multiplier') or 1)
+        from doordash_service import build_pos_payload_from_doordash_order, confirm_doordash_order
+        payload = build_pos_payload_from_doordash_order(order, establishment_id, price_multiplier)
+        if not payload:
+            return jsonify({'ok': True}), 200
+        items = payload.pop('items')
+        doordash_order_id = payload.pop('doordash_order_id', None)
+        doordash_lines = payload.pop('doordash_lines', None) or []
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT employee_id FROM employees WHERE active = 1 ORDER BY employee_id LIMIT 1")
+        emp_row = cur.fetchone()
+        conn.close()
+        employee_id = (emp_row.get('employee_id') if emp_row and isinstance(emp_row, dict) else (emp_row[0] if emp_row else None)) if emp_row else None
+        from doordash_service import FAILURE_REASON_CONNECTIVITY
+        if not employee_id:
+            confirm_doordash_order(str(doordash_order_id or ''), 'pos', success=False, failure_reason=FAILURE_REASON_CONNECTIVITY, config=config)
+            return jsonify({'ok': False}), 400
+        result = create_order(
+            employee_id=employee_id,
+            items=items,
+            payment_method='mobile_payment',
+            tax_rate=float(payload.get('tax_rate') or 0),
+            discount=float(payload.get('discount') or 0),
+            customer_id=None,
+            tip=float(payload.get('tip') or 0),
+            notes=payload.get('notes'),
+            order_type=(payload.get('order_type') or 'delivery').strip() or 'delivery',
+            customer_info={
+                'name': payload.get('customer_name') or 'DoorDash Customer',
+                'phone': payload.get('customer_phone'),
+                'email': payload.get('customer_email'),
+                'address': payload.get('customer_address'),
+            },
+            payment_status='completed',
+            order_status_override='placed',
+            order_source='doordash',
+            prepare_by=payload.get('prepare_by_iso'),
+            establishment_id_override=establishment_id,
+            external_order_id=order.get('id') and str(order.get('id')),
+            integration_experience=(order.get('experience') or '').strip() or None,
+            doordash_promo_details=payload.get('doordash_promo_details'),
+            doordash_total_merchant_funded_discount_cents=payload.get('doordash_total_merchant_funded_discount_cents'),
+            doordash_total_doordash_funded_discount_cents=payload.get('doordash_total_doordash_funded_discount_cents'),
+        )
+        if result.get('success') and result.get('order_id'):
+            try:
+                from database import save_doordash_order_lines
+                save_doordash_order_lines(result['order_id'], doordash_lines)
+            except Exception:
+                pass
+            try:
+                from pos_accounting_bridge import journalize_sale_to_accounting
+                journalize_sale_to_accounting(result['order_id'], employee_id)
+            except Exception:
+                pass
+            merchant_id = str(result.get('order_id') or result.get('order_number') or '')
+            pickup_instructions = (payload.get('pickup_instructions') or config.get('doordash_pickup_instructions_default') or config.get('pickup_instructions') or '').strip() or None
+            confirm_doordash_order(str(doordash_order_id or ''), merchant_id, success=True, config=config, pickup_instructions=pickup_instructions)
+            try:
+                _send_order_notification_async({'order_number': result.get('order_number', ''), 'total': result.get('total', 0), 'order_source': 'doordash'})
+            except Exception:
+                pass
+        else:
+            confirm_doordash_order(str(doordash_order_id or ''), 'pos', success=False, failure_reason=(result.get('message') or FAILURE_REASON_CONNECTIVITY)[:500], config=config)
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False}), 500
+
+
+@app.route('/api/webhooks/doordash/order-release', methods=['POST'])
+def api_webhooks_doordash_order_release():
+    """
+    DoorDash Auto Order Release (AOR): called when a dasher is near the store so the merchant can start prep.
+    Payload includes client_order_id (our merchant_supplied_id from order confirmation). Optional: update order status to being_made.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        client_order_id = (data.get("client_order_id") or data.get("merchant_supplied_id") or "").strip()
+        if not client_order_id:
+            return jsonify({'ok': True}), 200
+        from database import get_connection, update_order_status
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT order_id FROM orders WHERE (order_number = %s OR CAST(order_id AS TEXT) = %s) AND order_source = 'doordash' LIMIT 1", (client_order_id, client_order_id))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            order_id = row.get('order_id') if isinstance(row, dict) else row[0]
+            try:
+                update_order_status(order_id=order_id, order_status='being_made')
+            except Exception:
+                pass
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': True}), 200
+
+
+@app.route('/api/webhooks/doordash/order-adjustment', methods=['POST'])
+def api_webhooks_doordash_order_adjustment():
+    """
+    DoorDash Integrated Order Updates: async webhook after an adjustment is processed.
+    Payload: { "event": { "type": "OrderAdjustment", "event_timestamp": "..." }, "order": <full order>, "order_adjustment_metadata": { ... } }.
+    We sync: (1) doordash_order_lines from the updated order, (2) order subtotal/tax/total from order.subtotal and order.tax.
+    Configure "Order Adjustment" webhook subscription in the DoorDash Developer Portal to point to this URL.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        event = data.get("event") or {}
+        if (event.get("type") or "").strip().upper() != "ORDERADJUSTMENT":
+            return jsonify({'ok': True}), 200
+        order_payload = data.get("order")
+        if not order_payload or not isinstance(order_payload, dict):
+            return jsonify({'ok': True}), 200
+        external_id = (order_payload.get("id") or "").strip() or None
+        if not external_id:
+            return jsonify({'ok': True}), 200
+        from database import get_order_by_external_order_id, get_connection, replace_doordash_order_lines, update_order_totals_from_doordash
+        from psycopg2.extras import RealDictCursor
+        pos_order = get_order_by_external_order_id(external_id)
+        if not pos_order:
+            return jsonify({'ok': True}), 200
+        order_id = pos_order.get("order_id")
+        establishment_id = pos_order.get("establishment_id")
+        if order_id is None or establishment_id is None:
+            return jsonify({'ok': True}), 200
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT config FROM pos_integrations WHERE provider = 'doordash' AND enabled = true AND establishment_id = %s LIMIT 1", (establishment_id,))
+        row = cur.fetchone()
+        conn.close()
+        config = (row.get('config') or {}) if row and isinstance(row, dict) else (row[0] if row else {})
+        if not isinstance(config, dict):
+            config = {}
+        price_multiplier = float(config.get('price_multiplier') or 1)
+        from doordash_service import _flatten_order_items
+        _, _, doordash_lines = _flatten_order_items(order_payload, establishment_id, price_multiplier)
+        try:
+            replace_doordash_order_lines(order_id, doordash_lines)
+        except Exception:
+            pass
+        try:
+            subtotal_cents = int(order_payload.get("subtotal") or 0)
+            tax_cents = int(order_payload.get("tax") or 0)
+            update_order_totals_from_doordash(order_id, subtotal_cents, tax_cents)
+        except Exception:
+            pass
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': True}), 200
+
+
+@app.route('/api/webhooks/doordash/dasher-status', methods=['POST'])
+def api_webhooks_doordash_dasher_status():
+    """
+    DoorDash Dasher Status webhook: triggered when dasher status changes (dasher_confirmed,
+    arriving_at_store, arrived_at_store, dasher_out_for_delivery, dropoff). Payload includes
+    delivery.external_order_id, delivery.client_order_id, delivery.dasher_status, delivery.dasher
+    (phone_number, first_name, last_name, vehicle). We update the POS order with latest status
+    and optional dasher info. Return 200 so DoorDash does not retry.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        event = data.get('event') or {}
+        if (event.get('type') or '').strip().lower() != 'dasher_status_update':
+            return jsonify({'ok': True}), 200
+        delivery = data.get('delivery') or {}
+        if not delivery or not isinstance(delivery, dict):
+            return jsonify({'ok': True}), 200
+        external_order_id = (delivery.get('external_order_id') or '').strip() or None
+        client_order_id = (delivery.get('client_order_id') or '').strip() or None
+        if not external_order_id and not client_order_id:
+            return jsonify({'ok': True}), 200
+        dasher_status = (delivery.get('dasher_status') or '').strip() or None
+        created_at = (data.get('created_at') or '').strip() or None
+        dasher_obj = delivery.get('dasher')
+        dasher_info = None
+        if dasher_obj and isinstance(dasher_obj, dict):
+            dasher_info = {
+                'phone_number': (dasher_obj.get('phone_number') or dasher_obj.get('Phone_number') or '').strip() or None,
+                'first_name': (dasher_obj.get('first_name') or '').strip() or None,
+                'last_name': (dasher_obj.get('last_name') or '').strip() or None,
+                'vehicle': dasher_obj.get('vehicle') if isinstance(dasher_obj.get('vehicle'), dict) else None,
+            }
+            if not any(dasher_info.values()):
+                dasher_info = None
+        from database import update_order_dasher_status
+        update_order_dasher_status(
+            external_order_id=external_order_id,
+            client_order_id=client_order_id,
+            dasher_status=dasher_status,
+            created_at=created_at,
+            dasher_info=dasher_info,
+        )
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': True}), 200
+
+
+@app.route('/api/webhooks/doordash/store-temporarily-deactivated', methods=['POST'])
+def api_webhooks_doordash_store_temporarily_deactivated():
+    """
+    DoorDash Store Temporarily Deactivated webhook: store was temporarily deactivated (self-pause,
+    auto deactivation for quality, etc.). Payload: store.doordash_store_id, store.merchant_supplied_id,
+    event.type "Store Temporarily Deactivated", reason_id, reason, notes, start_time, end_time.
+    We store the event and return 200 so DoorDash does not retry.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        store = data.get('store') or {}
+        event = data.get('event') or {}
+        if (event.get('type') or '').strip() != 'Store Temporarily Deactivated':
+            return jsonify({'ok': True}), 200
+        merchant_supplied_id = (store.get('merchant_supplied_id') or data.get('merchant_supplied_id') or '').strip()
+        doordash_store_id = store.get('doordash_store_id') or data.get('doordash_store_id')
+        reason_id = data.get('reason_id')
+        reason = (data.get('reason') or '').strip() or None
+        notes = (data.get('notes') or '').strip() or None
+        start_time = (data.get('start_time') or '').strip() or None
+        end_time = (data.get('end_time') or '').strip() or None
+        establishment_id = None
+        if merchant_supplied_id:
+            try:
+                establishment_id = int(merchant_supplied_id)
+            except (TypeError, ValueError):
+                pass
+        if establishment_id is not None:
+            from database import insert_doordash_store_deactivation_event
+            insert_doordash_store_deactivation_event(
+                establishment_id=establishment_id,
+                doordash_store_id=doordash_store_id,
+                merchant_supplied_id=merchant_supplied_id,
+                reason_id=reason_id,
+                reason=reason,
+                notes=notes,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': True}), 200
+
+
+@app.route('/api/webhooks/doordash/order-cancellation', methods=['POST'])
+def api_webhooks_doordash_order_cancellation():
+    """
+    DoorDash Order Cancellation notification: called when an already-confirmed order is cancelled
+    downstream (customer cancel, dasher cancel, in-store ops, etc.). Payload: external_order_id,
+    client_order_id (merchant_supplied_id we sent on confirm), store.merchant_supplied_id, is_asap.
+    We find the POS order by external_order_id and set order_status to voided so the POS reflects
+    the cancellation. Notify DoorDash to configure this webhook to your endpoint.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        external_order_id = (data.get('external_order_id') or '').strip() or None
+        client_order_id = (data.get('client_order_id') or '').strip() or None
+        if not external_order_id and not client_order_id:
+            return jsonify({'ok': True}), 200
+        from database import get_order_by_external_order_id, update_order_status
+        pos_order = None
+        if external_order_id:
+            pos_order = get_order_by_external_order_id(external_order_id)
+        if not pos_order and client_order_id:
+            try:
+                oid = int(client_order_id)
+                from database import get_order_details
+                o = get_order_details(oid)
+                if o and (o.get('order_source') or '').strip().lower() == 'doordash':
+                    pos_order = {'order_id': o.get('order_id'), 'establishment_id': o.get('establishment_id')}
+            except (TypeError, ValueError):
+                pass
+        if not pos_order:
+            return jsonify({'ok': True}), 200
+        order_id = pos_order.get('order_id')
+        if order_id is None:
+            return jsonify({'ok': True}), 200
+        result = update_order_status(order_id, 'voided')
+        if not result.get('success'):
+            print(f"Doordash order-cancellation webhook: update_order_status failed for order_id={order_id}: {result.get('message')}")
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': True}), 200
+
+
+@app.route('/api/integrations/doordash/menu/<location_id>', methods=['GET'])
+def api_doordash_menu_pull(location_id):
+    """
+    DoorDash Menu Pull: GET returns { store: { merchant_supplied_id, provider_type }, menus: [ ... ] }.
+    location_id is our establishment_id (or DoorDash location id if you map it in config).
+    Query param ids=external_menu_ids (comma-separated) for Menu Update pull; include those ids in the menus returned.
+    """
+    try:
+        try:
+            establishment_id = int(location_id)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid location_id'}), 400
+        from database import get_connection, get_integrations
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT establishment_id, config FROM pos_integrations WHERE provider = 'doordash' AND enabled = true AND establishment_id = %s", (establishment_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return jsonify({'error': 'DoorDash not enabled for this location'}), 403
+        config = (row.get('config') or {}) if isinstance(row, dict) else (row[1] if len(row) > 1 else {})
+        if not isinstance(config, dict):
+            config = {}
+        provider_type = (config.get('provider_type') or 'pos').strip() or 'pos'
+        ids_param = request.args.get('ids') or ''
+        external_menu_ids = [x.strip() for x in ids_param.split(',') if x.strip()] if ids_param else []
+        from doordash_service import build_doordash_menu_pull_response
+        reference = f"menu-{establishment_id}"
+        # Use stored UUID from Menu Status webhook so DoorDash can use it for MenuUpdate; required in menus[].id for updates.
+        external_menu_id = config.get('doordash_menu_uuid') or (external_menu_ids[0] if external_menu_ids else None)
+        public_base_url = (config.get('doordash_public_base_url') or config.get('public_base_url') or '').strip() or (request.url_root.rstrip('/') if request else None)
+        payload = build_doordash_menu_pull_response(
+            establishment_id,
+            provider_type=provider_type,
+            external_menu_id=external_menu_id,
+            reference=reference,
+            public_base_url=public_base_url,
+        )
+        return jsonify(payload), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/webhooks/doordash/menu-status', methods=['POST'])
+def api_webhooks_doordash_menu_status():
+    """
+    DoorDash menu status webhook: called when menu create or update finishes (success or failure).
+    Body: { event: { type, status, reference }, store: { merchant_supplied_id }, menu: { id } }.
+    We persist menu.id for the store so Menu Pull can return it as menus[].id (required for MenuUpdate).
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        event = data.get('event') or {}
+        store = data.get('store') or {}
+        menu = data.get('menu') or {}
+        reference = event.get('reference') or data.get('reference')
+        event_type = event.get('type')
+        status = event.get('status')
+        merchant_supplied_id = store.get('merchant_supplied_id')
+        menu_id = menu.get('id') or data.get('menu_id')
+        if reference or menu_id or event_type:
+            print(f"Doordash menu status: reference={reference!r}, menu.id={menu_id!r}, event_type={event_type!r}, status={status!r}")
+        if menu_id and merchant_supplied_id:
+            try:
+                establishment_id = int(merchant_supplied_id)
+            except (TypeError, ValueError):
+                establishment_id = None
+            if establishment_id is not None:
+                from database import set_doordash_menu_uuid
+                set_doordash_menu_uuid(establishment_id, str(menu_id))
+        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False}), 500
+
+
+@app.route('/api/integrations/doordash/sync', methods=['POST'])
+def api_doordash_sync():
+    """
+    DoorDash does not expose a public "list orders" API; orders arrive via webhook.
+    This endpoint returns success with created=0 and a message so the UI can show Sync without errors.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        return jsonify({
+            'success': True,
+            'created': 0,
+            'last_synced_order_id': None,
+            'message': 'DoorDash orders arrive via webhook. Configure the webhook URL with DoorDash to receive orders in real time.',
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/push-menu', methods=['POST'])
+def api_doordash_push_menu():
+    """
+    Push current POS menu to DoorDash (POST create or PATCH update using stored menu UUID).
+    Requires session; uses current establishment. DoorDash will send Menu Status webhook when done.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        from doordash_service import push_doordash_menu
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        success, message = push_doordash_menu(establishment_id, config)
+        if success:
+            return jsonify({'success': True, 'message': message}), 200
+        return jsonify({'success': False, 'message': message or 'Push failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/run-migrations', methods=['POST'])
+def api_doordash_run_migrations():
+    """
+    Run DoorDash-related migrations: orders external_order_id + experience, inventory item_special_hours.
+    Idempotent (ADD COLUMN IF NOT EXISTS). No auth required for now; caller should be authenticated via session.
+    """
+    import os
+    try:
+        from database import get_connection
+        migrations_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations')
+        files = [
+            ('add_orders_external_order_id_and_experience.sql', 'Orders external_order_id + experience'),
+            ('add_inventory_item_special_hours.sql', 'Inventory item_special_hours'),
+            ('add_product_variants_photo.sql', 'Product variants photo (modifier images)'),
+            ('add_doordash_recipe_fields.sql', 'DoorDash recipe fields (operation_context, quantity_info)'),
+            ('add_doordash_nutritional_info.sql', 'DoorDash nutritional/dietary (calorific_info, classification_tags)'),
+            ('add_doordash_order_lines.sql', 'DoorDash order lines (line_item_id/line_option_id for adjustment API)'),
+            ('add_doordash_promotions.sql', 'DoorDash Integrated Promotions (promo details and merchant/DoorDash-funded totals)'),
+            ('add_orders_dasher_status.sql', 'Orders dasher_status / dasher_status_at / dasher_info (Dasher Status webhook)'),
+            ('add_doordash_store_deactivation_events.sql', 'DoorDash store temporarily deactivated events'),
+        ]
+        conn = get_connection()
+        cur = conn.cursor()
+        run = []
+        for filename, label in files:
+            path = os.path.join(migrations_dir, filename)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    sql = f.read()
+                # Run as single block (COMMENT can contain ';' in text; splitting would break)
+                try:
+                    cur.execute(sql)
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    if 'already exists' in str(e).lower() or 'duplicate' in str(e).lower():
+                        conn.commit()
+                    else:
+                        raise
+                run.append(label)
+            except Exception as e:
+                cur.close()
+                conn.close()
+                return jsonify({'success': False, 'message': f'{label}: {e}'}), 400
+        cur.close()
+        conn.close()
+        return jsonify({'success': True, 'message': 'Migrations applied.', 'run': run}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/store-menu', methods=['GET'])
+def api_doordash_store_menu():
+    """
+    Get active menu(s) from DoorDash for the current store (Integrated Get Menu).
+    Optional query: onboarding_id for Onboarding Get Menu (SSIO).
+    Returns DoorDash response JSON (menus array) or error.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        from doordash_service import get_doordash_store_menu
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        onboarding_id = request.args.get('onboarding_id') or None
+        success, data, error = get_doordash_store_menu(establishment_id, config, onboarding_id=onboarding_id)
+        if success:
+            return jsonify(data if data is not None else {}), 200
+        return jsonify({'success': False, 'message': error or 'Get menu failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/store-details', methods=['GET'])
+def api_doordash_store_details():
+    """
+    Get store info from DoorDash: order protocol, special_instructions_max_length,
+    is_active, current_deactivations, auto_release settings, etc.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        from doordash_service import get_doordash_store_details
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        success, data, error = get_doordash_store_details(establishment_id, config)
+        if success:
+            return jsonify(data if data is not None else {}), 200
+        return jsonify({'success': False, 'message': error or 'Get store details failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/menu-details', methods=['GET'])
+def api_doordash_menu_details():
+    """
+    Get menu info from DoorDash: menu_id, is_active, is_pos_menu, url,
+    latest_menu_update, last_successful_menu_update_at, open_hours, special_hours per menu.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        from doordash_service import get_doordash_menu_details
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        success, data, error = get_doordash_menu_details(establishment_id, config)
+        if success:
+            return jsonify(data if data is not None else {}), 200
+        return jsonify({'success': False, 'message': error or 'Get menu details failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/store-status', methods=['POST'])
+def api_doordash_store_status():
+    """
+    DoorDash Store activation status: PUT api/v1/stores/{merchant_supplied_id}/status.
+    Body: is_active (bool), and for deactivation: reason (required), notes (required),
+    optional end_time (ISO), duration_in_hours, duration_in_secs.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        data = request.get_json(silent=True) or {}
+        is_active = data.get('is_active')
+        if is_active is None:
+            return jsonify({'success': False, 'message': 'is_active is required'}), 400
+        from database import get_integrations
+        from doordash_service import update_doordash_store_status
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        success, message = update_doordash_store_status(
+            establishment_id,
+            config,
+            is_active=bool(is_active),
+            reason=data.get('reason'),
+            notes=data.get('notes'),
+            end_time=data.get('end_time'),
+            duration_in_secs=data.get('duration_in_secs'),
+            duration_in_hours=data.get('duration_in_hours'),
+        )
+        if success:
+            return jsonify({'success': True, 'message': message}), 200
+        return jsonify({'success': False, 'message': message}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/latest-store-deactivation', methods=['GET'])
+def api_doordash_latest_store_deactivation():
+    """
+    Return the most recent "Store Temporarily Deactivated" webhook event for the current establishment
+    (for display in Settings). Returns 200 with event object or empty.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({}), 200
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({}), 200
+        from database import get_latest_doordash_store_deactivation
+        event = get_latest_doordash_store_deactivation(establishment_id)
+        if not event:
+            return jsonify({}), 200
+        # Serialize datetimes for JSON
+        out = dict(event)
+        for key in ('start_time', 'end_time', 'created_at'):
+            if out.get(key) is not None and hasattr(out[key], 'isoformat'):
+                out[key] = out[key].isoformat()
+        return jsonify(out), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({}), 200
 
 
 @app.route('/api/orders/create-demo-integration-orders', methods=['POST'])
@@ -11867,6 +12858,54 @@ def api_accounting_dashboard():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+def _serve_spa_index():
+    """Serve SPA index.html for client-side routes (e.g. /settings after Shopify callback)."""
+    if HAS_BUILD:
+        return send_from_directory(BUILD_DIR, 'index.html')
+    return '', 404
+
+
+# SPA fallback: serve index.html for paths that are not API/assets so /settings, /dashboard, etc. work
+@app.route('/settings')
+@app.route('/dashboard')
+@app.route('/pos')
+@app.route('/login')
+@app.route('/inventory')
+@app.route('/recent-orders')
+@app.route('/accounting')
+@app.route('/calendar')
+@app.route('/profile')
+@app.route('/customers')
+@app.route('/cash-register')
+@app.route('/tables')
+@app.route('/employee-management')
+@app.route('/shipment-verification')
+@app.route('/statistics')
+@app.route('/calendar-subscription')
+@app.route('/onboarding')
+@app.route('/employee-onboarding')
+@app.route('/master-login')
+@app.route('/sign-up')
+def serve_spa_routes():
+    return _serve_spa_index()
+
+
+@app.route('/shipment-verification/<path:subpath>')
+@app.route('/settings/<path:subpath>')
+def serve_spa_routes_nested(subpath):
+    return _serve_spa_index()
+
+
+@app.route('/<path:path>')
+def serve_spa_catchall(path):
+    # Do not serve SPA for API, assets, or uploads
+    if path.startswith('api/') or path.startswith('assets/') or path.startswith('uploads/'):
+        from flask import abort
+        return abort(404)
+    return _serve_spa_index()
+
 
 # Auto-sync database on startup (check if updates needed)
 if __name__ == '__main__':

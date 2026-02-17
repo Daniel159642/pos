@@ -38,8 +38,8 @@ import {
   RefreshCw,
   Shield,
   Plug,
-  Database,
-  Mail
+  Mail,
+  Truck
 } from 'lucide-react'
 import BarcodeScanner from '../components/BarcodeScanner'
 import AdminDashboard from '../components/AdminDashboard'
@@ -1190,7 +1190,7 @@ function ReceiptPreview({ settings, id = 'receipt-preview-print', onSectionClick
   )
 }
 
-const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'integration', 'migrations', 'admin']
+const SETTINGS_TAB_IDS = ['location', 'pos', 'cash', 'notifications', 'rewards', 'integration', 'admin']
 
 const NO_PERMISSION_MSG = "You don't have permission"
 const EMPLOYEE_ALLOWED_SETTINGS_TABS = ['cash', 'location'] // Employee can only open Cash Register and Store Information (location read-only)
@@ -1343,25 +1343,32 @@ function SquareMigrationCard({ isDarkMode, themeColorRgb, showToast, compactPrim
     }
   }
 
+  const integrationInputGlassStyle = {
+    background: isDarkMode ? 'rgba(50, 50, 50, 0.35)' : 'rgba(255, 255, 255, 0.35)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    border: isDarkMode ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(0, 0, 0, 0.14)',
+    boxShadow: isDarkMode ? 'inset 0 1px 0 rgba(255, 255, 255, 0.04)' : 'inset 0 1px 0 rgba(255, 255, 255, 0.4)'
+  }
+  const squareInputRgb = '0, 106, 255'
+
   return (
-    <div style={{
-      padding: '20px',
-      borderRadius: '12px',
-      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-      backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
-    }}>
+    <div className="integration-card-glass integration-card-square-bg" style={{ padding: '20px', borderRadius: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', fontWeight: 600, fontSize: '16px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
-        <span style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #006AFF 0%, #00C2FF 100%)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px' }}>Sq</span>
+        <img src="/square.svg" alt="" style={{ height: '24px', width: 'auto', maxWidth: '72px', objectFit: 'contain' }} />
         Square
       </div>
+      <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '16px' }}>
+        Migrate your data from Square into this system. Use your Square access token (Developer Dashboard → Apps → Credentials; personal access token or OAuth with scopes: MERCHANT_READ, LOCATION_READ, ITEMS_READ, ORDERS_READ, PAYMENTS_READ, TEAM_READ), then choose which data to import. We recommend: Inventory first, then Employees, then Orders and Payments.
+      </p>
       <FormField isDarkMode={isDarkMode} label="Access token">
         <input
           type="password"
           value={squareAccessToken}
           onChange={(e) => setSquareAccessToken(e.target.value)}
           placeholder="Square API access token (from Developer Dashboard)"
-          style={inputBaseStyle(isDarkMode, themeColorRgb)}
-          {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+          style={{ ...inputBaseStyle(isDarkMode, squareInputRgb), ...integrationInputGlassStyle }}
+          {...getInputFocusHandlers(squareInputRgb, isDarkMode)}
         />
       </FormField>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
@@ -1517,8 +1524,27 @@ function Settings() {
   const [integrationsSaving, setIntegrationsSaving] = useState(null) // 'shopify' | 'doordash' | 'uber_eats' | null
   const [shopifySyncLoading, setShopifySyncLoading] = useState(false)
   const [shopifyProductsSyncLoading, setShopifyProductsSyncLoading] = useState(false)
+  const [shopifySyncDropdownOpen, setShopifySyncDropdownOpen] = useState(false)
+  const shopifySyncDropdownRef = useRef(null)
+  const [doordashSyncLoading, setDoordashSyncLoading] = useState(false)
+  const [doordashPushMenuLoading, setDoordashPushMenuLoading] = useState(false)
+  const [doordashGetMenuLoading, setDoordashGetMenuLoading] = useState(false)
+  const [doordashStoreDetailsLoading, setDoordashStoreDetailsLoading] = useState(false)
+  const [doordashMenuDetailsLoading, setDoordashMenuDetailsLoading] = useState(false)
+  const [doordashMigrationsLoading, setDoordashMigrationsLoading] = useState(false)
+  const [doordashItemHoursModalOpen, setDoordashItemHoursModalOpen] = useState(false)
+  const [doordashItemHoursProducts, setDoordashItemHoursProducts] = useState([])
+  const [doordashItemHoursSaving, setDoordashItemHoursSaving] = useState(false)
+  const [doordashSyncDropdownOpen, setDoordashSyncDropdownOpen] = useState(false)
+  const doordashSyncDropdownRef = useRef(null)
+  const [doordashStoreStatusLoading, setDoordashStoreStatusLoading] = useState(false)
+  const [doordashDeactivateModalOpen, setDoordashDeactivateModalOpen] = useState(false)
+  const [doordashDeactivateReason, setDoordashDeactivateReason] = useState('store_pos_connectivity_issues')
+  const [doordashDeactivateNotes, setDoordashDeactivateNotes] = useState('')
+  const [doordashDeactivateEndTime, setDoordashDeactivateEndTime] = useState('')
+  const [doordashLatestDeactivation, setDoordashLatestDeactivation] = useState(null)
   useEffect(() => {
-    if (activeTab !== 'integration') return
+    if (activeTab !== 'integration' && activeTab !== 'doordash') return
     setIntegrationsLoading(true)
     cachedFetch('/api/integrations')
       .then(res => res.json())
@@ -1533,18 +1559,19 @@ function Settings() {
             const p = (row.provider || '').toLowerCase()
             if (p === 'shopify' || p === 'doordash' || p === 'uber_eats') {
               const c = row.config && typeof row.config === 'object' ? row.config : {}
+              const base = {
+                api_key: c.api_key || '',
+                store_url: c.store_url || '',
+                price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1,
+                webhook_secret: c.webhook_secret || '',
+                last_synced_at: c.last_synced_at,
+                last_synced_order_id: c.last_synced_order_id,
+                last_synced_product_id: c.last_synced_product_id,
+                products_synced_at: c.products_synced_at
+              }
               next[p] = {
                 enabled: !!row.enabled,
-                config: {
-                  api_key: c.api_key || '',
-                  store_url: c.store_url || '',
-                  price_multiplier: typeof c.price_multiplier === 'number' ? c.price_multiplier : 1,
-                  webhook_secret: c.webhook_secret || '',
-                  last_synced_at: c.last_synced_at,
-                  last_synced_order_id: c.last_synced_order_id,
-                  last_synced_product_id: c.last_synced_product_id,
-                  products_synced_at: c.products_synced_at
-                }
+                config: p === 'doordash' || p === 'uber_eats' ? { ...c, ...base } : { ...base }
               }
             }
           })
@@ -1554,6 +1581,35 @@ function Settings() {
       .catch(() => {})
       .finally(() => setIntegrationsLoading(false))
   }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'integration' && activeTab !== 'doordash') return
+    fetch('/api/integrations/doordash/latest-store-deactivation')
+      .then(res => res.json())
+      .then((data) => {
+        if (data && (data.reason != null || data.end_time != null || data.notes != null)) {
+          setDoordashLatestDeactivation(data)
+        } else {
+          setDoordashLatestDeactivation(null)
+        }
+      })
+      .catch(() => setDoordashLatestDeactivation(null))
+  }, [activeTab])
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (shopifySyncDropdownRef.current && !shopifySyncDropdownRef.current.contains(e.target)) {
+        setShopifySyncDropdownOpen(false)
+      }
+      if (doordashSyncDropdownRef.current && !doordashSyncDropdownRef.current.contains(e.target)) {
+        setDoordashSyncDropdownOpen(false)
+      }
+    }
+    if (shopifySyncDropdownOpen || doordashSyncDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [shopifySyncDropdownOpen, doordashSyncDropdownOpen])
 
   const saveIntegration = async (provider) => {
     setIntegrationsSaving(provider)
@@ -1624,6 +1680,251 @@ function Settings() {
     }
   }
 
+  const syncDoordashNow = async () => {
+    setDoordashSyncLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/sync', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message || 'DoorDash sync complete', 'success')
+      } else {
+        showToast(data.message || 'Sync failed', 'error')
+      }
+    } catch (e) {
+      showToast('Sync failed', 'error')
+    } finally {
+      setDoordashSyncLoading(false)
+    }
+  }
+
+  const pushDoordashMenuNow = async () => {
+    setDoordashPushMenuLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/push-menu', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message === 'Created' ? 'Menu pushed to DoorDash (create). You’ll get a status webhook when done.' : 'Menu pushed to DoorDash (update).', 'success')
+      } else {
+        showToast(data.message || 'Push menu failed', 'error')
+      }
+    } catch (e) {
+      showToast('Push menu failed', 'error')
+    } finally {
+      setDoordashPushMenuLoading(false)
+    }
+  }
+
+  const getDoordashMenuNow = async () => {
+    setDoordashGetMenuLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/store-menu')
+      const data = await res.json()
+      if (res.ok) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = 'doordash-store-menu.json'
+        a.click()
+        URL.revokeObjectURL(a.href)
+        showToast('DoorDash menu downloaded', 'success')
+      } else {
+        showToast(data.message || 'Get menu failed', 'error')
+      }
+    } catch (e) {
+      showToast('Get menu failed', 'error')
+    } finally {
+      setDoordashGetMenuLoading(false)
+    }
+  }
+
+  const downloadJson = (data, filename) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const getDoordashStoreDetailsNow = async () => {
+    setDoordashStoreDetailsLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/store-details')
+      const data = await res.json()
+      if (res.ok) {
+        downloadJson(data, 'doordash-store-details.json')
+        showToast('Store details downloaded', 'success')
+      } else {
+        showToast(data.message || 'Get store details failed', 'error')
+      }
+    } catch (e) {
+      showToast('Get store details failed', 'error')
+    } finally {
+      setDoordashStoreDetailsLoading(false)
+    }
+  }
+
+  const getDoordashMenuDetailsNow = async () => {
+    setDoordashMenuDetailsLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/menu-details')
+      const data = await res.json()
+      if (res.ok) {
+        downloadJson(data, 'doordash-menu-details.json')
+        showToast('Menu details downloaded', 'success')
+      } else {
+        showToast(data.message || 'Get menu details failed', 'error')
+      }
+    } catch (e) {
+      showToast('Get menu details failed', 'error')
+    } finally {
+      setDoordashMenuDetailsLoading(false)
+    }
+  }
+
+  const doordashDeactivateReasons = [
+    { value: 'store_pos_connectivity_issues', label: 'Store / POS connectivity issues' },
+    { value: 'store_self_disabled_in_their_POS_portal', label: 'Store self-disabled in POS' },
+    { value: 'operational_issues', label: 'Operational issues' },
+    { value: 'payment_issue', label: 'Payment issue' },
+    { value: 'delete_store', label: 'Delete store' },
+    { value: 'out_of_business', label: 'Out of business' }
+  ]
+
+  const doordashReactivateStore = async () => {
+    setDoordashStoreStatusLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/store-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: true })
+      })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message || 'Store reactivated', 'success')
+      } else {
+        showToast(data.message || 'Reactivate failed', 'error')
+      }
+    } catch (e) {
+      showToast('Reactivate failed', 'error')
+    } finally {
+      setDoordashStoreStatusLoading(false)
+    }
+  }
+
+  const doordashDeactivateStoreSubmit = async () => {
+    const notes = (doordashDeactivateNotes || '').trim()
+    if (!notes) {
+      showToast('Notes are required for deactivation', 'error')
+      return
+    }
+    setDoordashStoreStatusLoading(true)
+    try {
+      const body = {
+        is_active: false,
+        reason: doordashDeactivateReason,
+        notes
+      }
+      if (doordashDeactivateEndTime && doordashDeactivateEndTime.trim()) {
+        body.end_time = doordashDeactivateEndTime.trim()
+      }
+      const res = await fetch('/api/integrations/doordash/store-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message || 'Store deactivation sent', 'success')
+        setDoordashDeactivateModalOpen(false)
+        setDoordashDeactivateNotes('')
+        setDoordashDeactivateEndTime('')
+      } else {
+        showToast(data.message || 'Deactivate failed', 'error')
+      }
+    } catch (e) {
+      showToast('Deactivate failed', 'error')
+    } finally {
+      setDoordashStoreStatusLoading(false)
+    }
+  }
+
+  const runDoordashMigrations = async () => {
+    setDoordashMigrationsLoading(true)
+    try {
+      const res = await fetch('/api/integrations/doordash/run-migrations', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showToast(data.message + (data.run?.length ? ` (${data.run.join(', ')})` : ''), 'success')
+      } else {
+        showToast(data.message || 'Migrations failed', 'error')
+      }
+    } catch (e) {
+      showToast('Migrations failed', 'error')
+    } finally {
+      setDoordashMigrationsLoading(false)
+    }
+  }
+
+  const openDoordashItemHoursModal = async () => {
+    setDoordashItemHoursModalOpen(true)
+    try {
+      const res = await cachedFetch('/api/inventory?item_type=product')
+      const j = await res.json()
+      const rows = (j.data != null ? j.data : Array.isArray(j) ? j : []).map((p) => ({
+        ...p,
+        item_special_hours_edit: Array.isArray(p.item_special_hours) ? JSON.stringify(p.item_special_hours, null, 2) : (p.item_special_hours ? JSON.stringify(p.item_special_hours, null, 2) : '')
+      }))
+      setDoordashItemHoursProducts(rows)
+    } catch (e) {
+      showToast('Failed to load inventory', 'error')
+      setDoordashItemHoursProducts([])
+    }
+  }
+
+  const saveDoordashItemHours = async () => {
+    setDoordashItemHoursSaving(true)
+    const token = localStorage.getItem('sessionToken') || ''
+    let ok = 0
+    let err = 0
+    for (const p of doordashItemHoursProducts) {
+      let parsed = null
+      const raw = (p.item_special_hours_edit || '').trim()
+      if (raw) {
+        try {
+          parsed = JSON.parse(raw)
+          if (!Array.isArray(parsed)) parsed = null
+        } catch (_) {
+          err++
+          continue
+        }
+      }
+      const orig = p.item_special_hours
+      const origStr = orig == null || (Array.isArray(orig) && orig.length === 0) ? '' : JSON.stringify(orig)
+      const newStr = parsed == null || (Array.isArray(parsed) && parsed.length === 0) ? '' : JSON.stringify(parsed)
+      if (origStr === newStr) continue
+      try {
+        const res = await fetch(`/api/inventory/${p.product_id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+          body: JSON.stringify({ item_special_hours: parsed, session_token: token })
+        })
+        if (res.ok) ok++
+        else err++
+      } catch (_) {
+        err++
+      }
+    }
+    setDoordashItemHoursSaving(false)
+    if (err > 0) showToast(`Saved ${ok} product(s); ${err} failed.`, 'error')
+    else showToast(ok > 0 ? `Saved item-level hours for ${ok} product(s).` : 'No changes to save.', 'success')
+    if (ok > 0) setDoordashItemHoursModalOpen(false)
+  }
+
+  const setDoordashItemHoursEdit = (productId, value) => {
+    setDoordashItemHoursProducts((prev) => prev.map((p) => (p.product_id === productId ? { ...p, item_special_hours_edit: value } : p)))
+  }
+
   const syncShopifyProductsNow = async () => {
     setShopifyProductsSyncLoading(true)
     try {
@@ -1665,7 +1966,8 @@ function Settings() {
     // Open window immediately (before any await) to avoid popup blocker
     const w = typeof window !== 'undefined' && window.__TAURI__ ? null : window.open('about:blank', '_blank')
     try {
-      const res = await fetch(`/api/integrations/shopify/connect-url?shop=${encodeURIComponent(shop)}`)
+      const fromTauri = typeof window !== 'undefined' && !!window.__TAURI__
+      const res = await fetch(`/api/integrations/shopify/connect-url?shop=${encodeURIComponent(shop)}${fromTauri ? '&from=tauri' : ''}`)
       const data = await res.json()
       if (data.success && data.url) {
         if (typeof window !== 'undefined' && window.__TAURI__) {
@@ -1686,35 +1988,6 @@ function Settings() {
     } catch (e) {
       if (w && !w.closed) w.close()
       showToast('Failed to open Shopify connect', 'error')
-    }
-  }
-
-  const disconnectShopify = async () => {
-    setIntegrationsSaving('shopify')
-    try {
-      const res = await fetch('/api/integrations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'shopify',
-          enabled: false,
-          config: { ...integrations.shopify?.config, api_key: '', store_url: '', price_multiplier: integrations.shopify?.config?.price_multiplier ?? 1 }
-        })
-      })
-      const data = await res.json()
-      if (data.success) {
-        setIntegrations(prev => ({
-          ...prev,
-          shopify: { enabled: false, config: { api_key: '', store_url: '', price_multiplier: 1 } }
-        }))
-        showToast('Shopify disconnected', 'success')
-      } else {
-        showToast(data.message || 'Failed to disconnect', 'error')
-      }
-    } catch (e) {
-      showToast('Failed to disconnect', 'error')
-    } finally {
-      setIntegrationsSaving(null)
     }
   }
 
@@ -3720,7 +3993,7 @@ function Settings() {
     { id: 'notifications', label: 'Notifications', icon: MessageSquare },
     { id: 'rewards', label: 'Customer Rewards', icon: Gift },
     { id: 'integration', label: 'Integrations', icon: Plug },
-    ...(hasAdminAccess ? [{ id: 'migrations', label: 'Data Migration', icon: Database }] : []),
+    { id: 'doordash', label: 'DoorDash', icon: Truck },
     ...(hasAdminAccess ? [{ id: 'admin', label: 'Admin', icon: Shield }] : [])
   ]
 
@@ -3975,7 +4248,7 @@ function Settings() {
           ) : (
             <>
           {/* Save Button - Hidden for location, cash, and pos tabs (pos has its own at bottom) */}
-          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'integration' && activeTab !== 'migrations' && activeTab !== 'admin' && (
+          {activeTab !== 'location' && activeTab !== 'cash' && activeTab !== 'pos' && activeTab !== 'rewards' && activeTab !== 'notifications' && activeTab !== 'integration' && activeTab !== 'doordash' && activeTab !== 'admin' && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               <button
                 type="button"
@@ -8433,14 +8706,23 @@ function Settings() {
               const state = integrations[id] || { enabled: false, config: {} }
               const config = state.config || {}
               const integrationLogo = id === 'shopify' ? '/shopify.svg' : id === 'doordash' ? '/doordash.svg' : id === 'uber_eats' ? '/uber-15.svg' : null
+              const integrationInputRgb = id === 'shopify' ? '34, 197, 94' : themeColorRgb
+              const integrationInputGlassStyle = {
+                background: isDarkMode ? 'rgba(50, 50, 50, 0.35)' : 'rgba(255, 255, 255, 0.35)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                border: isDarkMode ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(0, 0, 0, 0.14)',
+                boxShadow: isDarkMode ? 'inset 0 1px 0 rgba(255, 255, 255, 0.04)' : 'inset 0 1px 0 rgba(255, 255, 255, 0.4)'
+              }
               return (
                 <div
                   key={id}
+                  className={`integration-card-glass${id === 'shopify' ? ' integration-card-shopify-bg' : ''}`}
                   style={{
                     padding: '20px',
                     borderRadius: '12px',
-                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
+                    ...(id === 'shopify' && shopifySyncDropdownOpen ? { position: 'relative', zIndex: 10 } : {}),
+                    ...(id === 'doordash' && doordashSyncDropdownOpen ? { position: 'relative', zIndex: 10 } : {})
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -8450,71 +8732,57 @@ function Settings() {
                       )}
                       {label}
                     </span>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                      <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Enable</span>
-                      <input
-                        type="checkbox"
-                        checked={!!state.enabled}
-                        onChange={() => setIntegrations(prev => ({
-                          ...prev,
-                          [id]: { ...prev[id], enabled: !prev[id].enabled }
-                        }))}
-                      />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 500, color: state.enabled ? '#0d6b2c' : (isDarkMode ? '#888' : '#999') }}>
+                        {state.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                      <div className="checkbox-wrapper-2 integration-toggle" style={{ flexShrink: 0 }}>
+                        <input
+                          type="checkbox"
+                          className="sc-gJwTLC ikxBAC"
+                          checked={!!state.enabled}
+                          onChange={() => setIntegrations(prev => ({
+                            ...prev,
+                            [id]: { ...prev[id], enabled: !prev[id].enabled }
+                          }))}
+                        />
+                      </div>
                     </label>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {id === 'shopify' && (
                       <>
-                        {config.api_key && config.store_url ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '14px', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <CheckCircle size={18} /> Connected: {(config.store_url || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '')}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={disconnectShopify}
-                              disabled={integrationsSaving === 'shopify'}
-                              style={{ ...compactCancelButtonStyle(isDarkMode, themeColorRgb), padding: '6px 12px', fontSize: '13px' }}
-                            >
-                              Disconnect
-                            </button>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
-                            <FormField isDarkMode={isDarkMode} label="Your Shopify store" style={{ flex: '1 1 200px', minWidth: '200px' }}>
-                              <input
-                                type="text"
-                                value={config.store_url || ''}
-                                onChange={(e) => setIntegrations(prev => ({
-                                  ...prev,
-                                  shopify: { ...prev.shopify, config: { ...(prev.shopify?.config || {}), store_url: e.target.value } }
-                                }))}
-                                placeholder="mystore.myshopify.com"
-                                style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                              />
-                            </FormField>
-                            {(() => {
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
+                          <FormField isDarkMode={isDarkMode} label="Your Shopify store" style={{ flex: '1 1 200px', minWidth: '200px' }}>
+                            <input
+                              type="text"
+                              value={config.store_url || ''}
+                              onChange={(e) => setIntegrations(prev => ({
+                                ...prev,
+                                shopify: { ...prev.shopify, config: { ...(prev.shopify?.config || {}), store_url: e.target.value } }
+                              }))}
+                              placeholder="mystore.myshopify.com"
+                              style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle }}
+                              {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
+                            />
+                            {config.api_key && config.store_url && (
+                              <div style={{ fontSize: '11px', color: isDarkMode ? '#6b7c6b' : '#7a9a7a', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <CheckCircle size={12} /> Connected: {(config.store_url || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '')}
+                              </div>
+                            )}
+                          </FormField>
+                          {!config.api_key || !config.store_url ? (() => {
+                              const isTauri = typeof window !== 'undefined' && window.__TAURI__
                               const su = (integrations.shopify?.config?.store_url || '').trim()
                               let shop = su.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/\.myshopify\.com.*/, '')
                               if (!shop) shop = ''
                               else if (!shop.includes('.myshopify.com')) shop = shop + '.myshopify.com'
                               const connectUrl = shop && typeof window !== 'undefined'
-                                ? `${window.location.origin}/api/integrations/shopify/connect?shop=${encodeURIComponent(shop)}`
+                                ? `${window.location.origin}/api/integrations/shopify/connect?shop=${encodeURIComponent(shop)}${isTauri ? '&from=tauri' : ''}`
                                 : null
-                              const isTauri = typeof window !== 'undefined' && window.__TAURI__
                               if (!connectUrl) {
                                 return (
-                                  <span
-                                    style={{
-                                      ...compactPrimaryButtonStyle(themeColorRgb, true),
-                                      padding: '8px 20px',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      cursor: 'not-allowed',
-                                      opacity: 0.6
-                                    }}
-                                  >
+                                  <span className="button-53 button-53--shopify" style={{ cursor: 'not-allowed', opacity: 0.6 }}>
                                     Connect with Shopify
                                   </span>
                                 )
@@ -8523,6 +8791,7 @@ function Settings() {
                                 return (
                                   <button
                                     type="button"
+                                    className="button-53 button-53--shopify"
                                     onClick={async () => {
                                       try {
                                         const { open } = await import('@tauri-apps/plugin-shell')
@@ -8532,7 +8801,6 @@ function Settings() {
                                         showToast('Failed to open Shopify connect', 'error')
                                       }
                                     }}
-                                    style={{ ...compactPrimaryButtonStyle(themeColorRgb, false), padding: '8px 20px' }}
                                   >
                                     Connect with Shopify
                                   </button>
@@ -8543,26 +8811,22 @@ function Settings() {
                                   href={connectUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  style={{
-                                    ...compactPrimaryButtonStyle(themeColorRgb, false),
-                                    padding: '8px 20px',
-                                    textDecoration: 'none',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    cursor: 'pointer'
-                                  }}
+                                  className="button-53 button-53--shopify"
                                 >
                                   Connect with Shopify
                                 </a>
                               )
-                            })()}
+                            })() : null}
                           </div>
-                        )}
                         {!config.api_key && (
-                          <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 8px 0' }}>
-                            Enter your store (e.g. mystore.myshopify.com) and click Connect to authorize. Or paste a token manually below.
-                          </p>
+                          <>
+                            <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: 0 }}>
+                              Enter your store (e.g. mystore.myshopify.com) and click Connect to authorize. Or paste a token manually below.
+                            </p>
+                            <p style={{ fontSize: '11px', color: isDarkMode ? '#666' : '#999', margin: '4px 0 0 0' }}>
+                              If Connect shows &quot;redirect_uri is not whitelisted&quot;, skip OAuth: paste an <strong>Admin API token</strong> below (Shopify Admin → Settings → Apps → Develop apps → Create app → Configure Admin API → Install → Reveal token). Or try <a href="http://localhost:5001/shopify-connect-test" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--theme-color, #008060)' }}>http://localhost:5001/shopify-connect-test</a> and click the link there.
+                            </p>
+                          </>
                         )}
                       </>
                     )}
@@ -8578,7 +8842,8 @@ function Settings() {
                           }
                         }))}
                         placeholder={id === 'shopify' ? 'Admin API access token (if not using Connect)' : 'API key'}
-                        style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                        style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle }}
+                        {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
                       />
                     </FormField>
                     {extra === 'Store URL' && id !== 'shopify' && (
@@ -8594,27 +8859,11 @@ function Settings() {
                             }
                           }))}
                           placeholder="https://your-store.myshopify.com"
-                          style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                          style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle }}
+                          {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
                         />
                       </FormField>
                     )}
-                    <FormField isDarkMode={isDarkMode} label="Price multiplier (e.g. 1.0 = 100%, 1.1 = 10% markup)">
-                      <input
-                        type="number"
-                        min="0.5"
-                        max="3"
-                        step="0.01"
-                        value={config.price_multiplier ?? 1}
-                        onChange={(e) => setIntegrations(prev => ({
-                          ...prev,
-                          [id]: {
-                            ...prev[id],
-                            config: { ...(prev[id].config || {}), price_multiplier: parseFloat(e.target.value) || 1 }
-                          }
-                        }))}
-                        style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                      />
-                    </FormField>
                     {id === 'shopify' && (
                       <>
                         <FormField isDarkMode={isDarkMode} label="Webhook secret (optional, for orders/create verification)">
@@ -8629,66 +8878,633 @@ function Settings() {
                               }
                             }))}
                             placeholder="From Shopify webhook setup"
-                            style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                            style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle }}
+                            {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
                           />
                         </FormField>
                         <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: 0 }}>
                           Webhook URL: <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '2px 6px', borderRadius: '4px' }}>{typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/shopify/orders` : '/api/webhooks/shopify/orders'}</code>. In Shopify: Settings → Notifications → Webhooks → Order creation.
                         </p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                          <button
-                            type="button"
-                            onClick={syncShopifyNow}
-                            disabled={shopifySyncLoading || !state.enabled}
-                            style={{
-                              ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb),
-                              padding: '8px 16px'
-                            }}
-                          >
-                            {shopifySyncLoading ? 'Syncing…' : 'Sync orders now'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={syncShopifyProductsNow}
-                            disabled={shopifyProductsSyncLoading || !state.enabled}
-                            style={{
-                              ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb),
-                              padding: '8px 16px'
-                            }}
-                          >
-                            {shopifyProductsSyncLoading ? 'Syncing…' : 'Sync products now'}
-                          </button>
-                          {(config.last_synced_at || config.last_synced_order_id) && (
-                            <span style={{ fontSize: '13px', color: isDarkMode ? '#999' : '#666' }}>
-                              Orders: {config.last_synced_at ? new Date(config.last_synced_at).toLocaleString() : config.last_synced_order_id ? `#${config.last_synced_order_id}` : '-'}
-                            </span>
-                          )}
-                          {(config.products_synced_at || config.last_synced_product_id) && (
-                            <span style={{ fontSize: '13px', color: isDarkMode ? '#999' : '#666' }}>
-                              Products: {config.products_synced_at ? new Date(config.products_synced_at).toLocaleString() : config.last_synced_product_id ? `#${config.last_synced_product_id}` : '-'}
-                            </span>
-                          )}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginTop: '12px' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', fontSize: '13px', color: isDarkMode ? '#999' : '#666' }}>
+                            {(config.last_synced_at || config.last_synced_order_id) && (
+                              <>Orders: {config.last_synced_at ? new Date(config.last_synced_at).toLocaleString() : config.last_synced_order_id ? `#${config.last_synced_order_id}` : '-'}</>
+                            )}
+                            {(config.last_synced_at || config.last_synced_order_id) && (config.products_synced_at || config.last_synced_product_id) && ' · '}
+                            {(config.products_synced_at || config.last_synced_product_id) && (
+                              <>Products: {config.products_synced_at ? new Date(config.products_synced_at).toLocaleString() : config.last_synced_product_id ? `#${config.last_synced_product_id}` : '-'}</>
+                            )}
+                            {!(config.last_synced_at || config.last_synced_order_id || config.products_synced_at || config.last_synced_product_id) && '\u00a0'}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <div ref={shopifySyncDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+                              <button
+                                type="button"
+                                className="button-50 button-50--shopify"
+                                onClick={() => setShopifySyncDropdownOpen((open) => !open)}
+                                disabled={shopifySyncLoading || shopifyProductsSyncLoading || !state.enabled}
+                              >
+                                <span className="button-50__Content">{shopifySyncLoading || shopifyProductsSyncLoading ? 'Syncing…' : 'Sync'}</span>
+                              </button>
+                              {shopifySyncDropdownOpen && (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: '100%',
+                                    left: 0,
+                                    right: 0,
+                                    marginTop: '4px',
+                                    width: '100%',
+                                    boxSizing: 'border-box',
+                                    borderRadius: '8px',
+                                    boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.15)',
+                                    background: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                    zIndex: 1000,
+                                    overflow: 'hidden'
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    style={{
+                                      display: 'block',
+                                      width: '100%',
+                                      padding: '8px 6px',
+                                      textAlign: 'left',
+                                      border: 'none',
+                                      background: 'none',
+                                      fontSize: '11px',
+                                      fontWeight: 500,
+                                      color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                      cursor: 'pointer',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = isDarkMode ? 'var(--bg-tertiary)' : '#f0f8f0' }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                                    onClick={() => { syncShopifyNow(); setShopifySyncDropdownOpen(false) }}
+                                  >
+                                    Orders
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      display: 'block',
+                                      width: '100%',
+                                      padding: '8px 6px',
+                                      textAlign: 'left',
+                                      border: 'none',
+                                      background: 'none',
+                                      fontSize: '11px',
+                                      fontWeight: 500,
+                                      color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                      cursor: 'pointer',
+                                      borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = isDarkMode ? 'var(--bg-tertiary)' : '#f0f8f0' }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                                    onClick={() => { syncShopifyProductsNow(); setShopifySyncDropdownOpen(false) }}
+                                  >
+                                    Products
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              className="button-50 button-50--shopify"
+                              onClick={() => saveIntegration('shopify')}
+                              disabled={integrationsSaving === 'shopify'}
+                            >
+                              <span className="button-50__Content">{integrationsSaving === 'shopify' ? 'Saving…' : 'Save'}</span>
+                            </button>
+                          </div>
                         </div>
                       </>
                     )}
-                    <div style={{ marginTop: '8px' }}>
-                      <button
-                        type="button"
-                        onClick={() => saveIntegration(id)}
-                        disabled={integrationsSaving === id}
-                        style={{
-                          ...compactPrimaryButtonStyle(isDarkMode, themeColorRgb),
-                          padding: '8px 16px'
-                        }}
-                      >
-                        {integrationsSaving === id ? 'Saving…' : 'Save'}
-                      </button>
-                    </div>
+                    {id === 'doordash' && (
+                      <>
+                        {doordashLatestDeactivation && (doordashLatestDeactivation.reason || doordashLatestDeactivation.end_time || doordashLatestDeactivation.notes) && (
+                          <div
+                            style={{
+                              marginBottom: '12px',
+                              padding: '10px 14px',
+                              borderRadius: '8px',
+                              background: isDarkMode ? 'rgba(255, 180, 0, 0.12)' : 'rgba(251, 191, 36, 0.2)',
+                              border: isDarkMode ? '1px solid rgba(255, 180, 0, 0.3)' : '1px solid rgba(245, 158, 11, 0.4)',
+                              fontSize: '13px',
+                              color: isDarkMode ? '#fbbf24' : '#b45309'
+                            }}
+                          >
+                            <strong>Store temporarily deactivated</strong>
+                            {doordashLatestDeactivation.reason && <span>: {doordashLatestDeactivation.reason}</span>}
+                            {doordashLatestDeactivation.end_time && (
+                              <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', opacity: 0.95 }}>
+                                End time: {new Date(doordashLatestDeactivation.end_time).toLocaleString()}
+                              </span>
+                            )}
+                            {doordashLatestDeactivation.notes && (
+                              <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', opacity: 0.9 }}>{doordashLatestDeactivation.notes}</span>
+                            )}
+                          </div>
+                        )}
+                        <FormField isDarkMode={isDarkMode} label="Provider type (for Menu Pull)" style={{ marginBottom: '8px' }}>
+                          <input
+                            type="text"
+                            value={config.provider_type || ''}
+                            onChange={(e) => setIntegrations(prev => ({
+                              ...prev,
+                              doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), provider_type: e.target.value } }
+                            }))}
+                            placeholder="pos"
+                            style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '200px' }}
+                            {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
+                          />
+                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '8px' }}>Default: pos. Sent as store.provider_type in Menu Pull.</span>
+                        </FormField>
+                        <FormField isDarkMode={isDarkMode} label="Location id (for Menu Pull URL)" style={{ marginBottom: '8px' }}>
+                          <input
+                            type="text"
+                            value={config.location_id ?? '1'}
+                            onChange={(e) => setIntegrations(prev => ({
+                              ...prev,
+                              doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), location_id: e.target.value || '1' } }
+                            }))}
+                            placeholder="1"
+                            style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '80px' }}
+                            {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
+                          />
+                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '8px' }}>Usually your establishment id (e.g. 1).</span>
+                        </FormField>
+                        <FormField isDarkMode={isDarkMode} label="Public base URL (for item images)" style={{ marginBottom: '8px' }}>
+                          <input
+                            type="url"
+                            value={config.doordash_public_base_url || config.public_base_url || ''}
+                            onChange={(e) => setIntegrations(prev => ({
+                              ...prev,
+                              doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), doordash_public_base_url: e.target.value.trim() } }
+                            }))}
+                            placeholder="https://your-store.com"
+                            style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '320px' }}
+                            {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
+                          />
+                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '8px' }}>Used to build item photo URLs (DoorDash POS Integrated Images). Leave empty to use current host on Menu Pull.</span>
+                        </FormField>
+                        <FormField isDarkMode={isDarkMode} label="Order Manager JWT secret (optional)" style={{ marginBottom: '8px' }}>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            value={config.order_manager_jwt_secret || ''}
+                            onChange={(e) => setIntegrations(prev => ({
+                              ...prev,
+                              doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), order_manager_jwt_secret: e.target.value } }
+                            }))}
+                            placeholder="From DoorDash support (Live Order Manager)"
+                            style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '320px' }}
+                            {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
+                          />
+                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '8px' }}>Required for Order Manager (iframe). Get from DoorDash Developer Portal Support. Optional: order_manager_iss, order_manager_kid in config.</span>
+                        </FormField>
+                        <FormField isDarkMode={isDarkMode} label="Default pickup instructions for Dasher (optional)" style={{ marginBottom: '8px' }}>
+                          <textarea
+                            value={config.doordash_pickup_instructions_default || config.pickup_instructions || ''}
+                            onChange={(e) => setIntegrations(prev => ({
+                              ...prev,
+                              doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), doordash_pickup_instructions_default: e.target.value } }
+                            }))}
+                            placeholder="e.g. Pick up at counter. Short code: 1234"
+                            rows={2}
+                            style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '400px', resize: 'vertical' }}
+                            {...getInputFocusHandlers(integrationInputRgb, isDarkMode)}
+                          />
+                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '8px' }}>Sent to DoorDash on order confirmation. Shown to the Dasher when they receive the order and when they arrive. E.g. short code, side door, handle with care.</span>
+                        </FormField>
+                        <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 4px 0' }}>
+                          <strong>Orders webhook</strong> – Give this URL to DoorDash to receive orders in real time.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                          <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '6px 8px', borderRadius: '4px', fontSize: '12px', flex: '1 1 200px', minWidth: 0 }}>
+                            {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/orders` : '/api/webhooks/doordash/orders'}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const url = typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/orders` : '/api/webhooks/doordash/orders'
+                              navigator.clipboard.writeText(url).then(() => showToast('Copied to clipboard', 'success')).catch(() => showToast('Copy failed', 'error'))
+                            }}
+                            style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f5f5f5', color: isDarkMode ? '#eee' : '#333', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 4px 0' }}>
+                          <strong>Menu status webhook</strong> – DoorDash calls this when a menu create/update job finishes.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                          <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '6px 8px', borderRadius: '4px', fontSize: '12px', flex: '1 1 200px', minWidth: 0 }}>
+                            {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/menu-status` : '/api/webhooks/doordash/menu-status'}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const url = typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/menu-status` : '/api/webhooks/doordash/menu-status'
+                              navigator.clipboard.writeText(url).then(() => showToast('Copied to clipboard', 'success')).catch(() => showToast('Copy failed', 'error'))
+                            }}
+                            style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f5f5f5', color: isDarkMode ? '#eee' : '#333', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 4px 0' }}>
+                          <strong>Order Adjustment webhook</strong> – DoorDash sends updated order here after you send a line-level adjustment. Configure in Developer Portal.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                          <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '6px 8px', borderRadius: '4px', fontSize: '12px', flex: '1 1 200px', minWidth: 0 }}>
+                            {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/order-adjustment` : '/api/webhooks/doordash/order-adjustment'}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const url = typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/order-adjustment` : '/api/webhooks/doordash/order-adjustment'
+                              navigator.clipboard.writeText(url).then(() => showToast('Copied to clipboard', 'success')).catch(() => showToast('Copy failed', 'error'))
+                            }}
+                            style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f5f5f5', color: isDarkMode ? '#eee' : '#333', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 4px 0' }}>
+                          <strong>Order Cancellation webhook</strong> – DoorDash notifies when an already-confirmed order is cancelled downstream. Contact DoorDash to configure.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                          <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '6px 8px', borderRadius: '4px', fontSize: '12px', flex: '1 1 200px', minWidth: 0 }}>
+                            {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/order-cancellation` : '/api/webhooks/doordash/order-cancellation'}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const url = typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/doordash/order-cancellation` : '/api/webhooks/doordash/order-cancellation'
+                              navigator.clipboard.writeText(url).then(() => showToast('Copied to clipboard', 'success')).catch(() => showToast('Copy failed', 'error'))
+                            }}
+                            style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f5f5f5', color: isDarkMode ? '#eee' : '#333', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', margin: '0 0 4px 0' }}>
+                          <strong>Menu Pull URL</strong> – DoorDash GETs this to pull your menu (inventory). Use the location id above in the path.
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                          <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '6px 8px', borderRadius: '4px', fontSize: '12px', flex: '1 1 200px', minWidth: 0 }}>
+                            {typeof window !== 'undefined' ? `${window.location.origin}/api/integrations/doordash/menu/${(config.location_id ?? '1').toString().trim() || '1'}` : '/api/integrations/doordash/menu/1'}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const locId = (config.location_id ?? '1').toString().trim() || '1'
+                              const url = typeof window !== 'undefined' ? `${window.location.origin}/api/integrations/doordash/menu/${locId}` : `/api/integrations/doordash/menu/1`
+                              navigator.clipboard.writeText(url).then(() => showToast('Copied to clipboard', 'success')).catch(() => showToast('Copy failed', 'error'))
+                            }}
+                            style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f5f5f5', color: isDarkMode ? '#eee' : '#333', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
+                          <div ref={doordashSyncDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+                            <button
+                              type="button"
+                              className="button-50 button-50--doordash"
+                              onClick={() => setDoordashSyncDropdownOpen((open) => !open)}
+                              disabled={doordashSyncLoading || !state.enabled}
+                            >
+                              <span className="button-50__Content">{doordashSyncLoading ? 'Syncing…' : 'Sync'}</span>
+                            </button>
+                            {doordashSyncDropdownOpen && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: 0,
+                                  right: 0,
+                                  marginTop: '4px',
+                                  width: '100%',
+                                  boxSizing: 'border-box',
+                                  borderRadius: '8px',
+                                  boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.15)',
+                                  background: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                  border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                  zIndex: 1000,
+                                  overflow: 'hidden'
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  style={{
+                                    display: 'block',
+                                    width: '100%',
+                                    padding: '8px 6px',
+                                    textAlign: 'left',
+                                    border: 'none',
+                                    background: 'none',
+                                    fontSize: '11px',
+                                    fontWeight: 500,
+                                    color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                    cursor: 'pointer'
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = isDarkMode ? 'var(--bg-tertiary)' : '#fff0f0' }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                                  onClick={() => { syncDoordashNow(); setDoordashSyncDropdownOpen(false) }}
+                                >
+                                  Orders
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={pushDoordashMenuNow}
+                            disabled={doordashPushMenuLoading || !state.enabled}
+                          >
+                            <span className="button-50__Content">{doordashPushMenuLoading ? 'Pushing…' : 'Push menu'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={getDoordashMenuNow}
+                            disabled={doordashGetMenuLoading || !state.enabled}
+                          >
+                            <span className="button-50__Content">{doordashGetMenuLoading ? 'Getting…' : 'Get menu'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={getDoordashStoreDetailsNow}
+                            disabled={doordashStoreDetailsLoading || !state.enabled}
+                          >
+                            <span className="button-50__Content">{doordashStoreDetailsLoading ? 'Loading…' : 'Store info'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={getDoordashMenuDetailsNow}
+                            disabled={doordashMenuDetailsLoading || !state.enabled}
+                          >
+                            <span className="button-50__Content">{doordashMenuDetailsLoading ? 'Loading…' : 'Menu info'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={() => setDoordashDeactivateModalOpen(true)}
+                            disabled={doordashStoreStatusLoading || !state.enabled}
+                          >
+                            <span className="button-50__Content">Deactivate store</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={doordashReactivateStore}
+                            disabled={doordashStoreStatusLoading || !state.enabled}
+                          >
+                            <span className="button-50__Content">{doordashStoreStatusLoading ? 'Updating…' : 'Reactivate store'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={runDoordashMigrations}
+                            disabled={doordashMigrationsLoading}
+                          >
+                            <span className="button-50__Content">{doordashMigrationsLoading ? 'Running…' : 'Run migrations'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={openDoordashItemHoursModal}
+                          >
+                            <span className="button-50__Content">Item-level hours</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="button-50 button-50--doordash"
+                            onClick={() => saveIntegration('doordash')}
+                            disabled={integrationsSaving === 'doordash'}
+                          >
+                            <span className="button-50__Content">{integrationsSaving === 'doordash' ? 'Saving…' : 'Save'}</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    {id !== 'shopify' && id !== 'doordash' && (
+                      <div style={{ marginTop: '8px' }}>
+                        <button
+                          type="button"
+                          className={`button-50 button-50--${id}`}
+                          onClick={() => saveIntegration(id)}
+                          disabled={integrationsSaving === id}
+                        >
+                          <span className="button-50__Content">{integrationsSaving === id ? 'Saving…' : 'Save'}</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
             })}
+            {hasAdminAccess && (
+              <SquareMigrationCard
+                isDarkMode={isDarkMode}
+                themeColorRgb={themeColorRgb}
+                showToast={showToast}
+                compactPrimaryButtonStyle={compactPrimaryButtonStyle}
+                inputBaseStyle={inputBaseStyle}
+                getInputFocusHandlers={getInputFocusHandlers}
+                FormField={FormField}
+                FormLabel={FormLabel}
+              />
+            )}
             </div>
+          )}
+          {doordashItemHoursModalOpen && typeof createPortal === 'function' && createPortal(
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 10000,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: isDarkMode ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.4)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)'
+              }}
+              onClick={(e) => { if (e.target === e.currentTarget) setDoordashItemHoursModalOpen(false) }}
+            >
+              <div
+                style={{
+                  background: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                  borderRadius: '12px',
+                  boxShadow: isDarkMode ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(0,0,0,0.2)',
+                  maxWidth: '90vw',
+                  width: '720px',
+                  maxHeight: '85vh',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ padding: '16px 20px', borderBottom: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333' }}>DoorDash item-level hours</h3>
+                  <button type="button" onClick={() => setDoordashItemHoursModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: isDarkMode ? '#999' : '#666' }} aria-label="Close">×</button>
+                </div>
+                <p style={{ padding: '12px 20px 0', margin: 0, fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>
+                  Optional. JSON array per product, e.g. [{'{'} "day_index": "MON", "start_time": "05:00:00", "end_time": "17:00:00" {'}'}]. Leave empty to use store hours. <code>start_date</code>/<code>end_date</code> (YYYY-MM-DD) for LTO.
+                </p>
+                <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
+                  {doordashItemHoursProducts.length === 0 ? (
+                    <p style={{ color: isDarkMode ? '#888' : '#666' }}>Loading…</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {doordashItemHoursProducts.map((p) => (
+                        <div key={p.product_id} style={{ border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', borderRadius: '8px', padding: '10px 12px' }}>
+                          <div style={{ fontWeight: 600, fontSize: '13px', marginBottom: '6px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>{p.product_name || 'Unnamed'}</div>
+                          <div style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginBottom: '6px' }}>SKU: {p.sku}</div>
+                          <textarea
+                            value={p.item_special_hours_edit ?? ''}
+                            onChange={(e) => setDoordashItemHoursEdit(p.product_id, e.target.value)}
+                            placeholder={'[] or e.g. [{"day_index":"MON","start_time":"05:00:00","end_time":"17:00:00"}]'}
+                            rows={2}
+                            style={{
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              padding: '8px',
+                              fontSize: '12px',
+                              fontFamily: 'monospace',
+                              background: isDarkMode ? '#2a2a2a' : '#f9f9f9',
+                              border: isDarkMode ? '1px solid #444' : '1px solid #ddd',
+                              borderRadius: '6px',
+                              color: isDarkMode ? '#eee' : '#333'
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ padding: '12px 20px', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button type="button" onClick={() => setDoordashItemHoursModalOpen(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: 'none', color: isDarkMode ? '#eee' : '#333', cursor: 'pointer' }}>Cancel</button>
+                  <button type="button" onClick={saveDoordashItemHours} disabled={doordashItemHoursSaving} className="button-50 button-50--doordash" style={{ padding: '8px 16px' }}>
+                    <span className="button-50__Content">{doordashItemHoursSaving ? 'Saving…' : 'Save'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+          {doordashDeactivateModalOpen && typeof createPortal === 'function' && createPortal(
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 10000,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: isDarkMode ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.4)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)'
+              }}
+              onClick={(e) => { if (e.target === e.currentTarget) setDoordashDeactivateModalOpen(false) }}
+            >
+              <div
+                style={{
+                  background: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                  borderRadius: '12px',
+                  boxShadow: isDarkMode ? '0 8px 32px rgba(0,0,0,0.5)' : '0 8px 32px rgba(0,0,0,0.2)',
+                  maxWidth: '90vw',
+                  width: '440px',
+                  padding: '20px'
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333' }}>DoorDash: Deactivate store</h3>
+                  <button type="button" onClick={() => setDoordashDeactivateModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: isDarkMode ? '#999' : '#666' }} aria-label="Close">×</button>
+                </div>
+                <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', marginBottom: '12px' }}>
+                  Without an end time, the store will deactivate for 2 weeks then auto-reactivate. Use end time for a specific reactivation time (ISO format).
+                </p>
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>Reason (required)</label>
+                  <select
+                    value={doordashDeactivateReason}
+                    onChange={(e) => setDoordashDeactivateReason(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #ddd',
+                      background: isDarkMode ? 'var(--bg-tertiary)' : '#fff',
+                      color: isDarkMode ? 'var(--text-primary)' : '#333',
+                      fontSize: '14px'
+                    }}
+                  >
+                    {doordashDeactivateReasons.map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>Notes (required)</label>
+                  <textarea
+                    value={doordashDeactivateNotes}
+                    onChange={(e) => setDoordashDeactivateNotes(e.target.value)}
+                    placeholder="Detail reason for internal records"
+                    rows={3}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #ddd',
+                      background: isDarkMode ? 'var(--bg-tertiary)' : '#fff',
+                      color: isDarkMode ? 'var(--text-primary)' : '#333',
+                      fontSize: '14px',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>End time (optional, ISO e.g. 2023-04-28T01:01:00+01:00)</label>
+                  <input
+                    type="text"
+                    value={doordashDeactivateEndTime}
+                    onChange={(e) => setDoordashDeactivateEndTime(e.target.value)}
+                    placeholder="Leave empty for 2-week auto reactivate"
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #ddd',
+                      background: isDarkMode ? 'var(--bg-tertiary)' : '#fff',
+                      color: isDarkMode ? 'var(--text-primary)' : '#333',
+                      fontSize: '14px'
+                    }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button type="button" onClick={() => setDoordashDeactivateModalOpen(false)} style={{ padding: '8px 16px', borderRadius: '8px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: 'none', color: isDarkMode ? '#eee' : '#333', cursor: 'pointer' }}>Cancel</button>
+                  <button type="button" onClick={doordashDeactivateStoreSubmit} disabled={doordashStoreStatusLoading} className="button-50 button-50--doordash" style={{ padding: '8px 16px', background: '#c53030', border: '1px solid #b91c1c' }}>
+                    <span className="button-50__Content">{doordashStoreStatusLoading ? 'Sending…' : 'Deactivate'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
           )}
           <p style={{ fontSize: '13px', color: isDarkMode ? '#888' : '#999', marginTop: '24px' }}>
             Webhook URL for incoming orders: <code style={{ background: isDarkMode ? '#333' : '#eee', padding: '2px 6px', borderRadius: '4px' }}>{typeof window !== 'undefined' ? `${window.location.origin}/api/orders/from-integration` : '/api/orders/from-integration'}</code>. Use your integration partner’s dashboard to send orders to this URL with JSON body: order_source, prepare_by_iso, customer_*, order_type, items (product_id, quantity, unit_price).
@@ -8696,25 +9512,104 @@ function Settings() {
         </div>
       )}
 
-      {/* Data Migration Tab (Square) */}
-      {activeTab === 'migrations' && hasAdminAccess && (
+      {/* DoorDash Tab */}
+      {activeTab === 'doordash' && (
         <div style={{ maxWidth: '720px' }}>
           <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '8px' }}>
-            Data Migration
+            DoorDash
           </FormTitle>
           <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
-            Migrate your data from Square into this system. Connect with your Square access token (from Developer Dashboard → Apps → Credentials; use a personal access token or OAuth with scopes: MERCHANT_READ, LOCATION_READ, ITEMS_READ, ORDERS_READ, PAYMENTS_READ, TEAM_READ), then choose which data to import. We recommend migrating in order: Inventory first, then Employees, then Orders and Payments. Statistics are derived from order and payment history after migration.
+            Configure your DoorDash integration. Push menu, get store or menu info, and manage store status. Settings here are synced with Integrations; you can also configure under Integrations → DoorDash.
           </p>
-          <SquareMigrationCard
-            isDarkMode={isDarkMode}
-            themeColorRgb={themeColorRgb}
-            showToast={showToast}
-            compactPrimaryButtonStyle={compactPrimaryButtonStyle}
-            inputBaseStyle={inputBaseStyle}
-            getInputFocusHandlers={getInputFocusHandlers}
-            FormField={FormField}
-            FormLabel={FormLabel}
-          />
+          {integrationsLoading ? (
+            <div style={{ padding: '24px', color: isDarkMode ? '#999' : '#666' }}>Loading…</div>
+          ) : (
+            <div
+              className="integration-card-glass"
+              style={{
+                padding: '20px',
+                borderRadius: '12px',
+                ...(doordashSyncDropdownOpen ? { position: 'relative', zIndex: 10 } : {})
+              }}
+            >
+              {(() => {
+                const state = integrations.doordash || { enabled: false, config: {} }
+                const config = state.config || {}
+                const integrationInputRgb = themeColorRgb
+                const integrationInputGlassStyle = {
+                  background: isDarkMode ? 'rgba(50, 50, 50, 0.35)' : 'rgba(255, 255, 255, 0.35)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: isDarkMode ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(0, 0, 0, 0.14)',
+                  boxShadow: isDarkMode ? 'inset 0 1px 0 rgba(255, 255, 255, 0.04)' : 'inset 0 1px 0 rgba(255, 255, 255, 0.4)'
+                }
+                return (
+                  <>
+                    {doordashLatestDeactivation && (doordashLatestDeactivation.reason || doordashLatestDeactivation.end_time || doordashLatestDeactivation.notes) && (
+                      <div style={{ marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', background: isDarkMode ? 'rgba(255, 180, 0, 0.12)' : 'rgba(251, 191, 36, 0.2)', border: isDarkMode ? '1px solid rgba(255, 180, 0, 0.3)' : '1px solid rgba(245, 158, 11, 0.4)', fontSize: '13px', color: isDarkMode ? '#fbbf24' : '#b45309' }}>
+                        <strong>Store temporarily deactivated</strong>
+                        {doordashLatestDeactivation.reason && <span>: {doordashLatestDeactivation.reason}</span>}
+                        {doordashLatestDeactivation.end_time && <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', opacity: 0.95 }}>End time: {new Date(doordashLatestDeactivation.end_time).toLocaleString()}</span>}
+                        {doordashLatestDeactivation.notes && <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', opacity: 0.9 }}>{doordashLatestDeactivation.notes}</span>}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600, fontSize: '16px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+                        <img src="/doordash.svg" alt="" style={{ height: '24px', width: 'auto', maxWidth: '72px', objectFit: 'contain' }} />
+                        DoorDash
+                      </span>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 500, color: state.enabled ? '#0d6b2c' : (isDarkMode ? '#888' : '#999') }}>{state.enabled ? 'Enabled' : 'Disabled'}</span>
+                        <div className="checkbox-wrapper-2 integration-toggle" style={{ flexShrink: 0 }}>
+                          <input type="checkbox" className="sc-gJwTLC ikxBAC" checked={!!state.enabled} onChange={() => setIntegrations(prev => ({ ...prev, doordash: { ...prev.doordash, enabled: !prev.doordash.enabled } }))} />
+                        </div>
+                      </label>
+                    </div>
+                    <FormField isDarkMode={isDarkMode} label="API key" style={{ marginBottom: '12px' }}>
+                      <input type="password" autoComplete="off" value={config.api_key || ''} onChange={(e) => setIntegrations(prev => ({ ...prev, doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), api_key: e.target.value } } }))} placeholder="From DoorDash Developer Portal" style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '320px' }} {...getInputFocusHandlers(integrationInputRgb, isDarkMode)} />
+                    </FormField>
+                    <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', marginBottom: '16px' }}><strong>Actions</strong> – Push menu to DoorDash, download store/menu info, or deactivate the store.</p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+                      <div ref={doordashSyncDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+                        <button type="button" className="button-50 button-50--doordash" onClick={() => setDoordashSyncDropdownOpen((o) => !o)} disabled={doordashSyncLoading || !state.enabled}><span className="button-50__Content">{doordashSyncLoading ? 'Syncing…' : 'Sync'}</span></button>
+                        {doordashSyncDropdownOpen && (
+                          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', width: '100%', boxSizing: 'border-box', borderRadius: '8px', boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.15)', background: isDarkMode ? 'var(--bg-secondary)' : '#fff', border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', zIndex: 1000, overflow: 'hidden' }}>
+                            <button type="button" style={{ display: 'block', width: '100%', padding: '8px 6px', textAlign: 'left', border: 'none', background: 'none', fontSize: '11px', fontWeight: 500, color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }} onMouseEnter={(e) => { e.currentTarget.style.background = isDarkMode ? 'var(--bg-tertiary)' : '#fff0f0' }} onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }} onClick={() => { syncDoordashNow(); setDoordashSyncDropdownOpen(false) }}>Orders</button>
+                          </div>
+                        )}
+                      </div>
+                      <button type="button" className="button-50 button-50--doordash" onClick={pushDoordashMenuNow} disabled={doordashPushMenuLoading || !state.enabled}><span className="button-50__Content">{doordashPushMenuLoading ? 'Pushing…' : 'Push menu'}</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={getDoordashMenuNow} disabled={doordashGetMenuLoading || !state.enabled}><span className="button-50__Content">{doordashGetMenuLoading ? 'Getting…' : 'Get store menu'}</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={getDoordashStoreDetailsNow} disabled={doordashStoreDetailsLoading || !state.enabled}><span className="button-50__Content">{doordashStoreDetailsLoading ? 'Loading…' : 'Store info'}</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={getDoordashMenuDetailsNow} disabled={doordashMenuDetailsLoading || !state.enabled}><span className="button-50__Content">{doordashMenuDetailsLoading ? 'Loading…' : 'Menu info'}</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={() => setDoordashDeactivateModalOpen(true)} disabled={doordashStoreStatusLoading || !state.enabled}><span className="button-50__Content">Deactivate store</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={doordashReactivateStore} disabled={doordashStoreStatusLoading || !state.enabled}><span className="button-50__Content">{doordashStoreStatusLoading ? 'Updating…' : 'Reactivate store'}</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={runDoordashMigrations} disabled={doordashMigrationsLoading}><span className="button-50__Content">{doordashMigrationsLoading ? 'Running…' : 'Run migrations'}</span></button>
+                      <button type="button" className="button-50 button-50--doordash" onClick={openDoordashItemHoursModal}><span className="button-50__Content">Item-level hours</span></button>
+                    </div>
+                    <FormField isDarkMode={isDarkMode} label="Location id (Menu Pull URL)" style={{ marginBottom: '8px' }}>
+                      <input type="text" value={config.location_id ?? '1'} onChange={(e) => setIntegrations(prev => ({ ...prev, doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), location_id: e.target.value || '1' } } }))} placeholder="1" style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '80px' }} {...getInputFocusHandlers(integrationInputRgb, isDarkMode)} />
+                      <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '8px' }}>Usually your establishment id. Used in Menu Pull URL.</span>
+                    </FormField>
+                    <FormField isDarkMode={isDarkMode} label="Public base URL (item images)" style={{ marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <input type="url" value={config.doordash_public_base_url || config.public_base_url || ''} onChange={(e) => setIntegrations(prev => ({ ...prev, doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), doordash_public_base_url: e.target.value.trim() } } }))} placeholder="https://your-store.com" style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '280px', flex: '1 1 200px' }} {...getInputFocusHandlers(integrationInputRgb, isDarkMode)} />
+                        <button type="button" onClick={() => setIntegrations(prev => ({ ...prev, doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), doordash_public_base_url: typeof window !== 'undefined' ? window.location.origin : '' } } }))} style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f5f5f5', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>Use current site URL</button>
+                      </div>
+                      <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginTop: '4px', display: 'block' }}>For DoorDash item photos. Fills from your current browser origin.</span>
+                    </FormField>
+                    <FormField isDarkMode={isDarkMode} label="Default pickup instructions for Dasher (optional)" style={{ marginBottom: '8px' }}>
+                      <textarea value={config.doordash_pickup_instructions_default || config.pickup_instructions || ''} onChange={(e) => setIntegrations(prev => ({ ...prev, doordash: { ...prev.doordash, config: { ...(prev.doordash?.config || {}), doordash_pickup_instructions_default: e.target.value } } }))} placeholder="e.g. Pick up at counter" rows={2} style={{ ...inputBaseStyle(isDarkMode, integrationInputRgb), ...integrationInputGlassStyle, maxWidth: '400px', resize: 'vertical' }} {...getInputFocusHandlers(integrationInputRgb, isDarkMode)} />
+                    </FormField>
+                    <div style={{ marginTop: '16px' }}>
+                      <button type="button" className="button-50 button-50--doordash" onClick={() => saveIntegration('doordash')} disabled={integrationsSaving === 'doordash'}><span className="button-50__Content">{integrationsSaving === 'doordash' ? 'Saving…' : 'Save'}</span></button>
+                    </div>
+                    <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', marginTop: '16px' }}>Webhook URLs and more options (JWT secret, provider type) are in <strong>Integrations → DoorDash</strong>.</p>
+                  </>
+                )
+              })()}
+            </div>
+          )}
         </div>
       )}
 

@@ -5,6 +5,30 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { ToastProvider, useToast } from './contexts/ToastContext'
 import { PageScrollProvider, usePageScroll } from './contexts/PageScrollContext'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+
+// When Shopify OAuth completes from Tauri, backend redirects to pos://...; we navigate the webview to that path.
+function DeepLinkHandler() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.__TAURI__) return
+    let unlisten
+    const handleUrl = (url) => {
+      if (!url || !url.startsWith('pos://')) return
+      try {
+        const rest = url.slice('pos://'.length)
+        const path = rest.split('?')[0] || '/'
+        const search = rest.includes('?') ? '?' + rest.split('?').slice(1).join('?') : ''
+        navigate((path.startsWith('/') ? path : '/' + path) + search, { replace: true })
+      } catch (_) {}
+    }
+    import('@tauri-apps/plugin-deep-link').then(({ onOpenUrl, getCurrent }) => {
+      onOpenUrl((urls) => { if (urls && urls[0]) handleUrl(urls[0]) }).then((fn) => { unlisten = fn })
+      getCurrent().then((urls) => { if (urls && urls[0]) handleUrl(urls[0]) }).catch(() => {})
+    }).catch(() => {})
+    return () => { if (unlisten && typeof unlisten === 'function') unlisten() }
+  }, [navigate])
+  return null
+}
 import { Settings, User, LogOut, Bell } from 'lucide-react'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
@@ -147,7 +171,9 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
   const onLogin = (result) => loginSuccessHandler(result, setSessionToken, setEmployee, restoreOfflineSession)
 
   return (
-    <Routes>
+    <>
+      <DeepLinkHandler />
+      <Routes>
       <Route path="/login" element={
         sessionToken && employee ? (
           <Navigate to="/dashboard" replace />
@@ -313,6 +339,7 @@ function AppContent({ sessionToken, setSessionToken, employee, setEmployee, onLo
         )
       } />
     </Routes>
+    </>
   )
 }
 

@@ -1,4 +1,15 @@
-cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py
-cd frontend 
+cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py cd frontend 
 npm run dev
 cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 wipe_database.py
+\
+npm run tauri:dev
+
+all the modals on chash regiteer tab in settings page shold us eht e modal background blur syrling.
+
+the edit recipt modal should defiult when opended be opened to header sectiion and the  shold us eht e modal background blur syrling.
+
+the checkout ui edit modal should also use shold us eht e modal background blur syrling.
+
+
+cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py
+cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py

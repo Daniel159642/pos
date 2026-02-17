@@ -1,0 +1,158 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root,
+.app {
+  min-height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.site-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 72px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.6s ease, opacity 0.6s ease;
+  z-index: 9;
+}
+
+.site-header--visible {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.subtitle-center {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 8;
+  pointer-events: none;
+}
+
+.hero {
+  min-height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  padding: clamp(8rem, 18vh, 12rem) 1.5rem clamp(10rem, 22vh, 14rem);
+}
+
+.brand {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  font-size: clamp(4rem, 12vw, 10rem);
+  color: #6ba3f0;
+  line-height: 1;
+  text-align: center;
+  transform: translate(-50%, -50%) scale(1);
+  transform-origin: center;
+  transition: top 0.6s ease, left 0.6s ease, transform 0.6s ease, color 0.6s ease;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.brand--compact {
+  top: 1.5rem;
+  left: clamp(1.5rem, 6vw, 3rem);
+  transform: translate(0, 0) scale(0.32);
+  transform-origin: top left;
+  text-align: left;
+  z-index: 11;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: clamp(1rem, 2vw, 1.4rem);
+  font-weight: 500;
+  color: #1a1a1a;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.subtitle-section {
+  min-height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.spacer {
+  height: 60vh;
+}
+
+.features-spacer {
+  min-height: 100vh;
+  scroll-snap-align: start;
+}
+
+.features {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 1rem;
+  padding-bottom: 4rem;
+}
+
+.features--fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.features--fixed .falling-wrapper {
+  pointer-events: auto;
+}
+
+.falling-wrapper {
+  width: min(90vw, 960px);
+  height: 100%;
+  min-height: 70vh;
+  margin: 0 auto;
+  padding-top: 5rem;
+}
+
+.cover-section {
+  position: relative;
+  min-height: 100vh;
+  scroll-snap-align: start;
+  background: #ffffff;
+  z-index: 5;
+}

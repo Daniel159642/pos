@@ -6,9 +6,13 @@
   "scripts": {
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "shopify:link": "shopify app config link",
+    "shopify:deploy": "shopify app deploy"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@shopify/cli": "^3.88.0",
+    "@tauri-apps/cli": "^2",
+    "jsonwebtoken": "^9.0.3"
   }
 }

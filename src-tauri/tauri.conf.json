@@ -44,5 +44,5 @@
     "longDescription": "POS system desktop application. Start the backend server (python3 web_viewer.py) before using the app.",
     "category": "Business"
   },
-  "plugins": {}
+  "plugins": { "deep-link": { "desktop": { "schemes": ["pos"] } } }
 }

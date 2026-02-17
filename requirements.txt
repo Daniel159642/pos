@@ -62,3 +62,6 @@ clerk-backend-api>=1.0.0  # Clerk Backend SDK for user creation and invitations
 # PostgreSQL database dependencies (local database):
 psycopg2-binary>=2.9.0    # PostgreSQL adapter for Python
 python-dotenv>=1.0.0      # Environment variable management
+
+# DoorDash Order Manager for POS (JWT for webview/iframe auth):
+PyJWT>=2.8.0              # JWT generation for Live Order Management plugin
