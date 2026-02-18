@@ -511,6 +511,48 @@ def push_doordash_menu(establishment_id: int, config: Dict[str, Any]) -> tuple:
         return (False, str(e)[:500])
 
 
+def flatten_doordash_store_menu_for_sync(store_menu_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Flatten DoorDash store_menu response into a list of items for sync UI.
+    Returns list of { doordash_id, name, price_cents, category_name }.
+    Handles menus[].menu.categories[].items and menus[].categories[].items.
+    """
+    out: List[Dict[str, Any]] = []
+    menus = store_menu_data.get("menus") or []
+    if not isinstance(menus, list):
+        return out
+    for m in menus:
+        if not isinstance(m, dict):
+            continue
+        menu_obj = m.get("menu") or m
+        categories = menu_obj.get("categories") or []
+        if not isinstance(categories, list):
+            continue
+        for cat in categories:
+            if not isinstance(cat, dict):
+                continue
+            cat_name = (cat.get("name") or cat.get("title") or "").strip() or "Uncategorized"
+            for it in (cat.get("items") or []):
+                if not isinstance(it, dict):
+                    continue
+                name = (it.get("name") or "Item").strip() or "Item"
+                ext_id = str(it.get("merchant_supplied_id") or it.get("id") or "").strip()
+                if not ext_id:
+                    ext_id = f"item-{hash(name) % 10**8}"
+                price_cents = 0
+                try:
+                    price_cents = int(it.get("price") or 0)
+                except (TypeError, ValueError):
+                    pass
+                out.append({
+                    "doordash_id": ext_id,
+                    "name": name,
+                    "price_cents": price_cents,
+                    "category_name": cat_name,
+                })
+    return out
+
+
 def get_doordash_store_menu(establishment_id: int, config: Dict[str, Any], onboarding_id: Optional[str] = None) -> tuple:
     """
     Get active menu(s) from DoorDash for a store.
@@ -679,15 +721,41 @@ def update_doordash_store_status(
         return (False, str(e)[:500])
 
 
-def _flatten_order_items(doordash_order: Dict[str, Any], establishment_id: int, price_multiplier: float) -> tuple:
+def _resolve_product_id_for_doordash(
+    establishment_id: int,
+    ext_id: str,
+    name: str,
+    unit_price: float,
+    config: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Resolve product_id for a DoorDash item: use doordash_item_to_product_id mapping if present, else get_or_create."""
+    mapping = (config or {}).get("doordash_item_to_product_id")
+    if isinstance(mapping, dict) and ext_id:
+        pid = mapping.get(ext_id) or mapping.get(str(ext_id))
+        if pid is not None:
+            try:
+                pid = int(pid)
+                if pid > 0:
+                    return pid
+            except (TypeError, ValueError):
+                pass
+    from database import get_or_create_product_for_doordash
+    return get_or_create_product_for_doordash(establishment_id, ext_id, name, unit_price)
+
+
+def _flatten_order_items(
+    doordash_order: Dict[str, Any],
+    establishment_id: int,
+    price_multiplier: float,
+    config: Optional[Dict[str, Any]] = None,
+) -> tuple:
     """
     Flatten DoorDash order categories/items/extras/options into POS order items.
     Supports recipes: uses chargeable_quantity when present for option pricing; collects removed_options for notes.
     Collects line_item_id and line_option_id for Merchant Order Adjustment API.
+    If config.doordash_item_to_product_id is set, uses that mapping so orders sync to existing inventory.
     Returns (order_items: List[Dict], recipe_notes: Optional[str], doordash_lines: List[Dict]).
     """
-    from database import get_or_create_product_for_doordash
-
     order_items: List[Dict[str, Any]] = []
     doordash_lines: List[Dict[str, Any]] = []
     removed_names: List[str] = []
@@ -707,7 +775,9 @@ def _flatten_order_items(doordash_order: Dict[str, Any], establishment_id: int, 
                 continue
             price_cents = int(it.get("price") or 0)
             unit_price = (price_cents / 100.0) * price_multiplier if price_cents > 0 else 0.01
-            product_id = get_or_create_product_for_doordash(establishment_id, ext_id, name, unit_price if unit_price > 0 else 0.01)
+            product_id = _resolve_product_id_for_doordash(
+                establishment_id, ext_id, name, unit_price if unit_price > 0 else 0.01, config
+            )
             if unit_price <= 0:
                 unit_price = 0.01
             line_item_id = (it.get("line_item_id") or it.get("id") or "").strip() or None
@@ -741,7 +811,9 @@ def _flatten_order_items(doordash_order: Dict[str, Any], establishment_id: int, 
                         continue
                     opt_cents = int(opt.get("price") or 0)
                     opt_price = (opt_cents / 100.0) * price_multiplier if opt_cents > 0 else 0.01
-                    pid_opt = get_or_create_product_for_doordash(establishment_id, opt_id, opt_name, opt_price if opt_price > 0 else 0.01)
+                    pid_opt = _resolve_product_id_for_doordash(
+                        establishment_id, opt_id, opt_name, opt_price if opt_price > 0 else 0.01, config
+                    )
                     line_option_id = (opt.get("line_option_id") or opt.get("line_item_id") or opt.get("id") or "").strip() or None
                     if line_item_id and line_option_id:
                         doordash_lines.append({
@@ -756,6 +828,7 @@ def _flatten_order_items(doordash_order: Dict[str, Any], establishment_id: int, 
     recipe_notes = ("Removed: " + ", ".join(removed_names)) if removed_names else None
 
     if not order_items and subtotal_cents > 0:
+        from database import get_or_create_product_for_doordash
         product_id = get_or_create_product_for_doordash(establishment_id, "doordash-order-total", "DoorDash Order", (subtotal_cents / 100.0) * price_multiplier)
         order_items.append({"product_id": product_id, "quantity": 1, "unit_price": round((subtotal_cents / 100.0) * price_multiplier, 2), "discount": 0, "tax_rate": 0})
     return (order_items, recipe_notes, doordash_lines)
@@ -852,10 +925,17 @@ def _add_bag_fee_items(doordash_order: Dict[str, Any], items: List[Dict[str, Any
     return bag_fee_tax_note
 
 
-def build_pos_payload_from_doordash_order(doordash_order: Dict[str, Any], establishment_id: int, price_multiplier: float = 1.0) -> Optional[Dict[str, Any]]:
+def build_pos_payload_from_doordash_order(
+    doordash_order: Dict[str, Any],
+    establishment_id: int,
+    price_multiplier: float = 1.0,
+    config: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     if not doordash_order or not isinstance(doordash_order, dict):
         return None
-    items, recipe_notes, doordash_lines = _flatten_order_items(doordash_order, establishment_id, price_multiplier)
+    items, recipe_notes, doordash_lines = _flatten_order_items(
+        doordash_order, establishment_id, price_multiplier, config=config
+    )
     if not items:
         return None
     bag_fee_tax_note = _add_bag_fee_items(doordash_order, items, establishment_id, price_multiplier)

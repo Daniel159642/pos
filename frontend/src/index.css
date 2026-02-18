@@ -212,6 +212,34 @@ a.button-53 {
     background: rgba(70, 70, 70, 0.95);
 }
 
+/* In-store / in-house – theme color */
+.button-53--inhouse {
+    color: rgba(var(--theme-color-rgb, 107, 163, 240), 0.95);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 70%, rgba(var(--theme-color-rgb, 107, 163, 240), 0.15) 93%, rgba(255, 255, 255, 0.4) 100%);
+    box-shadow: rgba(var(--theme-color-rgb, 107, 163, 240), 0.25) 0 0 0 1px, rgba(var(--theme-color-rgb, 107, 163, 240), 0.08) 0 -1px 1px 0 inset, rgba(255, 255, 255, 0.7) 0 1px 1px 0 inset;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.button-53--inhouse:hover:not(:disabled) {
+    background: rgba(var(--theme-color-rgb, 107, 163, 240), 0.25);
+    color: rgba(var(--theme-color-rgb, 107, 163, 240), 1);
+}
+.button-53--inhouse:active:not(:disabled) {
+    background: rgba(var(--theme-color-rgb, 107, 163, 240), 0.35);
+    box-shadow: rgba(var(--theme-color-rgb, 107, 163, 240), 0.3) 0 0 0 1px, rgba(var(--theme-color-rgb, 107, 163, 240), 0.1) 0 1px 1px 0 inset;
+}
+.dark-theme .button-53--inhouse {
+    color: rgba(var(--theme-color-rgb, 107, 163, 240), 0.95);
+    background: linear-gradient(180deg, rgba(var(--theme-color-rgb, 107, 163, 240), 0.2) 70%, rgba(var(--theme-color-rgb, 107, 163, 240), 0.35) 93%, rgba(var(--theme-color-rgb, 107, 163, 240), 0.1) 100%);
+    box-shadow: rgba(var(--theme-color-rgb, 107, 163, 240), 0.3) 0 0 0 1px, rgba(0, 0, 0, 0.2) 0 -1px 1px 0 inset;
+}
+.dark-theme .button-53--inhouse:hover:not(:disabled) {
+    background: rgba(var(--theme-color-rgb, 107, 163, 240), 0.4);
+    color: rgba(var(--theme-color-rgb, 107, 163, 240), 1);
+}
+.dark-theme .button-53--inhouse:active:not(:disabled) {
+    background: rgba(var(--theme-color-rgb, 107, 163, 240), 0.5);
+}
+
 /* Integration cards – foggy glassy container */
 .integration-card-glass {
     background: rgba(255, 255, 255, 0.06);
@@ -348,6 +376,154 @@ a.button-53 {
 .integration-card-glass.integration-card-square-bg input:focus {
     border-color: rgba(0, 106, 255, 0.25) !important;
     box-shadow: 0 0 0 3px rgba(0, 106, 255, 0.06) !important;
+}
+
+/* DoorDash card: red/coral splash/gradient + logo (same glassy style as Shopify/Square) */
+.integration-card-glass.integration-card-doordash-bg {
+    position: relative;
+    overflow: visible;
+    background:
+        linear-gradient(145deg, rgba(255, 48, 8, 0.2) 0%, transparent 40%, transparent 55%, rgba(230, 56, 41, 0.12) 100%),
+        rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(52px) saturate(1.55);
+    -webkit-backdrop-filter: blur(52px) saturate(1.55);
+    border: 1px solid rgba(255, 48, 8, 0.35);
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.65),
+        0 0 0 2px rgba(255, 48, 8, 0.15),
+        0 8px 40px rgba(0, 0, 0, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.65),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.12);
+}
+.dark-theme .integration-card-glass.integration-card-doordash-bg {
+    background:
+        linear-gradient(145deg, rgba(255, 48, 8, 0.18) 0%, transparent 35%, transparent 60%, rgba(230, 56, 41, 0.1) 100%),
+        rgba(20, 20, 20, 0.15);
+    backdrop-filter: blur(60px) saturate(1.45);
+    -webkit-backdrop-filter: blur(60px) saturate(1.45);
+    border: 1px solid rgba(255, 48, 8, 0.4);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.4),
+        0 0 0 2px rgba(255, 48, 8, 0.2),
+        0 8px 40px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+}
+.integration-card-glass.integration-card-doordash-bg::before {
+    content: "";
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 200px;
+    height: 200px;
+    background: url('/doordash.svg') no-repeat center;
+    background-size: contain;
+    opacity: 0.1;
+    filter: blur(4px);
+    -webkit-filter: blur(4px);
+    z-index: 0;
+    pointer-events: none;
+}
+.integration-card-glass.integration-card-doordash-bg > * {
+    position: relative;
+    z-index: 1;
+}
+.integration-card-glass.integration-card-doordash-bg input:focus {
+    border-color: rgba(255, 48, 8, 0.25) !important;
+    box-shadow: 0 0 0 3px rgba(255, 48, 8, 0.06) !important;
+}
+
+/* Uber Eats card: green splash/gradient + logo (same glassy style as Shopify/DoorDash) */
+.integration-card-glass.integration-card-ubereats-bg {
+    position: relative;
+    overflow: visible;
+    background:
+        linear-gradient(145deg, rgba(6, 193, 103, 0.22) 0%, transparent 40%, transparent 55%, rgba(6, 193, 103, 0.12) 100%),
+        rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(52px) saturate(1.55);
+    -webkit-backdrop-filter: blur(52px) saturate(1.55);
+    border: 1px solid rgba(6, 193, 103, 0.35);
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.65),
+        0 0 0 2px rgba(6, 193, 103, 0.15),
+        0 8px 40px rgba(0, 0, 0, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.65),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.12);
+}
+.dark-theme .integration-card-glass.integration-card-ubereats-bg {
+    background:
+        linear-gradient(145deg, rgba(6, 193, 103, 0.2) 0%, transparent 35%, transparent 60%, rgba(6, 193, 103, 0.1) 100%),
+        rgba(20, 20, 20, 0.15);
+    backdrop-filter: blur(60px) saturate(1.45);
+    -webkit-backdrop-filter: blur(60px) saturate(1.45);
+    border: 1px solid rgba(6, 193, 103, 0.4);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.4),
+        0 0 0 2px rgba(6, 193, 103, 0.2),
+        0 8px 40px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+}
+.integration-card-glass.integration-card-ubereats-bg::before {
+    content: "";
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 200px;
+    height: 200px;
+    background: url('/uber-15.svg') no-repeat center;
+    background-size: contain;
+    opacity: 0.1;
+    filter: blur(4px);
+    -webkit-filter: blur(4px);
+    z-index: 0;
+    pointer-events: none;
+}
+.integration-card-glass.integration-card-ubereats-bg > * {
+    position: relative;
+    z-index: 1;
+}
+.integration-card-glass.integration-card-ubereats-bg input:focus {
+    border-color: rgba(6, 193, 103, 0.25) !important;
+    box-shadow: 0 0 0 3px rgba(6, 193, 103, 0.06) !important;
+}
+
+/* In-house order card: theme color glass (uses --theme-color-rgb from ThemeContext) */
+.integration-card-glass.integration-card-inhouse-bg {
+    position: relative;
+    overflow: visible;
+    background:
+        linear-gradient(145deg, rgba(var(--theme-color-rgb, 107, 163, 240), 0.22) 0%, transparent 40%, transparent 55%, rgba(var(--theme-color-rgb, 107, 163, 240), 0.12) 100%),
+        rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(52px) saturate(1.55);
+    -webkit-backdrop-filter: blur(52px) saturate(1.55);
+    border: 1px solid rgba(var(--theme-color-rgb, 107, 163, 240), 0.35);
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.65),
+        0 0 0 2px rgba(var(--theme-color-rgb, 107, 163, 240), 0.15),
+        0 8px 40px rgba(0, 0, 0, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.65),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.12);
+}
+.dark-theme .integration-card-glass.integration-card-inhouse-bg {
+    background:
+        linear-gradient(145deg, rgba(var(--theme-color-rgb, 107, 163, 240), 0.2) 0%, transparent 35%, transparent 60%, rgba(var(--theme-color-rgb, 107, 163, 240), 0.1) 100%),
+        rgba(20, 20, 20, 0.15);
+    backdrop-filter: blur(60px) saturate(1.45);
+    -webkit-backdrop-filter: blur(60px) saturate(1.45);
+    border: 1px solid rgba(var(--theme-color-rgb, 107, 163, 240), 0.4);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.4),
+        0 0 0 2px rgba(var(--theme-color-rgb, 107, 163, 240), 0.2),
+        0 8px 40px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+}
+.integration-card-glass.integration-card-inhouse-bg > * {
+    position: relative;
+    z-index: 1;
 }
 
 /* Button 50 – Integrations Sync & Save (no hover/click effect), color-coded */
@@ -531,12 +707,26 @@ a.button-53 {
     background-color: #fff;
     left: 13px;
 }
-/* Integrations: faint green when enabled (like Shopify buttons) */
+/* Integrations: faint green when enabled (Shopify / default) */
 .checkbox-wrapper-2.integration-toggle .ikxBAC:checked {
     background-color: #b8e8b8;
 }
 .checkbox-wrapper-2.integration-toggle .ikxBAC:checked:hover {
     background-color: #a0e0a0;
+}
+/* DoorDash card: red when switch on */
+.integration-card-doordash-bg .checkbox-wrapper-2.integration-toggle .ikxBAC:checked {
+    background-color: #e85a4a;
+}
+.integration-card-doordash-bg .checkbox-wrapper-2.integration-toggle .ikxBAC:checked:hover {
+    background-color: #d94a3a;
+}
+/* Uber Eats card: faint black/dark when switch on */
+.integration-card-ubereats-bg .checkbox-wrapper-2.integration-toggle .ikxBAC:checked {
+    background-color: #5a5a5a;
+}
+.integration-card-ubereats-bg .checkbox-wrapper-2.integration-toggle .ikxBAC:checked:hover {
+    background-color: #4a4a4a;
 }
 .checkbox-wrapper-2 :focus:not(.focus-visible) {
     outline: 0;

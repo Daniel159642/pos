@@ -2,6 +2,7 @@
 Square data migration: pull data from Square API and insert into POS database.
 Supports: inventory (catalog), employees (team members), orders, payments/transactions.
 Statistics are derived from order/payment history after migration.
+OAuth: one Square app (client_id/secret in env); tokens stored per establishment.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 SQUARE_BASE = "https://connect.squareup.com"
 SQUARE_SANDBOX_BASE = "https://connect.squareupsandbox.com"
 SQUARE_API_VERSION = "2024-11-20"
+SQUARE_OAUTH_SCOPES = "MERCHANT_READ LOCATION_READ ITEMS_READ ORDERS_READ PAYMENTS_READ TEAM_READ"
 
 
 def _square_request(
@@ -59,6 +61,131 @@ def verify_connection(access_token: str, sandbox: bool = False) -> Tuple[bool, s
         return True, f"Connected to {name} (merchant {mid})"
     except Exception as e:
         return False, str(e)
+
+
+def _oauth_token_request(
+    body: Dict[str, Any],
+    sandbox: bool = False,
+) -> Dict[str, Any]:
+    """POST to Square OAuth2 token endpoint. body: grant_type, code or refresh_token, client_id, client_secret, redirect_uri (for code)."""
+    base = SQUARE_SANDBOX_BASE if sandbox else SQUARE_BASE
+    url = f"{base}/oauth2/token"
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode()
+            err_json = json.loads(err_body)
+            errors = err_json.get("errors", [])
+            msg = errors[0].get("detail", err_body) if errors else str(e)
+        except Exception:
+            msg = str(e)
+        raise ValueError(msg)
+
+
+def exchange_code_for_tokens(
+    code: str,
+    redirect_uri: str,
+    client_id: str,
+    client_secret: str,
+    sandbox: bool = False,
+) -> Dict[str, Any]:
+    """Exchange OAuth authorization code for access_token and refresh_token. Returns dict with access_token, refresh_token, expires_at, merchant_id."""
+    body = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+    }
+    r = _oauth_token_request(body, sandbox=sandbox)
+    return {
+        "access_token": r.get("access_token"),
+        "refresh_token": r.get("refresh_token"),
+        "expires_at": r.get("expires_at"),
+        "merchant_id": r.get("merchant_id"),
+    }
+
+
+def refresh_square_access_token(
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+    sandbox: bool = False,
+) -> Dict[str, Any]:
+    """Use refresh_token to get new access_token. Returns dict with access_token, expires_at, refresh_token (same or new)."""
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    return _oauth_token_request(body, sandbox=sandbox)
+
+
+def get_valid_square_access_token(
+    establishment_id: Optional[int],
+    sandbox: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get a valid Square access token for the establishment (from stored OAuth tokens).
+    Refreshes if expired or expiring within 5 minutes. Returns (access_token, error_message).
+    """
+    from database import get_establishment_settings, update_establishment_settings
+    from datetime import datetime, timezone
+
+    settings = get_establishment_settings(establishment_id)
+    access_token = (settings.get("square_oauth_access_token") or "").strip()
+    refresh_token = (settings.get("square_oauth_refresh_token") or "").strip()
+    expires_at = settings.get("square_oauth_expires_at")
+
+    if not access_token and not refresh_token:
+        return None, "Square not connected. Connect with Square or enter an access token."
+
+    client_id = (__import__("os").environ.get("SQUARE_CLIENT_ID") or "").strip()
+    client_secret = (__import__("os").environ.get("SQUARE_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        if access_token:
+            return access_token, None
+        return None, "Square OAuth not configured (SQUARE_CLIENT_ID/SQUARE_CLIENT_SECRET). Use manual token."
+
+    # Check if access token is still valid (Square: 30 days; treat as valid if expires_at missing or > 5 min from now)
+    need_refresh = True
+    if access_token and expires_at:
+        try:
+            # ISO 8601 e.g. 2024-02-20T12:00:00Z
+            dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            from datetime import timedelta
+            if (dt - timedelta(minutes=5)) > datetime.now(timezone.utc):
+                need_refresh = False
+        except Exception:
+            pass
+
+    if need_refresh and refresh_token:
+        try:
+            r = refresh_square_access_token(refresh_token, client_id, client_secret, sandbox=sandbox)
+            new_access = (r.get("access_token") or "").strip()
+            new_expires = r.get("expires_at")
+            new_refresh = (r.get("refresh_token") or refresh_token).strip()
+            if new_access:
+                update_establishment_settings(establishment_id, {
+                    "square_oauth_access_token": new_access,
+                    "square_oauth_expires_at": new_expires,
+                    "square_oauth_refresh_token": new_refresh,
+                })
+                return new_access, None
+        except Exception as e:
+            return None, f"Failed to refresh Square token: {e}"
+        return None, "Refresh did not return an access token."
+
+    if access_token:
+        return access_token, None
+    return None, "No valid Square token. Reconnect Square or enter a token."
 
 
 def _get_locations(access_token: str, sandbox: bool) -> List[str]:

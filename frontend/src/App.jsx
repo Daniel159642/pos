@@ -422,24 +422,26 @@ function Layout({ children, employee, onLogout }) {
             flex: 1,
             minWidth: 0,
             userSelect: 'none',
-            cursor: isTauri ? 'move' : undefined
+            cursor: isTauri ? 'move' : undefined,
+            paddingLeft: '48px'
           }}
         >
           <button
             onClick={() => navigate('/dashboard')}
             style={{
-              padding: '10px 12px 4px 12px',
+              padding: '4px 12px 2px 12px',
               backgroundColor: 'transparent',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '18px',
+              fontSize: '24px',
               fontWeight: 500,
               fontStyle: 'italic',
               fontFamily: 'Georgia, "Times New Roman", serif',
-              color: '#6ba3f0'
+              color: '#6ba3f0',
+              lineHeight: 1.2
             }}
           >
-            Delancey
+            Swiftly
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

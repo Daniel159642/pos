@@ -13,6 +13,8 @@ import {
   compactFormFieldStyle,
   compactFormGridStyle,
   compactFormSectionStyle,
+  compactFormActionsStyle,
+  compactPrimaryButtonStyle,
   CompactFormActions
 } from '../components/FormStyles'
 import { ScanBarcode, Plus, ChevronDown, Upload, Image as ImageIcon, Share2, Download, Printer, X } from 'lucide-react'
@@ -107,6 +109,10 @@ function Inventory() {
 
   const MIN_CROP = 20
   const [createCategoryData, setCreateCategoryData] = useState({ parent_path: '', category_name: '' })
+  const [categoryDoordashAddToStore, setCategoryDoordashAddToStore] = useState(false)
+  const [categoryDoordashHoursEntries, setCategoryDoordashHoursEntries] = useState([])
+  const [categoryDoordashApplyLoading, setCategoryDoordashApplyLoading] = useState(false)
+  const [categoryDoordashApplyMessage, setCategoryDoordashApplyMessage] = useState(null)
   const [createVendorData, setCreateVendorData] = useState({
     vendor_name: '',
     contact_person: '',
@@ -1218,6 +1224,9 @@ function Inventory() {
     const parent_path = lastGt > 0 ? categoryPath.slice(0, lastGt) : ''
     const category_name = lastGt > 0 ? categoryPath.slice(lastGt + 3) : categoryPath
     setCreateCategoryData({ parent_path, category_name })
+    setCategoryDoordashAddToStore(false)
+    setCategoryDoordashHoursEntries([])
+    setCategoryDoordashApplyMessage(null)
     setShowCreateCategory(true)
     setCreateError(null)
     setCreateSuccess(false)
@@ -1265,6 +1274,42 @@ function Inventory() {
       setCreateError(err.message || `An error occurred while ${editingCategory ? 'updating' : 'creating'} the category`)
     } finally {
       setCreateLoading(false)
+    }
+  }
+
+  const handleCategoryDoordashApply = async () => {
+    if (!editingCategory?.category_id) return
+    if (!categoryDoordashAddToStore && (!categoryDoordashHoursEntries || categoryDoordashHoursEntries.length === 0)) {
+      setCategoryDoordashApplyMessage('Enable "Add to DoorDash" and/or add at least one time window.')
+      return
+    }
+    setCategoryDoordashApplyLoading(true)
+    setCategoryDoordashApplyMessage(null)
+    try {
+      const cleaned = (categoryDoordashHoursEntries || []).filter(e => e && (e.start_time || e.end_time)).map(e => ({
+        day_index: (e.day_index || 'MON').toUpperCase().slice(0, 3),
+        start_time: (e.start_time || '09:00:00').trim(),
+        end_time: (e.end_time || '17:00:00').trim()
+      }))
+      const res = await fetch(`/api/categories/${editingCategory.category_id}/doordash-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          add_to_doordash: !!categoryDoordashAddToStore,
+          item_special_hours: cleaned.length ? cleaned : undefined
+        })
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        setCategoryDoordashApplyMessage(result.message || 'Failed to apply')
+        return
+      }
+      setCategoryDoordashApplyMessage(result.message || `Updated ${result.updated ?? 0} item(s).`)
+      invalidateInventory()
+    } catch (err) {
+      setCategoryDoordashApplyMessage(err.message || 'Request failed')
+    } finally {
+      setCategoryDoordashApplyLoading(false)
     }
   }
 
@@ -2312,8 +2357,11 @@ function Inventory() {
                   )}
 
                   {createProductData.item_type === 'product' && (
-                    <div style={{ ...compactFormSectionStyle(isDarkMode), marginTop: '8px' }}>
-                      <h4 style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginBottom: '8px' }}>DoorDash</h4>
+                    <div style={{ marginTop: '16px', padding: '16px', border: '1px solid #dc2626', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(220, 38, 38, 0.06)' : 'rgba(220, 38, 38, 0.04)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '10px' }}>
+                        <img src="/doordash-logo.svg" alt="DoorDash" style={{ height: '18px', width: 'auto' }} />
+                        DoorDash
+                      </div>
                       <FormField style={compactFormFieldStyle}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                           <input type="checkbox" checked={createProductData.sell_at_pos !== false} onChange={(e) => setCreateProductData({ ...createProductData, sell_at_pos: e.target.checked })} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
@@ -2715,6 +2763,88 @@ function Inventory() {
                     )}
                   </FormField>
 
+                  {editingCategory && (
+                    <>
+                      <div style={{ marginTop: '16px', padding: '16px', border: '1px solid #dc2626', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(220, 38, 38, 0.06)' : 'rgba(220, 38, 38, 0.04)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '10px' }}>
+                          <img src="/doordash-logo.svg" alt="DoorDash" style={{ height: '18px', width: 'auto' }} />
+                          DoorDash
+                        </div>
+                        <FormField style={compactFormFieldStyle}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+                            <input
+                              type="checkbox"
+                              checked={categoryDoordashAddToStore}
+                              onChange={(e) => setCategoryDoordashAddToStore(e.target.checked)}
+                              style={{ accentColor: themeColorRgb ? `rgb(${themeColorRgb})` : undefined }}
+                            />
+                            <span style={compactFormLabelStyle(isDarkMode)}>Add all products in this category to DoorDash store</span>
+                          </label>
+                          <p style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginTop: '4px' }}>Sets each product as available in your DoorDash menu.</p>
+                        </FormField>
+                        <FormField style={compactFormFieldStyle}>
+                          <label style={compactFormLabelStyle(isDarkMode)}>Time / day restriction (optional)</label>
+                          <p style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginBottom: '8px' }}>Apply the same availability windows to all items in this category.</p>
+                          {(categoryDoordashHoursEntries || []).map((entry, idx) => (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                              <select
+                                value={entry.day_index || 'MON'}
+                                onChange={(e) => setCategoryDoordashHoursEntries((prev) => {
+                                  const entries = [...(prev || [])]
+                                  entries[idx] = { ...entries[idx], day_index: e.target.value }
+                                  return entries
+                                })}
+                                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), minWidth: '90px', padding: '6px 8px' }}
+                              >
+                                {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map((d) => (
+                                  <option key={d} value={d}>{d}</option>
+                                ))}
+                              </select>
+                              <input
+                                type="time"
+                                value={(entry.start_time || '09:00:00').substring(0, 5)}
+                                onChange={(e) => setCategoryDoordashHoursEntries((prev) => {
+                                  const entries = [...(prev || [])]
+                                  entries[idx] = { ...entries[idx], start_time: e.target.value + ':00' }
+                                  return entries
+                                })}
+                                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100px', padding: '6px 8px' }}
+                              />
+                              <span style={{ color: isDarkMode ? '#888' : '#666', fontSize: '12px' }}>to</span>
+                              <input
+                                type="time"
+                                value={(entry.end_time || '17:00:00').substring(0, 5)}
+                                onChange={(e) => setCategoryDoordashHoursEntries((prev) => {
+                                  const entries = [...(prev || [])]
+                                  entries[idx] = { ...entries[idx], end_time: e.target.value + ':00' }
+                                  return entries
+                                })}
+                                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), width: '100px', padding: '6px 8px' }}
+                              />
+                              <button type="button" onClick={() => setCategoryDoordashHoursEntries((prev) => (prev || []).filter((_, i) => i !== idx))} style={{ padding: '6px 10px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: 'pointer' }}>Remove</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => setCategoryDoordashHoursEntries((prev) => [...(prev || []), { day_index: 'MON', start_time: '09:00:00', end_time: '17:00:00' }])} style={{ padding: '6px 12px', borderRadius: '6px', border: `1px solid rgba(${themeColorRgb}, 0.6)`, background: `rgba(${themeColorRgb}, 0.15)`, color: `rgba(${themeColorRgb}, 1)`, fontSize: '12px', cursor: 'pointer', fontWeight: 500 }}>Add time window</button>
+                        </FormField>
+                        {categoryDoordashApplyMessage && (
+                          <div style={{ marginBottom: '10px', fontSize: '12px', color: categoryDoordashApplyMessage.startsWith('Updated') ? (isDarkMode ? '#81c784' : '#2e7d32') : (isDarkMode ? '#ef5350' : '#c62828') }}>
+                            {categoryDoordashApplyMessage}
+                          </div>
+                        )}
+                        <div style={compactFormActionsStyle}>
+                          <button
+                            type="button"
+                            onClick={handleCategoryDoordashApply}
+                            disabled={categoryDoordashApplyLoading}
+                            style={compactPrimaryButtonStyle('220, 38, 38', categoryDoordashApplyLoading)}
+                          >
+                            {categoryDoordashApplyLoading ? 'Applying...' : 'Apply to category'}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   <CompactFormActions
                     onCancel={() => {
                       setShowCreateCategory(false)
@@ -2722,6 +2852,9 @@ function Inventory() {
                       setCreateSuccess(false)
                       setCreateCategoryData({ parent_path: '', category_name: '' })
                       setEditingCategory(null)
+                      setCategoryDoordashAddToStore(false)
+                      setCategoryDoordashHoursEntries([])
+                      setCategoryDoordashApplyMessage(null)
                     }}
                     primaryLabel={createLoading ? (editingCategory ? 'Updating...' : 'Creating...') : (editingCategory ? 'Update' : 'Create')}
                     primaryDisabled={createLoading}
@@ -2981,8 +3114,11 @@ function Inventory() {
                   )}
 
                   {(editFormData.item_type || 'product') === 'product' && (
-                    <div style={{ ...compactFormSectionStyle(isDarkMode), marginTop: '12px' }}>
-                      <h4 style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? '#fff' : '#333', marginBottom: '10px' }}>DoorDash</h4>
+                    <div style={{ marginTop: '16px', padding: '16px', border: '1px solid #dc2626', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(220, 38, 38, 0.06)' : 'rgba(220, 38, 38, 0.04)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '10px' }}>
+                        <img src="/doordash-logo.svg" alt="DoorDash" style={{ height: '18px', width: 'auto' }} />
+                        DoorDash
+                      </div>
                       <FormField style={compactFormFieldStyle}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                           <input type="checkbox" name="sell_at_pos" checked={editFormData.sell_at_pos !== false} onChange={handleEditChange} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />

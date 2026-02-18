@@ -1558,6 +1558,12 @@ def get_establishment_settings(establishment_id: Optional[int] = None) -> Dict[s
             'allow_scheduled_pickup': bool(s.get('allow_scheduled_pickup', False)),
             'allow_scheduled_delivery': bool(s.get('allow_scheduled_delivery', False)),
             'sales_tax_by_state': s.get('sales_tax_by_state') if isinstance(s.get('sales_tax_by_state'), dict) else {},
+            # Square OAuth (one app per POS; tokens per establishment)
+            'square_oauth_access_token': s.get('square_oauth_access_token') or None,
+            'square_oauth_refresh_token': s.get('square_oauth_refresh_token') or None,
+            'square_oauth_expires_at': s.get('square_oauth_expires_at'),
+            'square_oauth_merchant_id': s.get('square_oauth_merchant_id') or None,
+            'square_oauth_merchant_name': s.get('square_oauth_merchant_name') or None,
         }
     except Exception:
         try:
@@ -1627,6 +1633,10 @@ def update_establishment_settings(establishment_id: Optional[int], settings: Dic
             current['allow_scheduled_delivery'] = bool(settings['allow_scheduled_delivery'])
         if 'sales_tax_by_state' in settings:
             current['sales_tax_by_state'] = dict(settings['sales_tax_by_state'])
+        for key in ('square_oauth_access_token', 'square_oauth_refresh_token', 'square_oauth_expires_at',
+                    'square_oauth_merchant_id', 'square_oauth_merchant_name'):
+            if key in settings:
+                current[key] = settings[key]
         import json
         cursor.execute(
             "UPDATE establishments SET settings = %s::jsonb WHERE establishment_id = %s",

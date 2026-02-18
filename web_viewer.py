@@ -1078,6 +1078,80 @@ def api_unarchive_category(category_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@app.route('/api/categories/<int:category_id>/doordash-bulk', methods=['POST'])
+def api_category_doordash_bulk(category_id):
+    """
+    Apply DoorDash settings to all products in this category.
+    Body: { "add_to_doordash": true, "item_special_hours": [ { "day_index": "MON", "start_time": "09:00:00", "end_time": "17:00:00" }, ... ] }
+    - add_to_doordash: set sell_at_pos = True for all inventory items in this category.
+    - item_special_hours: optional; applied to all items in category (time/day restriction).
+    """
+    try:
+        import json as json_mod
+        from database import get_connection
+        data = request.json if request.is_json else {}
+        add_to_doordash = data.get('add_to_doordash', False)
+        item_special_hours = data.get('item_special_hours')
+
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT category_id FROM categories WHERE category_id = %s", (category_id,))
+            if cur.fetchone() is None:
+                return jsonify({'success': False, 'message': 'Category not found'}), 404
+
+            cur.execute(
+                "SELECT product_id FROM product_metadata WHERE category_id = %s",
+                (category_id,)
+            )
+            product_ids = [row[0] for row in cur.fetchall()]
+            if not product_ids:
+                conn.close()
+                return jsonify({'success': True, 'message': 'No products in this category.', 'updated': 0}), 200
+
+            cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'sell_at_pos'")
+            has_sell_at_pos = cur.fetchone() is not None
+            cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'item_special_hours'")
+            has_item_special_hours = cur.fetchone() is not None
+
+            placeholders = ','.join(['%s'] * len(product_ids))
+            updates = []
+            params = []
+
+            if add_to_doordash and has_sell_at_pos:
+                updates.append("sell_at_pos = TRUE")
+            if item_special_hours is not None and has_item_special_hours:
+                normalized = []
+                if isinstance(item_special_hours, list):
+                    for e in item_special_hours:
+                        if isinstance(e, dict) and (e.get('start_time') or e.get('end_time')):
+                            normalized.append({
+                                'day_index': (e.get('day_index') or 'MON').upper()[:3],
+                                'start_time': (e.get('start_time') or '09:00:00').strip()[:12],
+                                'end_time': (e.get('end_time') or '17:00:00').strip()[:12]
+                            })
+                if normalized:
+                    updates.append("item_special_hours = %s::jsonb")
+                    params.append(json_mod.dumps(normalized))
+
+            if not updates:
+                conn.close()
+                return jsonify({'success': False, 'message': 'Send add_to_doordash and/or item_special_hours.'}), 400
+
+            params.extend(product_ids)
+            sql = f"UPDATE inventory SET {', '.join(updates)} WHERE product_id IN ({placeholders})"
+            cur.execute(sql, params)
+            updated = cur.rowcount
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+        return jsonify({'success': True, 'message': f'Updated {updated} item(s) in category.', 'updated': updated}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 def api_update_category_impl(category_id):
     """Update a category - supports updating the full category path"""
     try:
@@ -3770,9 +3844,15 @@ def api_save_integrations():
             config = {}
         if not isinstance(config, dict):
             config = {}
-        from database import upsert_integration
+        from database import upsert_integration, create_or_get_category_with_hierarchy
         result = upsert_integration(establishment_id, provider, enabled, config)
         if result.get('success'):
+            # When DoorDash is enabled, ensure inventory has a "DoorDash" category for items available on DoorDash
+            if provider == 'doordash' and enabled:
+                try:
+                    create_or_get_category_with_hierarchy('DoorDash')
+                except Exception:
+                    pass
             return jsonify(result), 200
         return jsonify(result), 400
     except Exception as e:
@@ -3781,15 +3861,161 @@ def api_save_integrations():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+def _square_redirect_uri():
+    """Redirect URI for Square OAuth. Must match Developer Console."""
+    uri = os.environ.get('SQUARE_REDIRECT_URI', '').strip()
+    if uri:
+        return uri
+    base = request.host_url.rstrip('/') if request else ''
+    return base + '/api/migrations/square/oauth/callback'
+
+
+@app.route('/api/migrations/square/status', methods=['GET'])
+def api_migrations_square_status():
+    """Return Square connection status for current establishment: connected, merchant_id, merchant_name, oauth_configured."""
+    try:
+        from database import get_establishment_settings
+        establishment_id = get_current_establishment() if get_current_establishment else None
+        settings = get_establishment_settings(establishment_id)
+        access = (settings.get('square_oauth_access_token') or '').strip()
+        refresh = (settings.get('square_oauth_refresh_token') or '').strip()
+        oauth_configured = bool(os.environ.get('SQUARE_CLIENT_ID') and os.environ.get('SQUARE_CLIENT_SECRET'))
+        return jsonify({
+            'connected': bool(access or refresh),
+            'merchant_id': settings.get('square_oauth_merchant_id'),
+            'merchant_name': settings.get('square_oauth_merchant_name'),
+            'oauth_configured': oauth_configured,
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/migrations/square/oauth/url', methods=['GET'])
+def api_migrations_square_oauth_url():
+    """Return Square OAuth authorization URL. Frontend redirects user here. Query: sandbox (optional)."""
+    try:
+        client_id = (os.environ.get('SQUARE_CLIENT_ID') or '').strip()
+        if not client_id:
+            return jsonify({'success': False, 'message': 'SQUARE_CLIENT_ID not configured'}), 500
+        sandbox = request.args.get('sandbox', 'false').lower() in ('1', 'true', 'yes')
+        base = 'https://connect.squareupsandbox.com' if sandbox else 'https://connect.squareup.com'
+        scope = 'MERCHANT_READ LOCATION_READ ITEMS_READ ORDERS_READ PAYMENTS_READ TEAM_READ'
+        redirect_uri = _square_redirect_uri()
+        establishment_id = get_current_establishment() if get_current_establishment else 1
+        import base64
+        import time
+        state_obj = {'eid': establishment_id, 'ts': time.time(), 'rnd': os.urandom(8).hex()}
+        state_b64 = base64.urlsafe_b64encode(json.dumps(state_obj).encode()).decode().rstrip('=')
+        from urllib.parse import quote
+        params = [
+            ('client_id', client_id),
+            ('scope', scope.replace(' ', '+')),
+            ('session', 'false'),
+            ('state', state_b64),
+            ('redirect_uri', redirect_uri),
+        ]
+        qs = '&'.join(f'{k}={quote(str(v))}' for k, v in params)
+        url = f'{base}/oauth2/authorize?{qs}'
+        return jsonify({'success': True, 'url': url}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/migrations/square/oauth/callback', methods=['GET'])
+def api_migrations_square_oauth_callback():
+    """Square OAuth callback: exchange code for tokens, store per establishment, redirect to Settings."""
+    try:
+        code = request.args.get('code')
+        state_b64 = request.args.get('state') or ''
+        error = request.args.get('error')
+        if error:
+            msg = request.args.get('error_description', error)
+            try:
+                from urllib.parse import quote
+                return redirect('/settings?tab=integration&square=error&msg=' + quote(msg[:100], safe=''))
+            except Exception:
+                return redirect('/settings?tab=integration&square=error')
+        if not code or not state_b64:
+            return redirect('/settings?tab=integration&square=error&msg=missing_code_or_state')
+        client_id = (os.environ.get('SQUARE_CLIENT_ID') or '').strip()
+        client_secret = (os.environ.get('SQUARE_CLIENT_SECRET') or '').strip()
+        if not client_id or not client_secret:
+            return redirect('/settings?tab=integration&square=error&msg=oauth_not_configured')
+        import base64
+        import time
+        try:
+            pad = 4 - len(state_b64) % 4
+            if pad != 4:
+                state_b64 += '=' * pad
+            state_obj = json.loads(base64.urlsafe_b64decode(state_b64).decode())
+        except Exception:
+            return redirect('/settings?tab=integration&square=error&msg=invalid_state')
+        ts = state_obj.get('ts') or 0
+        if abs(time.time() - ts) > 600:
+            return redirect('/settings?tab=integration&square=error&msg=state_expired')
+        establishment_id = state_obj.get('eid', 1)
+        redirect_uri = _square_redirect_uri()
+        sandbox = False
+        from square_migration import exchange_code_for_tokens, verify_connection
+        from database import update_establishment_settings
+        tokens = exchange_code_for_tokens(code, redirect_uri, client_id, client_secret, sandbox=sandbox)
+        access = (tokens.get('access_token') or '').strip()
+        refresh = (tokens.get('refresh_token') or '').strip()
+        if not access:
+            return redirect('/settings?tab=integration&square=error&msg=no_token')
+        success, msg = verify_connection(access, sandbox=sandbox)
+        merchant_name = None
+        if success and 'Connected to ' in msg:
+            merchant_name = msg.replace('Connected to ', '').split(' (merchant')[0].strip()
+        merchant_id = (tokens.get('merchant_id') or '').strip()
+        update_establishment_settings(establishment_id, {
+            'square_oauth_access_token': access,
+            'square_oauth_refresh_token': refresh,
+            'square_oauth_expires_at': tokens.get('expires_at'),
+            'square_oauth_merchant_id': merchant_id,
+            'square_oauth_merchant_name': merchant_name,
+        })
+        return redirect('/settings?tab=integration&square=connected')
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        from urllib.parse import quote
+        return redirect('/settings?tab=integration&square=error&msg=' + quote(str(e)[:80], safe=''))
+
+
+@app.route('/api/migrations/square/disconnect', methods=['POST'])
+def api_migrations_square_disconnect():
+    """Clear stored Square OAuth tokens for current establishment."""
+    try:
+        establishment_id = get_current_establishment() if get_current_establishment else 1
+        from database import update_establishment_settings
+        update_establishment_settings(establishment_id, {
+            'square_oauth_access_token': None,
+            'square_oauth_refresh_token': None,
+            'square_oauth_expires_at': None,
+            'square_oauth_merchant_id': None,
+            'square_oauth_merchant_name': None,
+        })
+        return jsonify({'success': True, 'message': 'Square disconnected'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/api/migrations/square/verify', methods=['POST'])
 def api_migrations_square_verify():
-    """Verify Square API access token. Body: { access_token, sandbox: bool }."""
+    """Verify Square API access token. Body: { access_token (optional if OAuth connected), sandbox: bool }."""
     try:
         data = request.get_json() or {}
         access_token = (data.get('access_token') or '').strip()
-        if not access_token:
-            return jsonify({'success': False, 'message': 'Access token is required'}), 400
         sandbox = bool(data.get('sandbox', False))
+        if not access_token:
+            establishment_id = get_current_establishment() if get_current_establishment else None
+            from square_migration import get_valid_square_access_token
+            access_token, err = get_valid_square_access_token(establishment_id, sandbox=sandbox)
+            if err:
+                return jsonify({'success': False, 'message': err}), 400
         from square_migration import verify_connection
         success, message = verify_connection(access_token, sandbox=sandbox)
         if success:
@@ -3801,13 +4027,17 @@ def api_migrations_square_verify():
 
 @app.route('/api/migrations/square/run', methods=['POST'])
 def api_migrations_square_run():
-    """Run Square migration. Body: { access_token, sandbox: bool, migrate: { inventory, employees, order_history, payments, transactions, statistics } }."""
+    """Run Square migration. Body: { access_token (optional if OAuth connected), sandbox: bool, migrate: { ... } }."""
     try:
         data = request.get_json() or {}
         access_token = (data.get('access_token') or '').strip()
-        if not access_token:
-            return jsonify({'success': False, 'message': 'Access token is required'}), 400
         sandbox = bool(data.get('sandbox', False))
+        if not access_token:
+            establishment_id = get_current_establishment() if get_current_establishment else None
+            from square_migration import get_valid_square_access_token
+            access_token, err = get_valid_square_access_token(establishment_id, sandbox=sandbox)
+            if err:
+                return jsonify({'success': False, 'message': err}), 400
         migrate = data.get('migrate')
         if not isinstance(migrate, dict):
             migrate = {}
@@ -3834,6 +4064,40 @@ def api_migrations_square_run():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/migrations/square/upload', methods=['POST'])
+def api_migrations_square_upload():
+    """Import Square export file (CSV or Excel). Form: items_file (required). Returns imported count and errors."""
+    try:
+        if 'items_file' not in request.files and 'file' not in request.files:
+            return jsonify({'success': False, 'message': 'No file uploaded. Use "items_file" or "file".'}), 400
+        f = request.files.get('items_file') or request.files.get('file')
+        if not f or f.filename == '':
+            return jsonify({'success': False, 'message': 'No file selected'}), 400
+        content = f.read()
+        filename = (f.filename or '').strip()
+        from square_import import parse_square_items_file, run_square_file_import
+        rows, parse_errors = parse_square_items_file(content, filename=filename)
+        if parse_errors:
+            return jsonify({'success': False, 'message': '; '.join(parse_errors), 'imported': 0, 'errors': parse_errors}), 400
+        if not rows:
+            return jsonify({'success': True, 'imported': 0, 'skipped': 0, 'message': 'No valid rows to import', 'errors': []}), 200
+        establishment_id = get_current_establishment() if get_current_establishment else None
+        result = run_square_file_import(rows, establishment_id_override=establishment_id)
+        return jsonify({
+            'success': result.get('success', True),
+            'imported': result.get('imported', 0),
+            'skipped': result.get('skipped', 0),
+            'errors': result.get('errors', [])[:30],
+            'message': f"Imported {result.get('imported', 0)} items." + (
+                f" {len(result.get('errors', []))} row(s) skipped." if result.get('errors') else ''
+            ),
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e), 'imported': 0}), 500
 
 
 @app.route('/api/orders/from-integration', methods=['POST'])
@@ -4136,7 +4400,7 @@ def api_webhooks_doordash_orders():
             config = {}
         price_multiplier = float(config.get('price_multiplier') or 1)
         from doordash_service import build_pos_payload_from_doordash_order, confirm_doordash_order
-        payload = build_pos_payload_from_doordash_order(order, establishment_id, price_multiplier)
+        payload = build_pos_payload_from_doordash_order(order, establishment_id, price_multiplier, config=config)
         if not payload:
             return jsonify({'ok': True}), 200
         items = payload.pop('items')
@@ -4275,7 +4539,7 @@ def api_webhooks_doordash_order_adjustment():
             config = {}
         price_multiplier = float(config.get('price_multiplier') or 1)
         from doordash_service import _flatten_order_items
-        _, _, doordash_lines = _flatten_order_items(order_payload, establishment_id, price_multiplier)
+        _, _, doordash_lines = _flatten_order_items(order_payload, establishment_id, price_multiplier, config=config)
         try:
             replace_doordash_order_lines(order_id, doordash_lines)
         except Exception:
@@ -4569,6 +4833,41 @@ def api_doordash_push_menu():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@app.route('/api/integrations/doordash/push-store-hours', methods=['POST'])
+def api_doordash_push_store_hours():
+    """
+    Push store hours to DoorDash for the current store (updates DoorDash menu open_hours).
+    Optional JSON body: { "store_hours": { "monday": { "open": "09:00", "close": "17:00", "closed": false }, ... } }.
+    If store_hours is provided, saves it to store_location_settings then pushes; otherwise uses saved store hours.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations, update_store_location_settings
+        from doordash_service import push_doordash_menu
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        store_hours = None
+        if request.is_json and request.json and isinstance(request.json.get('store_hours'), dict):
+            store_hours = request.json.get('store_hours')
+        if store_hours is not None:
+            update_store_location_settings(store_hours=store_hours)
+        success, message = push_doordash_menu(establishment_id, config)
+        if success:
+            return jsonify({'success': True, 'message': 'Store hours pushed to DoorDash.'}), 200
+        return jsonify({'success': False, 'message': message or 'Push failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/api/integrations/doordash/run-migrations', methods=['POST'])
 def api_doordash_run_migrations():
     """
@@ -4624,6 +4923,66 @@ def api_doordash_run_migrations():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@app.route('/api/integrations/doordash/add-all-items', methods=['POST'])
+def api_doordash_add_all_items():
+    """
+    Set sell_at_pos = true for all product-type inventory items (so they appear on DoorDash).
+    Requires session; uses current establishment context.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations, get_connection
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        from database import create_or_get_category_with_hierarchy, assign_category_to_product
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'sell_at_pos'")
+            if cur.fetchone() is None:
+                cur.close()
+                conn.close()
+                return jsonify({'success': False, 'message': 'sell_at_pos column not present'}), 400
+            cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'inventory' AND column_name = 'item_type'")
+            has_item_type = cur.fetchone() is not None
+            if has_item_type:
+                cur.execute(
+                    "UPDATE inventory SET sell_at_pos = TRUE WHERE (item_type = 'product' OR item_type IS NULL)"
+                )
+            else:
+                cur.execute("UPDATE inventory SET sell_at_pos = TRUE")
+            updated = cur.rowcount
+            # Ensure DoorDash category exists and assign all items now on DoorDash to that category
+            create_or_get_category_with_hierarchy('DoorDash')
+            if has_item_type:
+                cur.execute(
+                    "SELECT product_id FROM inventory WHERE (item_type = 'product' OR item_type IS NULL) AND (sell_at_pos IS NULL OR sell_at_pos = TRUE)"
+                )
+            else:
+                cur.execute("SELECT product_id FROM inventory")
+            product_ids = [row[0] for row in cur.fetchall()]
+            conn.commit()
+            for pid in product_ids:
+                try:
+                    assign_category_to_product(pid, category_path='DoorDash')
+                except Exception:
+                    pass
+        finally:
+            cur.close()
+            conn.close()
+        return jsonify({'success': True, 'message': f'Added {updated} item(s) to DoorDash.', 'updated': updated}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/api/integrations/doordash/store-menu', methods=['GET'])
 def api_doordash_store_menu():
     """
@@ -4649,6 +5008,90 @@ def api_doordash_store_menu():
         if success:
             return jsonify(data if data is not None else {}), 200
         return jsonify({'success': False, 'message': error or 'Get menu failed'}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/store-menu-flat', methods=['GET'])
+def api_doordash_store_menu_flat():
+    """
+    Get DoorDash store menu flattened for sync UI: list of { doordash_id, name, price_cents, category_name }.
+    Used so merchants can map DoorDash items to POS inventory.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        from database import get_integrations
+        from doordash_service import get_doordash_store_menu, flatten_doordash_store_menu_for_sync
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash' and i.get('enabled')), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not enabled'}), 400
+        config = (integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        onboarding_id = request.args.get('onboarding_id') or None
+        success, data, error = get_doordash_store_menu(establishment_id, config, onboarding_id=onboarding_id)
+        if not success:
+            return jsonify({'success': False, 'message': error or 'Get menu failed'}), 400
+        items = flatten_doordash_store_menu_for_sync(data if data is not None else {})
+        return jsonify({'success': True, 'items': items}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/doordash/menu-sync', methods=['POST'])
+def api_doordash_menu_sync():
+    """
+    Save DoorDash menu → POS product mapping. Body: { mappings: { "doordash_id": product_id, ... } }.
+    Merges into integration config as doordash_item_to_product_id for order ingestion.
+    """
+    try:
+        if get_current_establishment is None:
+            return jsonify({'success': False, 'message': 'Establishment not available'}), 400
+        establishment_id = get_current_establishment()
+        if not establishment_id:
+            return jsonify({'success': False, 'message': 'No establishment'}), 400
+        data = request.get_json(silent=True) or {}
+        mappings = data.get('mappings')
+        if not isinstance(mappings, dict):
+            return jsonify({'success': False, 'message': 'mappings object required'}), 400
+        from database import get_integrations, upsert_integration
+        integrations = get_integrations(establishment_id)
+        integration = next((i for i in integrations if i.get('provider') == 'doordash'), None)
+        if not integration:
+            return jsonify({'success': False, 'message': 'DoorDash integration not found'}), 400
+        config = dict(integration.get('config') or {}) if isinstance(integration.get('config'), dict) else {}
+        clean = {}
+        for k, v in mappings.items():
+            if k is None or (isinstance(k, str) and not k.strip()):
+                continue
+            key = str(k).strip()
+            try:
+                pid = int(v)
+                if pid > 0:
+                    clean[key] = pid
+            except (TypeError, ValueError):
+                continue
+        config['doordash_item_to_product_id'] = clean
+        from database import create_or_get_category_with_hierarchy, assign_category_to_product
+        result = upsert_integration(establishment_id, 'doordash', integration.get('enabled', False), config)
+        if result.get('success'):
+            # Ensure DoorDash category exists and assign each mapped product to it so they appear in inventory under DoorDash
+            try:
+                create_or_get_category_with_hierarchy('DoorDash')
+                for pid in set(clean.values()):
+                    if pid and pid > 0:
+                        assign_category_to_product(pid, category_path='DoorDash')
+            except Exception:
+                pass
+            return jsonify({'success': True, 'message': f'Mapped {len(clean)} item(s).'}), 200
+        return jsonify(result), 400
     except Exception as e:
         import traceback
         traceback.print_exc()

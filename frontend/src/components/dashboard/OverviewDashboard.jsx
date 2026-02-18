@@ -358,16 +358,30 @@ export default function OverviewDashboard() {
   }, [visibleMainWidgets])
 
   const handleRemoveMainWidget = (id) => {
-    setVisibleMainWidgets((prev) => prev.filter((x) => x !== id))
+    const next = visibleMainWidgets.filter((x) => x !== id)
+    setVisibleMainWidgets(next)
+    try {
+      localStorage.setItem('overview_visible_main_widgets', JSON.stringify(next))
+    } catch (_) {}
   }
 
   const handleAddWidget = (id) => {
-    if (!addedWidgetIds.includes(id)) setAddedWidgetIds((prev) => [...prev, id])
+    if (!addedWidgetIds.includes(id)) {
+      const next = [...addedWidgetIds, id]
+      setAddedWidgetIds(next)
+      try {
+        localStorage.setItem('overview_added_widgets', JSON.stringify(next))
+      } catch (_) {}
+    }
     setAddModalOpen(false)
   }
 
   const handleRemoveAddedWidget = (id) => {
-    setAddedWidgetIds((prev) => prev.filter((x) => x !== id))
+    const next = addedWidgetIds.filter((x) => x !== id)
+    setAddedWidgetIds(next)
+    try {
+      localStorage.setItem('overview_added_widgets', JSON.stringify(next))
+    } catch (_) {}
   }
 
   useEffect(() => {
@@ -425,8 +439,6 @@ export default function OverviewDashboard() {
   return (
     <div style={{ background: bg, minHeight: '100vh', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
-        <h1 style={{ fontSize: 26, fontWeight: 700, color: textColor, marginBottom: 20 }}>Your overview</h1>
-
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Dropdown
@@ -721,10 +733,23 @@ export default function OverviewDashboard() {
           </div>
         )}
 
-        {/* Added statistics widgets */}
-        {addedWidgetIds.length > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: textColor, marginBottom: 16 }}>Added statistics</h2>
+        {/* Added statistics section — always visible; added stats go here */}
+        <div style={{ marginTop: 24 }}>
+          {addedWidgetIds.length === 0 ? (
+            <div
+              style={{
+                background: cardBg,
+                border: `1px dashed ${borderColor}`,
+                borderRadius: 12,
+                padding: 32,
+                textAlign: 'center',
+                color: mutedColor,
+                fontSize: 14
+              }}
+            >
+              No added statistics. Click <strong>Add</strong> above to choose statistics to show here.
+            </div>
+          ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
               {addedWidgetIds.map((id) => {
                 const opt = ADDABLE_STAT_OPTIONS.find((o) => o.id === id)
@@ -741,23 +766,31 @@ export default function OverviewDashboard() {
                       position: 'relative'
                     }}
                   >
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveAddedWidget(id)}
-                      style={{
-                        position: 'absolute',
-                        top: 12,
-                        right: 12,
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: 4,
-                        color: mutedColor
-                      }}
-                      aria-label="Remove"
-                    >
-                      <X size={16} />
-                    </button>
+                    {editMode && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAddedWidget(id)}
+                        style={{
+                          position: 'absolute',
+                          top: 12,
+                          right: 12,
+                          zIndex: 2,
+                          background: '#ef4444',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: 28,
+                          height: 28,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                        aria-label="Remove"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                       {Icon && <Icon size={18} color={chartColor} />}
                       <span style={{ fontSize: 14, fontWeight: 600, color: textColor }}>{opt.label}</span>
@@ -826,8 +859,8 @@ export default function OverviewDashboard() {
                 )
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Add statistics" size="lg">
