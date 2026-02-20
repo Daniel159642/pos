@@ -32,7 +32,7 @@ function Modal({ isOpen, onClose, title, children, size = 'md', showCloseButton 
       zIndex: 10000,
       overflowY: 'auto',
       display: 'flex',
-      alignItems: 'flex-start',
+      alignItems: 'center',
       justifyContent: 'center',
       padding: '20px 16px'
     }}>

@@ -17,7 +17,7 @@ import {
   compactPrimaryButtonStyle,
   CompactFormActions
 } from '../components/FormStyles'
-import { ScanBarcode, Plus, ChevronDown, Upload, Image as ImageIcon, Share2, Download, Printer, X } from 'lucide-react'
+import { ScanBarcode, Plus, ChevronDown, Upload, Image as ImageIcon, Share2, Download, Printer, X, LayoutList, LayoutDashboard } from 'lucide-react'
 
 function Inventory() {
   const { themeColor, themeMode } = useTheme()
@@ -125,13 +125,13 @@ function Inventory() {
   const [createLoading, setCreateLoading] = useState(false)
   const [createError, setCreateError] = useState(null)
   const [createSuccess, setCreateSuccess] = useState(false)
+  const [inventoryViewMode, setInventoryViewMode] = useState('table') // 'table' | 'dashboard'
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
   const [barcodePreview, setBarcodePreview] = useState(null)
   const [barcodeLoading, setBarcodeLoading] = useState(false)
   const [barcodeError, setBarcodeError] = useState(null)
   const barcodeObjectUrlRef = useRef(null)
-  const scannerInputRef = useRef(null)
-  const [scannerInputValue, setScannerInputValue] = useState('')
+  const searchInputRef = useRef(null)
   const isArchivedView = inventoryFilter === 'archived'
 
   // Determine if dark mode is active
@@ -180,6 +180,23 @@ function Inventory() {
   const loading = inventoryLoading
   const error = inventoryError?.message ?? null
 
+  const { data: integrationsData } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: async () => {
+      const res = await cachedFetch('/api/integrations')
+      if (!res.ok) return null
+      return res.json()
+    }
+  })
+  const shopifyEnabled = integrationsData?.shopify?.enabled === true
+  const doordashEnabled = integrationsData?.doordash?.enabled === true
+
+  useEffect(() => {
+    if (!doordashEnabled && inventoryFilter === 'doordash') {
+      setInventoryFilter('all')
+    }
+  }, [doordashEnabled, inventoryFilter])
+
   useEffect(() => {
     const archived = inventoryFilter === 'archived'
     if (archived) {
@@ -222,15 +239,14 @@ function Inventory() {
     }
   }, [showCreateDropdown])
 
-  const focusScannerInput = () => {
-    setScannerInputValue('')
-    setTimeout(() => scannerInputRef.current?.focus(), 0)
+  const focusSearchInput = () => {
+    setTimeout(() => searchInputRef.current?.focus(), 0)
   }
 
   const handleBarcodeScan = async (barcode) => {
     const v = (barcode || '').toString().trim()
     if (v) setSearchQuery(v)
-    focusScannerInput()
+    focusSearchInput()
   }
 
   const invalidateInventory = () => queryClient.invalidateQueries({ queryKey: ['inventory'] })
@@ -1603,6 +1619,238 @@ function Inventory() {
     setSelectedVendor(null)
   }
 
+  const LOW_STOCK_THRESHOLD = 10
+
+  // Dashboard data: respect Category/Vendor dropdown filters (same as table view)
+  const dashboardInventory = selectedCategory
+    ? getItemsByCategory(selectedCategory)
+    : selectedVendor
+    ? getItemsByVendor(selectedVendor)
+    : filteredInventory
+
+  // Render inventory dashboard (user-friendly overview)
+  const renderInventoryDashboard = () => {
+    const qty = (item) => {
+      const n = item.current_quantity
+      if (n == null || n === '') return 0
+      return typeof n === 'number' ? n : parseFloat(String(n)) || 0
+    }
+    const runningLow = dashboardInventory.filter(item => {
+      const n = qty(item)
+      return n > 0 && n <= LOW_STOCK_THRESHOLD
+    }).sort((a, b) => qty(a) - qty(b))
+    const outOfStock = dashboardInventory.filter(item => qty(item) <= 0)
+    const lowestStock = [...dashboardInventory].filter(item => qty(item) > 0).sort((a, b) => qty(a) - qty(b)).slice(0, 15)
+    const cardStyle = {
+      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #e5e7eb',
+      borderRadius: '12px',
+      padding: '16px',
+      boxShadow: isDarkMode ? '0 2px 8px rgba(0,0,0,0.2)' : '0 2px 8px rgba(0,0,0,0.06)'
+    }
+    const cardTitleStyle = {
+      fontSize: '13px',
+      fontWeight: 700,
+      color: isDarkMode ? 'var(--text-secondary, #b0b0b0)' : '#6b7280',
+      textTransform: 'uppercase',
+      letterSpacing: '0.5px',
+      marginBottom: '12px',
+      paddingBottom: '8px',
+      borderBottom: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #eee'
+    }
+    const listItemStyle = {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '8px 0',
+      fontSize: '14px',
+      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+      borderBottom: isDarkMode ? '1px solid rgba(255,255,255,0.06)' : '1px solid #f3f4f6'
+    }
+    return (
+      <div style={{ padding: '8px 0', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+          {/* Running low */}
+          <div style={cardStyle}>
+            <div style={cardTitleStyle}>Running low (≤{LOW_STOCK_THRESHOLD})</div>
+            {runningLow.length === 0 ? (
+              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>No items running low</div>
+            ) : (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {runningLow.slice(0, 12).map((item) => (
+                  <li key={item.product_id} style={{ ...listItemStyle, cursor: 'pointer' }} onClick={() => handleEditProduct(item)}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.product_name}>{item.product_name || item.sku || '—'}</span>
+                    <span style={{ flexShrink: 0, marginLeft: '8px', fontWeight: 600, color: themeColor }}>{qty(item)}</span>
+                  </li>
+                ))}
+                {runningLow.length > 12 && (
+                  <li style={{ ...listItemStyle, borderBottom: 'none', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af', fontSize: '13px' }}>
+                    +{runningLow.length - 12} more
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+          {/* Out of stock */}
+          <div style={cardStyle}>
+            <div style={cardTitleStyle}>Out of stock</div>
+            {outOfStock.length === 0 ? (
+              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>No items out of stock</div>
+            ) : (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {outOfStock.slice(0, 12).map((item) => (
+                  <li key={item.product_id} style={{ ...listItemStyle, cursor: 'pointer' }} onClick={() => handleEditProduct(item)}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.product_name}>{item.product_name || item.sku || '—'}</span>
+                    <span style={{ flexShrink: 0, marginLeft: '8px', fontWeight: 600, color: isDarkMode ? '#ef5350' : '#dc2626' }}>0</span>
+                  </li>
+                ))}
+                {outOfStock.length > 12 && (
+                  <li style={{ ...listItemStyle, borderBottom: 'none', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af', fontSize: '13px' }}>
+                    +{outOfStock.length - 12} more
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+          {/* Lowest stock (needs attention) */}
+          <div style={cardStyle}>
+            <div style={cardTitleStyle}>Lowest stock</div>
+            {lowestStock.length === 0 ? (
+              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>No items with stock</div>
+            ) : (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {lowestStock.map((item) => (
+                  <li key={item.product_id} style={{ ...listItemStyle, cursor: 'pointer' }} onClick={() => handleEditProduct(item)}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.product_name}>{item.product_name || item.sku || '—'}</span>
+                    <span style={{ flexShrink: 0, marginLeft: '8px', fontWeight: 600 }}>{qty(item)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {/* Expected delivery refills – placeholder */}
+          <div style={cardStyle}>
+            <div style={cardTitleStyle}>Expected delivery / refills</div>
+            <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>
+              Add expected delivery dates in product notes or use a separate refills workflow to see them here.
+            </div>
+          </div>
+          {/* Items sitting a while – placeholder for last received/updated */}
+          <div style={cardStyle}>
+            <div style={cardTitleStyle}>Items sitting a while</div>
+            <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>
+              Track last received or last updated dates on products to see items that have been in stock the longest. Add date fields in product metadata to enable this.
+            </div>
+          </div>
+          {/* Expiring / Expiring soon – use expiration_date if present on items */}
+          {(() => {
+            const parseDate = (d) => {
+              if (!d || typeof d !== 'string') return null
+              const t = new Date(d).getTime()
+              return isNaN(t) ? null : t
+            }
+            const now = Date.now()
+            const thirtyDays = 30 * 24 * 60 * 60 * 1000
+            const expiring = dashboardInventory.filter(item => {
+              const t = parseDate(item.expiration_date)
+              return t != null && t <= now + thirtyDays
+            }).sort((a, b) => (parseDate(a.expiration_date) || 0) - (parseDate(b.expiration_date) || 0))
+            const expired = expiring.filter(item => (parseDate(item.expiration_date) || 0) <= now)
+            const expiringSoon = expiring.filter(item => (parseDate(item.expiration_date) || 0) > now)
+            return (
+              <div style={cardStyle}>
+                <div style={cardTitleStyle}>Expiring / Expired</div>
+                {expiring.length === 0 ? (
+                  <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>
+                    No items with expiration dates in the next 30 days. Add expiration dates to products to see them here.
+                  </div>
+                ) : (
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                    {[...expired.slice(0, 5), ...expiringSoon.slice(0, 7)].map((item) => {
+                      const t = parseDate(item.expiration_date)
+                      const isExpired = t != null && t <= now
+                      return (
+                        <li key={item.product_id} style={{ ...listItemStyle, cursor: 'pointer' }} onClick={() => handleEditProduct(item)}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.product_name}>{item.product_name || item.sku || '—'}</span>
+                          <span style={{ flexShrink: 0, marginLeft: '8px', fontWeight: 600, color: isExpired ? (isDarkMode ? '#ef5350' : '#dc2626') : (isDarkMode ? '#f59e0b' : '#d97706') }}>
+                            {item.expiration_date || '—'}
+                          </span>
+                        </li>
+                      )
+                    })}
+                    {expiring.length > 12 && (
+                      <li style={{ ...listItemStyle, borderBottom: 'none', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af', fontSize: '13px' }}>
+                        +{expiring.length - 12} more
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )
+          })()}
+          {/* Shopify integration */}
+          <div style={cardStyle}>
+            <div style={cardTitleStyle}>Shopify</div>
+            {shopifyEnabled ? (
+              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                <p style={{ margin: '0 0 8px 0' }}>Shopify is connected. Orders and products can sync with your store.</p>
+                <p style={{ margin: 0, color: isDarkMode ? 'var(--text-tertiary, #999)' : '#6b7280', fontSize: '13px' }}>
+                  Manage connection and sync in Settings → Integrations.
+                </p>
+              </div>
+            ) : (
+              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>
+                Connect Shopify in Settings → Integrations to sync products and orders with your store.
+              </div>
+            )}
+          </div>
+        </div>
+        {/* Categories overview */}
+        <div style={cardStyle}>
+          <div style={cardTitleStyle}>Categories</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+            {categories.length === 0 ? (
+              <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#9ca3af' }}>No categories</span>
+            ) : (
+              categories.map((cat) => {
+                const count = getItemsByCategory(cat).length
+                const label = cat.includes(' > ') ? cat.split(' > ').pop().trim() : cat
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => { setInventoryViewMode('table'); setFilterView('category'); setSelectedCategory(cat); setSelectedVendor(null) }}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#e5e7eb'}`,
+                      backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#f9fafb',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#374151',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.15)`
+                      e.currentTarget.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = isDarkMode ? 'rgba(255,255,255,0.05)' : '#f9fafb'
+                      e.currentTarget.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#e5e7eb'
+                    }}
+                  >
+                    {label} <span style={{ opacity: 0.8, marginLeft: '4px' }}>({count})</span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Render category grid
   const renderCategoryGrid = () => {
     return (
@@ -1959,6 +2207,7 @@ function Inventory() {
         }}>
           <div style={{ marginBottom: '0px', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '0', flexShrink: 0 }}>
             <input
+              ref={searchInputRef}
               type="text"
               placeholder="Search by name, SKU, barcode..."
               value={searchQuery}
@@ -1974,6 +2223,7 @@ function Inventory() {
                   }
                 }
               }}
+              title="Search or scan barcode (hardware scanner types here)"
               style={{
                 flex: 1,
                 padding: '8px 0',
@@ -1986,34 +2236,6 @@ function Inventory() {
                 boxSizing: 'border-box',
                 fontFamily: '"Product Sans", sans-serif',
                 color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-              }}
-            />
-            <input
-              ref={scannerInputRef}
-              type="text"
-              value={scannerInputValue}
-              onChange={(e) => setScannerInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const v = scannerInputValue.trim()
-                  if (v) {
-                    e.preventDefault()
-                    handleBarcodeScan(v)
-                  }
-                }
-              }}
-              placeholder="Barcode"
-              title="Scan with hardware scanner or type and press Enter"
-              style={{
-                width: 90,
-                padding: '6px 8px',
-                border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                borderRadius: '8px',
-                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                outline: 'none',
-                fontSize: '13px',
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                boxSizing: 'border-box'
               }}
             />
             <button
@@ -2356,7 +2578,7 @@ function Inventory() {
                     </FormField>
                   )}
 
-                  {createProductData.item_type === 'product' && (
+                  {createProductData.item_type === 'product' && doordashEnabled && (
                     <div style={{ marginTop: '16px', padding: '16px', border: '1px solid #dc2626', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(220, 38, 38, 0.06)' : 'rgba(220, 38, 38, 0.04)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '10px' }}>
                         <img src="/doordash-logo.svg" alt="DoorDash" style={{ height: '18px', width: 'auto' }} />
@@ -2763,7 +2985,7 @@ function Inventory() {
                     )}
                   </FormField>
 
-                  {editingCategory && (
+                  {editingCategory && doordashEnabled && (
                     <>
                       <div style={{ marginTop: '16px', padding: '16px', border: '1px solid #dc2626', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(220, 38, 38, 0.06)' : 'rgba(220, 38, 38, 0.04)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '10px' }}>
@@ -3113,7 +3335,7 @@ function Inventory() {
                     </FormField>
                   )}
 
-                  {(editFormData.item_type || 'product') === 'product' && (
+                  {(editFormData.item_type || 'product') === 'product' && doordashEnabled && (
                     <div style={{ marginTop: '16px', padding: '16px', border: '1px solid #dc2626', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(220, 38, 38, 0.06)' : 'rgba(220, 38, 38, 0.04)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '10px' }}>
                         <img src="/doordash-logo.svg" alt="DoorDash" style={{ height: '18px', width: 'auto' }} />
@@ -3405,7 +3627,7 @@ function Inventory() {
         }}>
           {/* Item type filter: All | Products | Ingredients | Archived */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', marginTop: '3px' }}>
-            {['all', 'product', 'ingredient', 'doordash', 'archived'].map((f) => (
+            {['all', 'product', 'ingredient', ...(doordashEnabled ? ['doordash'] : []), 'archived'].map((f) => (
               <button
                 key={f}
                 type="button"
@@ -3426,14 +3648,51 @@ function Inventory() {
               </button>
             ))}
           </div>
-          {/* Filter Buttons */}
+          {/* Filter row: Dashboard = Category/Vendor dropdowns; Table = Category/Vendor/All buttons */}
           <div style={{ 
             display: 'flex', 
             alignItems: 'center',
+            justifyContent: 'space-between',
             gap: '8px', 
             marginBottom: '8px',
             marginTop: '3px'
           }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {inventoryViewMode === 'dashboard' ? (
+              <>
+                <CustomDropdown
+                  name="dashboardCategory"
+                  value={selectedCategory || ''}
+                  onChange={(e) => { setSelectedCategory(e.target.value || null); setSelectedVendor(null) }}
+                  options={[
+                    { value: '', label: 'All categories' },
+                    ...categories.map(c => ({ value: c, label: c.includes(' > ') ? c.split(' > ').pop().trim() : c }))
+                  ]}
+                  placeholder="Category"
+                  isDarkMode={isDarkMode}
+                  themeColorRgb={themeColorRgb}
+                  style={{ minWidth: '160px' }}
+                  compactTrigger
+                  triggerHeight={28}
+                />
+                <CustomDropdown
+                  name="dashboardVendor"
+                  value={selectedVendor || ''}
+                  onChange={(e) => { setSelectedVendor(e.target.value || null); setSelectedCategory(null) }}
+                  options={[
+                    { value: '', label: 'All vendors' },
+                    ...vendors.map(v => ({ value: v, label: v }))
+                  ]}
+                  placeholder="Vendor"
+                  isDarkMode={isDarkMode}
+                  themeColorRgb={themeColorRgb}
+                  style={{ minWidth: '160px' }}
+                  compactTrigger
+                  triggerHeight={28}
+                />
+              </>
+            ) : (
+              <>
             <button
               onClick={() => handleFilterChange('category')}
               style={{
@@ -3509,6 +3768,8 @@ function Inventory() {
             >
               All
             </button>
+              </>
+            )}
             <div style={{ position: 'relative' }} data-create-dropdown>
               <button
                 onClick={() => setShowCreateDropdown(!showCreateDropdown)}
@@ -3673,6 +3934,52 @@ function Inventory() {
                 </div>
               )}
             </div>
+            </div>
+            {/* View toggle: Table vs Dashboard – right side */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto' }}>
+              <button
+                type="button"
+                onClick={() => setInventoryViewMode('table')}
+                title="Table view"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '36px',
+                  height: '36px',
+                  padding: 0,
+                  border: inventoryViewMode === 'table' ? `2px solid rgba(${themeColorRgb}, 0.7)` : (isDarkMode ? '1px solid #444' : '1px solid #ccc'),
+                  borderRadius: '8px',
+                  backgroundColor: inventoryViewMode === 'table' ? `rgba(${themeColorRgb}, 0.2)` : (isDarkMode ? 'rgba(255,255,255,0.05)' : '#f5f5f5'),
+                  color: inventoryViewMode === 'table' ? themeColor : (isDarkMode ? '#999' : '#666'),
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <LayoutList size={20} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setInventoryViewMode('dashboard')}
+                title="Dashboard view"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '36px',
+                  height: '36px',
+                  padding: 0,
+                  border: inventoryViewMode === 'dashboard' ? `2px solid rgba(${themeColorRgb}, 0.7)` : (isDarkMode ? '1px solid #444' : '1px solid #ccc'),
+                  borderRadius: '8px',
+                  backgroundColor: inventoryViewMode === 'dashboard' ? `rgba(${themeColorRgb}, 0.2)` : (isDarkMode ? 'rgba(255,255,255,0.05)' : '#f5f5f5'),
+                  color: inventoryViewMode === 'dashboard' ? themeColor : (isDarkMode ? '#999' : '#666'),
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <LayoutDashboard size={20} />
+              </button>
+            </div>
           </div>
 
           {/* Content Area – shell always visible; loading/error only here */}
@@ -3699,6 +4006,8 @@ function Inventory() {
                   />
                 ))}
               </div>
+            ) : inventoryViewMode === 'dashboard' ? (
+              renderInventoryDashboard()
             ) : (
               <>
                 {filterView === 'category' && renderCategoryGrid()}
@@ -3714,7 +4023,7 @@ function Inventory() {
       {showBarcodeScanner && (
         <BarcodeScanner
           onScan={handleBarcodeScan}
-          onClose={() => setShowBarcodeScanner(false)}
+          onClose={() => { setShowBarcodeScanner(false); focusSearchInput() }}
           themeColor={themeColor}
         />
       )}

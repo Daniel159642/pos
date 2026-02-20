@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
 import { usePageScroll } from '../contexts/PageScrollContext'
+import { useNotifications } from '../contexts/NotificationContext'
 import BarcodeScanner from '../components/BarcodeScanner'
-import { Truck, List, Clock, CheckCircle, Plus, FileText, ChevronDown, ScanBarcode, PackageOpen, X, Save, Minus, PanelLeft, AlertTriangle, Check, Camera, Package } from 'lucide-react'
+import { Truck, List, Clock, CheckCircle, Plus, FileText, ChevronDown, ScanBarcode, PackageOpen, X, Save, Minus, PanelLeft, AlertTriangle, Check, Camera, Package, Activity } from 'lucide-react'
 import { FormTitle, FormLabel, FormField, inputBaseStyle, getInputFocusHandlers, formLabelStyle } from '../components/FormStyles'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
@@ -14,7 +15,9 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 
 function ShipmentVerificationDashboard() {
   const { themeMode, themeColor } = useTheme()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const [shipments, setShipments] = useState([])
   const [loading, setLoading] = useState(true)
   const [editingDraftId, setEditingDraftId] = useState(() => {
@@ -31,6 +34,8 @@ function ShipmentVerificationDashboard() {
   const shipmentsHeaderRef = useRef(null)
   const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 })
   const [isInitialMount, setIsInitialMount] = useState(true)
+  const [recentIssues, setRecentIssues] = useState([])
+  const [emailModalIssue, setEmailModalIssue] = useState(null)
   
   useEffect(() => {
     const timer = setTimeout(() => setIsInitialMount(false), 0)
@@ -66,6 +71,14 @@ function ShipmentVerificationDashboard() {
     return () => observer.disconnect()
   }, [themeMode])
 
+  // When opened from notification (state.openShipmentId), go to that shipment detail on All tab
+  useEffect(() => {
+    const openId = location.state?.openShipmentId
+    if (openId && filter === 'all') {
+      navigate(`/shipment-verification/${openId}?filter=all`, { replace: true, state: {} })
+    }
+  }, [location.state?.openShipmentId, filter, navigate])
+
   // Sync filter and draft_id with URL params
   useEffect(() => {
     const urlFilter = searchParams.get('filter') || 'all'
@@ -91,6 +104,22 @@ function ShipmentVerificationDashboard() {
     }
   }, [filter])
 
+  const loadRecentIssues = async () => {
+    try {
+      const res = await fetch('/api/shipment-issues?limit=20')
+      const data = await res.json()
+      if (data.success && data.data) setRecentIssues(data.data)
+    } catch (e) {
+      console.error('Error loading shipment issues:', e)
+    }
+  }
+
+  const showActivityHeader = ['all', 'in_progress', 'approved'].includes(filter)
+
+  useEffect(() => {
+    if (showActivityHeader) loadRecentIssues()
+  }, [filter, showActivityHeader])
+
   const loadShipments = async () => {
     try {
       setLoading(true)
@@ -105,6 +134,7 @@ function ShipmentVerificationDashboard() {
       if (data.data) {
         setShipments(data.data)
       }
+      if (filter === 'all') loadRecentIssues()
     } catch (error) {
       console.error('Error loading shipments:', error)
     } finally {
@@ -385,6 +415,90 @@ function ShipmentVerificationDashboard() {
           />
         ) : (
           <>
+            {showActivityHeader && (
+              <div style={{
+                marginBottom: '24px',
+                padding: '20px 24px',
+                borderRadius: '12px',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : '#f1f5f9',
+                border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#cbd5e1'}`,
+                minHeight: '100px',
+                visibility: 'visible',
+                opacity: 1
+              }}>
+                <div style={{ display: 'flex', gap: '32px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 280px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <Activity size={20} style={{ color: `rgba(${themeColorRgb}, 0.9)` }} />
+                      <span style={{ fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#1e293b' }}>Activity</span>
+                    </div>
+                    <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#64748b' }}>
+                      {loading ? 'Loading…' : `${shipments.length} shipment${shipments.length !== 1 ? 's' : ''} in list`}
+                      {shipments.length > 0 && (
+                        <span style={{ marginLeft: '8px' }}>
+                          {' - '}{shipments.filter(s => s.status === 'in_progress' || s.status === 'pending_review').length} in progress
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ flex: '1 1 280px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <AlertTriangle size={20} style={{ color: 'rgba(244, 67, 54, 0.9)' }} />
+                      <span style={{ fontSize: '16px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary, #fff)' : '#1e293b' }}>Issues Reported</span>
+                    </div>
+                    <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#64748b', marginBottom: '8px' }}>
+                      {recentIssues.length === 0 ? 'No open issues' : `${recentIssues.length} open issue${recentIssues.length !== 1 ? 's' : ''}`}
+                    </div>
+                    {recentIssues.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                        {recentIssues.slice(0, 5).map((issue) => (
+                          <div
+                            key={issue.issue_id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setEmailModalIssue(issue)}
+                            onKeyDown={(e) => e.key === 'Enter' && setEmailModalIssue(issue)}
+                            style={{
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              backgroundColor: isDarkMode ? 'rgba(244, 67, 54, 0.1)' : 'rgba(244, 67, 54, 0.06)',
+                              border: `1px solid ${isDarkMode ? 'rgba(244, 67, 54, 0.3)' : 'rgba(244, 67, 54, 0.2)'}`,
+                              cursor: 'pointer',
+                              fontSize: '13px',
+                              color: isDarkMode ? 'var(--text-primary, #fff)' : '#334155'
+                            }}
+                          >
+                            <span style={{ fontWeight: 600 }}>{issue.vendor_name || 'Vendor'}</span>
+                            {issue.purchase_order_number && <span style={{ marginLeft: '6px', opacity: 0.9 }}>PO: {issue.purchase_order_number}</span>}
+                            {(issue.purchase_order_number || issue.issue_type) && ' - '}
+                            {issue.issue_type && <span>{String(issue.issue_type).replace(/_/g, ' ')}</span>}
+                            {issue.description && <span style={{ display: 'block', marginTop: '4px', opacity: 0.85 }}>{issue.description.slice(0, 60)}{issue.description.length > 60 ? '…' : ''}</span>}
+                            {issue.reported_at && (
+                              <span style={{ fontSize: '11px', opacity: 0.7, marginTop: '4px', display: 'block' }}>
+                                {new Date(issue.reported_at).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                        {recentIssues.length > 5 && (
+                          <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#64748b' }}>
+                            +{recentIssues.length - 5} more — open notification panel for all
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {emailModalIssue && (
+              <EmailVendorIssueModal
+                issue={emailModalIssue}
+                isDarkMode={isDarkMode}
+                themeColorRgb={themeColorRgb}
+                onClose={() => setEmailModalIssue(null)}
+              />
+            )}
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px' }}>
                 <div style={{ fontSize: '18px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666' }}>Loading shipments...</div>
@@ -420,6 +534,76 @@ function ShipmentVerificationDashboard() {
             )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+function EmailVendorIssueModal({ issue, isDarkMode, themeColorRgb, onClose }) {
+  const [to, setTo] = useState(issue?.vendor_email || '')
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
+  const [imageFile, setImageFile] = useState(null)
+  const [drafting, setDrafting] = useState(false)
+  useEffect(() => {
+    if (issue) {
+      setTo(issue.vendor_email || '')
+    }
+  }, [issue])
+  if (!issue) return null
+  const handleDraftWithMistral = async () => {
+    setDrafting(true)
+    try {
+      const res = await fetch('/api/shipment-issues/draft-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          issue_id: issue.issue_id,
+          has_image: !!imageFile
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        if (data.subject) setSubject(data.subject)
+        if (data.body) setBody(data.body)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setDrafting(false)
+    }
+  }
+  const textColor = isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+  const borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#e0e0e0'
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
+      <div style={{ background: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff', borderRadius: '12px', padding: '24px', maxWidth: '560px', width: '92vw', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 16px 0', color: textColor }}>Email vendor about issue</h3>
+        <p style={{ margin: '0 0 16px 0', fontSize: '14px', color: isDarkMode ? 'var(--text-secondary, #ccc)' : '#666' }}>
+          {issue.vendor_name || 'Vendor'} · PO: {issue.purchase_order_number || 'N/A'} · {String(issue.issue_type || '').replace(/_/g, ' ')}
+        </p>
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: textColor, marginBottom: '4px' }}>To</label>
+          <input type="email" value={to} onChange={e => setTo(e.target.value)} placeholder="vendor@example.com" style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: `1px solid ${borderColor}`, background: isDarkMode ? 'var(--bg-secondary)' : '#fff', color: textColor }} />
+        </div>
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: textColor, marginBottom: '4px' }}>Subject</label>
+          <input type="text" value={subject} onChange={e => setSubject(e.target.value)} placeholder="Subject" style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: `1px solid ${borderColor}`, background: isDarkMode ? 'var(--bg-secondary)' : '#fff', color: textColor }} />
+        </div>
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: textColor, marginBottom: '4px' }}>Message</label>
+          <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Email body..." rows={6} style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: `1px solid ${borderColor}`, background: isDarkMode ? 'var(--bg-secondary)' : '#fff', color: textColor, resize: 'vertical' }} />
+        </div>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: textColor, marginBottom: '4px' }}>Attach image (optional)</label>
+          <input type="file" accept="image/*" onChange={e => setImageFile(e.target.files?.[0] || null)} style={{ fontSize: '13px' }} />
+        </div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button type="button" onClick={handleDraftWithMistral} disabled={drafting} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: `rgba(${themeColorRgb}, 0.8)`, color: '#fff', cursor: drafting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
+            {drafting ? 'Drafting…' : 'Draft with Mistral'}
+          </button>
+          <button type="button" onClick={onClose} style={{ padding: '8px 16px', borderRadius: '6px', border: `1px solid ${borderColor}`, background: 'transparent', color: textColor, cursor: 'pointer' }}>Close</button>
+        </div>
       </div>
     </div>
   )
@@ -554,7 +738,8 @@ function ShipmentCard({ shipment, getStatusColor, getProgressColor, isDarkMode, 
           fontWeight: 500,
           marginBottom: '12px'
         }}>
-          ⚠️ {shipment.issue_count} {shipment.issue_count === 1 ? 'issue' : 'issues'}
+          <AlertTriangle size={14} style={{ flexShrink: 0, color: '#c62828' }} />
+          {shipment.issue_count} {shipment.issue_count === 1 ? 'issue' : 'issues'}
         </div>
       )}
 
@@ -589,6 +774,7 @@ function ShipmentVerificationDetail({ shipmentId }) {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
   const { themeMode, themeColor } = useTheme()
+  const { refreshNotifications } = useNotifications()
   const actualId = shipmentId || id
   const navigate = useNavigate()
   const sourceFilter = searchParams.get('filter') || 'all'
@@ -639,6 +825,8 @@ function ShipmentVerificationDetail({ shipmentId }) {
   const [verificationPhotos, setVerificationPhotos] = useState({}) // Cache verification photos
   const [imageErrors, setImageErrors] = useState({}) // Track which images failed to load
   const [loadError, setLoadError] = useState(null) // Track loading errors
+  const [shipmentIssuesList, setShipmentIssuesList] = useState([]) // Full issues with vendor_email for email modal
+  const [emailModalIssue, setEmailModalIssue] = useState(null)
   
   // Convert hex to RGB
   const hexToRgb = (hex) => {
@@ -673,6 +861,16 @@ function ShipmentVerificationDetail({ shipmentId }) {
     if (actualId) {
       loadWorkflowSettings()
       loadProgress()
+      const fetchIssues = async () => {
+        try {
+          const res = await fetch(`/api/shipments/${actualId}/issues`)
+          const data = await res.json()
+          if (data.success && data.data) setShipmentIssuesList(data.data)
+        } catch (e) {
+          console.error(e)
+        }
+      }
+      fetchIssues()
       // Auto-refresh progress every 5 seconds
       const interval = setInterval(loadProgress, 5000)
       return () => clearInterval(interval)
@@ -1291,6 +1489,12 @@ function ShipmentVerificationDetail({ shipmentId }) {
         alert('Issue reported successfully')
         setShowIssueForm(false)
         loadProgress()
+        refreshNotifications()
+        try {
+          const r = await fetch(`/api/shipments/${actualId}/issues`)
+          const d = await r.json()
+          if (d.success && d.data) setShipmentIssuesList(d.data)
+        } catch (_) {}
       }
     } catch (error) {
       console.error('Error reporting issue:', error)
@@ -2388,7 +2592,7 @@ function ShipmentVerificationDetail({ shipmentId }) {
       )}
 
       {/* Issues Summary */}
-      {progress.issues && progress.issues.length > 0 && (
+      {((shipmentIssuesList.length > 0 ? shipmentIssuesList : progress.issues) || []).length > 0 && (
         <div style={{
           backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : 'white',
           borderRadius: '8px',
@@ -2397,48 +2601,74 @@ function ShipmentVerificationDetail({ shipmentId }) {
           boxShadow: isDarkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
         }}>
           <h3 style={{ margin: '0 0 16px 0', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-            Reported Issues ({progress.issues.length})
+            Reported Issues ({shipmentIssuesList.length > 0 ? shipmentIssuesList.length : (progress.issues || []).length})
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {progress.issues.map(issue => (
-              <div key={issue.issue_id} style={{
-                padding: '12px',
-                border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #e0e0e0',
-                borderRadius: '4px',
-                borderLeft: `4px solid ${
-                  issue.severity === 'critical' ? '#f44336' :
-                  issue.severity === 'major' ? '#ff9800' : '#2196f3'
-                }`,
-                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fafafa'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontWeight: 600, textTransform: 'capitalize', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                    {issue.issue_type.replace('_', ' ')}
-                  </span>
-                  <span style={{
-                    padding: '2px 8px',
+            {(shipmentIssuesList.length > 0 ? shipmentIssuesList : progress.issues || []).map((issue, idx) => {
+              const hasEmailAction = shipmentIssuesList.length > 0 && issue.issue_id
+              return (
+                <div
+                  key={issue.issue_id != null ? issue.issue_id : `issue-${idx}`}
+                  role={hasEmailAction ? 'button' : undefined}
+                  tabIndex={hasEmailAction ? 0 : undefined}
+                  onClick={hasEmailAction ? () => setEmailModalIssue(issue) : undefined}
+                  onKeyDown={hasEmailAction ? (e) => e.key === 'Enter' && setEmailModalIssue(issue) : undefined}
+                  style={{
+                    padding: '12px',
+                    border: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #e0e0e0',
                     borderRadius: '4px',
-                    backgroundColor: issue.severity === 'critical' ? (isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee') : (isDarkMode ? 'rgba(255, 152, 0, 0.2)' : '#fff3e0'),
-                    color: issue.severity === 'critical' ? '#c62828' : '#e65100',
-                    fontSize: '12px',
-                    textTransform: 'capitalize'
-                  }}>
-                    {issue.severity}
-                  </span>
+                    borderLeft: `4px solid ${
+                      (issue.severity || '') === 'critical' ? '#f44336' :
+                      (issue.severity || '') === 'major' ? '#ff9800' : '#2196f3'
+                    }`,
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fafafa',
+                    cursor: hasEmailAction ? 'pointer' : 'default'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 600, textTransform: 'capitalize', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                      {String(issue.issue_type || '').replace(/_/g, ' ')}
+                    </span>
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      backgroundColor: (issue.severity || '') === 'critical' ? (isDarkMode ? 'rgba(244, 67, 54, 0.2)' : '#ffebee') : (isDarkMode ? 'rgba(255, 152, 0, 0.2)' : '#fff3e0'),
+                      color: (issue.severity || '') === 'critical' ? '#c62828' : '#e65100',
+                      fontSize: '12px',
+                      textTransform: 'capitalize'
+                    }}>
+                      {issue.severity || 'minor'}
+                    </span>
+                  </div>
+                  {(issue.product_name != null && issue.product_name !== '') && (
+                    <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginBottom: '4px' }}>
+                      {issue.product_name}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                    {issue.description || issue.notes || ''}
+                  </div>
+                  <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', marginTop: '8px' }}>
+                    Reported by {issue.reported_by_name || 'Unknown'} on {issue.reported_at ? new Date(issue.reported_at).toLocaleString() : ''}
+                  </div>
+                  {hasEmailAction && (
+                    <div style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#64748b', marginTop: '6px' }}>
+                      Click to email vendor
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#666', marginBottom: '4px' }}>
-                  {issue.product_name}
-                </div>
-                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                  {issue.description}
-                </div>
-                <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', marginTop: '8px' }}>
-                  Reported by {issue.reported_by_name} on {new Date(issue.reported_at).toLocaleString()}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
+      )}
+      {emailModalIssue && (
+        <EmailVendorIssueModal
+          issue={emailModalIssue}
+          isDarkMode={isDarkMode}
+          themeColorRgb={themeColorRgb}
+          onClose={() => setEmailModalIssue(null)}
+        />
       )}
 
       {/* Workflow Action Buttons */}

@@ -294,7 +294,7 @@ function BarcodeScanner({ onScan, onClose, onImageScan, themeColor = '#8400ff', 
         right: position ? 'auto' : '20px',
         bottom: position ? 'auto' : '20px',
         backgroundColor: '#fff',
-        borderRadius: '8px',
+        borderRadius: '12px',
         padding: '6px',
         width: '380px',
         maxWidth: 'calc(100vw - 40px)',
@@ -306,8 +306,39 @@ function BarcodeScanner({ onScan, onClose, onImageScan, themeColor = '#8400ff', 
         boxSizing: 'border-box'
       }}
     >
+      {/* Close button - white with app blue X, on top of border in top-right */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose() }}
+        style={{
+          position: 'absolute',
+          top: '-12px',
+          right: '-12px',
+          padding: 0,
+          width: '32px',
+          height: '32px',
+          backgroundColor: '#fff',
+          color: themeColor,
+          border: '1px solid rgba(0,0,0,0.1)',
+          borderRadius: '50%',
+          cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          flexShrink: 0
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)'
+        }}
+      >
+        <X size={18} strokeWidth={2.5} />
+      </button>
       {/* Camera Scanner */}
-      <div>
+      <div style={{ position: 'relative', borderRadius: '8px', overflow: 'hidden' }}>
         {error && (
           <div style={{
             padding: '12px',
@@ -327,11 +358,12 @@ function BarcodeScanner({ onScan, onClose, onImageScan, themeColor = '#8400ff', 
             height: '280px',
             overflow: 'hidden',
             backgroundColor: '#000',
+            borderRadius: '8px',
             border: scanStatus === 'accepted'
               ? '2px solid #4caf50'
               : scanStatus === 'cooldown'
               ? '2px solid #f44336'
-              : '2px solid #e0e0e0',
+              : 'none',
             transition: 'border-color 0.2s ease',
             boxSizing: 'border-box',
             flexShrink: 0
@@ -376,40 +408,6 @@ function BarcodeScanner({ onScan, onClose, onImageScan, themeColor = '#8400ff', 
               </div>
             )
           })()}
-          <button
-            onClick={onClose}
-            style={{
-              position: 'absolute',
-              top: '8px',
-              right: '8px',
-              padding: '4px',
-              width: '40px',
-              height: '40px',
-              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              color: '#fff',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-              transition: 'all 0.3s ease',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
-              e.currentTarget.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-              e.currentTarget.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-          >
-            <X size={24} strokeWidth={2.5} />
-          </button>
         </div>
       </div>
     </div>

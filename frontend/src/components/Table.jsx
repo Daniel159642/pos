@@ -255,12 +255,12 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
       }}
     >
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
-        <thead>
-          <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa' }}>
+        <thead style={stickyHeader ? { position: 'sticky', top: 0, zIndex: 10 } : undefined}>
+          <tr>
             {enableRowSelection && (
               <th
                 style={{
-                  padding: '12px',
+                  padding: 0,
                   textAlign: 'center',
                   fontWeight: 600,
                   borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
@@ -269,26 +269,40 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   width: '48px',
-                  ...(stickyHeader ? { position: 'sticky', top: 0, zIndex: 1, backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa', boxShadow: isDarkMode ? '0 1px 0 0 var(--border-color, #404040)' : '0 1px 0 0 #dee2e6' } : {})
+                  verticalAlign: 'middle',
+                  boxShadow: isDarkMode ? '0 1px 0 0 var(--border-color, #404040)' : '0 1px 0 0 #dee2e6'
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = someVisibleSelected
+                <div
+                  style={{
+                    padding: '12px',
+                    backgroundColor: isDarkMode ? 'rgba(26, 26, 26, 0.88)' : 'rgba(248, 249, 250, 0.88)',
+                    backdropFilter: 'blur(6px) saturate(130%)',
+                    WebkitBackdropFilter: 'blur(6px) saturate(130%)',
+                    minHeight: '44px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
                   }}
-                  onChange={toggleSelectAllVisible}
-                  aria-label="Select all rows"
-                  style={{ cursor: 'pointer' }}
-                />
+                >
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected
+                    }}
+                    onChange={toggleSelectAllVisible}
+                    aria-label="Select all rows"
+                    style={{ cursor: 'pointer' }}
+                  />
+                </div>
               </th>
             )}
             {columns.map(col => (
               <th
                 key={col}
                 style={{
-                  padding: '12px',
+                  padding: 0,
                   textAlign: (col === 'photo' || col.includes('image') || col.includes('photo') || col === 'actions') ? 'center' : 'left',
                   fontWeight: 600,
                   borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
@@ -297,18 +311,32 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   width: (col === 'photo' || col.includes('image') || col.includes('photo')) ? '60px' : (col === 'actions' ? '100px' : 'auto'),
-                  ...(stickyHeader ? { position: 'sticky', top: 0, zIndex: 1, backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa', boxShadow: isDarkMode ? '0 1px 0 0 var(--border-color, #404040)' : '0 1px 0 0 #dee2e6' } : {})
+                  verticalAlign: 'middle',
+                  boxShadow: isDarkMode ? '0 1px 0 0 var(--border-color, #404040)' : '0 1px 0 0 #dee2e6'
                 }}
               >
-                {col === 'photo' ? (
-                  <Image size={16} />
-                ) : col === 'actions' ? 'Actions' : col.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                <div
+                  style={{
+                    padding: '12px',
+                    backgroundColor: isDarkMode ? 'rgba(26, 26, 26, 0.88)' : 'rgba(248, 249, 250, 0.88)',
+                    backdropFilter: 'blur(6px) saturate(130%)',
+                    WebkitBackdropFilter: 'blur(6px) saturate(130%)',
+                    minHeight: '44px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: (col === 'photo' || col.includes('image') || col.includes('photo') || col === 'actions') ? 'center' : 'flex-start'
+                  }}
+                >
+                  {col === 'photo' ? (
+                    <Image size={16} />
+                  ) : col === 'actions' ? 'Actions' : col.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </div>
               </th>
             ))}
             {onEdit && !columns.includes('actions') && (
               <th
                 style={{
-                  padding: '12px',
+                  padding: 0,
                   textAlign: 'center',
                   fontWeight: 600,
                   borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #dee2e6',
@@ -317,10 +345,24 @@ function Table({ columns, data, onEdit, enableRowSelection = false, getRowId, se
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   width: '100px',
-                  ...(stickyHeader ? { position: 'sticky', top: 0, zIndex: 1, backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa', boxShadow: isDarkMode ? '0 1px 0 0 var(--border-color, #404040)' : '0 1px 0 0 #dee2e6' } : {})
+                  verticalAlign: 'middle',
+                  boxShadow: isDarkMode ? '0 1px 0 0 var(--border-color, #404040)' : '0 1px 0 0 #dee2e6'
                 }}
               >
-                Actions
+                <div
+                  style={{
+                    padding: '12px',
+                    backgroundColor: isDarkMode ? 'rgba(26, 26, 26, 0.88)' : 'rgba(248, 249, 250, 0.88)',
+                    backdropFilter: 'blur(6px) saturate(130%)',
+                    WebkitBackdropFilter: 'blur(6px) saturate(130%)',
+                    minHeight: '44px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  Actions
+                </div>
               </th>
             )}
           </tr>

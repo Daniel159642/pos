@@ -32,7 +32,7 @@ from database import (
     get_discrepancies, get_audit_trail,
     get_pending_return, list_pending_returns,
     get_employee_role, assign_role_to_employee,
-    start_verification_session, scan_item, report_shipment_issue,
+    start_verification_session, scan_item, report_shipment_issue, list_shipment_issues, get_shipment_issues, get_issue_by_id,
     get_verification_progress, complete_verification,
     get_pending_shipments_with_progress, get_shipment_items,
     create_shipment_from_document, update_pending_item_verification, add_vendor,
@@ -1507,49 +1507,190 @@ def api_update_item_verification(item_id):
 
 @app.route('/api/shipments/<int:shipment_id>/issues', methods=['POST'])
 def api_report_issue(shipment_id):
-    """Report an issue"""
+    """Report an issue. Accepts JSON or multipart/form-data (frontend sends FormData with optional photo)."""
     try:
-        employee_id = request.json.get('employee_id')
-        if not employee_id:
-            session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
-            if not session_token:
-                session_token = request.json.get('session_token')
-            if session_token:
-                session_data = verify_session(session_token)
-                if session_data and session_data.get('valid'):
-                    employee_id = session_data.get('employee_id')
-        
+        # Support both JSON and form data (FormData sends multipart/form-data)
+        if request.is_json:
+            data = request.json or {}
+        else:
+            data = request.form.to_dict() if request.form else {}
+
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not session_token:
+            session_token = data.get('session_token')
+        employee_id = data.get('employee_id')
+        if not employee_id and session_token:
+            session_data = verify_session(session_token)
+            if session_data and session_data.get('valid'):
+                employee_id = session_data.get('employee_id')
+
         if not employee_id:
             return jsonify({'success': False, 'message': 'Employee ID required'}), 401
-        
-        data = request.json
-        
-        # Handle photo upload if provided
+
+        # pending_item_id: form sends string; can be '' for general issue
+        pending_item_id = data.get('pending_item_id')
+        if pending_item_id is not None and pending_item_id != '':
+            try:
+                pending_item_id = int(pending_item_id)
+            except (ValueError, TypeError):
+                pending_item_id = None
+        else:
+            pending_item_id = None
+
+        quantity_affected = data.get('quantity_affected', 1)
+        if quantity_affected is not None:
+            try:
+                quantity_affected = int(quantity_affected)
+            except (ValueError, TypeError):
+                quantity_affected = 1
+        else:
+            quantity_affected = 1
+
+        issue_type = data.get('issue_type')
+        description = data.get('description') or ''
+        if not issue_type:
+            return jsonify({'success': False, 'message': 'issue_type is required'}), 400
+
+        # Handle photo upload if provided (works for both JSON body with file and multipart)
         photo_path = None
         if 'photo' in request.files:
             photo = request.files['photo']
-            if photo.filename:
+            if photo and photo.filename:
                 filename = secure_filename(f"{shipment_id}_{datetime.now().timestamp()}_{photo.filename}")
                 upload_dir = 'uploads/issues'
                 os.makedirs(upload_dir, exist_ok=True)
                 photo_path = os.path.join(upload_dir, filename)
                 photo.save(photo_path)
-        
+
         issue_id = report_shipment_issue(
             shipment_id,
-            data.get('pending_item_id'),
-            data['issue_type'],
-            data['description'],
-            data.get('quantity_affected', 1),
+            pending_item_id,
+            issue_type,
+            description,
+            quantity_affected,
             employee_id,
-            data.get('severity', 'minor'),
+            data.get('severity') or 'minor',
             photo_path
         )
-        
+
         return jsonify({'success': True, 'issue_id': issue_id})
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/shipment-issues', methods=['GET'])
+def api_list_shipment_issues():
+    """List recent shipment issues (open by default) for notifications and activity header."""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        status = request.args.get('status')  # 'open' | 'resolved' | None (all for header)
+        issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+        # Serialize datetime for JSON
+        for i in issues:
+            if i.get('reported_at'):
+                i['reported_at'] = i['reported_at'].isoformat() if hasattr(i['reported_at'], 'isoformat') else str(i['reported_at'])
+        return jsonify({'success': True, 'data': issues})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/shipments/<int:shipment_id>/issues', methods=['GET'])
+def api_get_shipment_issues(shipment_id):
+    """Get all issues for a single shipment with vendor info (for email modal)."""
+    try:
+        issues = get_shipment_issues(shipment_id)
+        for i in issues:
+            if i.get('reported_at'):
+                i['reported_at'] = i['reported_at'].isoformat() if hasattr(i['reported_at'], 'isoformat') else str(i['reported_at'])
+        return jsonify({'success': True, 'data': issues})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+def _draft_vendor_issue_email_with_llm(vendor_name, issue_type, description, purchase_order_number, image_description=None):
+    """Use local Mistral via Ollama to draft a professional email to the vendor about the issue."""
+    try:
+        import ollama
+    except ImportError:
+        return None
+    issue_type_label = (issue_type or 'issue').replace('_', ' ').title()
+    prompt = f"""You are writing a professional business email to a vendor about a shipment issue.
+
+Vendor: {vendor_name}
+PO/Order: {purchase_order_number or 'N/A'}
+Issue type: {issue_type_label}
+Description: {description or 'No additional details.'}
+{f'Image/attachment note: {image_description}' if image_description else ''}
+
+Write a short, polite email (2-4 sentences) that:
+1. References the order/PO
+2. Clearly states the issue type and brief description
+3. Asks them to look into it or respond
+4. Is professional and concise
+
+Output ONLY the email body text, no subject line and no "Dear..." if you prefer to keep it very short. If you include a subject line, put it on the first line starting with "Subject: "."""
+    try:
+        response = ollama.generate(
+            model='mistral',
+            prompt=prompt,
+            options={'temperature': 0.4, 'num_predict': 300}
+        )
+        text = (response.get('response') or '').strip()
+        subject = None
+        if text.lower().startswith('subject:'):
+            first_line, _, rest = text.partition('\n')
+            subject = first_line[8:].strip()
+            body = rest.strip()
+        else:
+            body = text
+            subject = f"Shipment issue – {issue_type_label} (PO: {purchase_order_number or 'N/A'})"
+        return {'subject': subject, 'body': body}
+    except Exception:
+        return None
+
+
+@app.route('/api/shipment-issues/draft-email', methods=['POST'])
+def api_draft_issue_email():
+    """Draft an email to the vendor about a shipment issue using local Mistral (Ollama)."""
+    try:
+        data = request.json if request.is_json else {}
+        if not data and request.form:
+            data = request.form.to_dict()
+        issue_id = data.get('issue_id')
+        if issue_id:
+            issue = get_issue_by_id(int(issue_id))
+            if not issue:
+                return jsonify({'success': False, 'message': 'Issue not found'}), 404
+            if issue.get('reported_at') and hasattr(issue['reported_at'], 'isoformat'):
+                issue['reported_at'] = issue['reported_at'].isoformat()
+        else:
+            issue = {
+                'vendor_name': data.get('vendor_name', ''),
+                'vendor_email': data.get('vendor_email', ''),
+                'issue_type': data.get('issue_type', ''),
+                'description': data.get('description', ''),
+                'purchase_order_number': data.get('purchase_order_number', '')
+            }
+        image_note = 'An image attachment is included.' if data.get('has_image') else None
+        result = _draft_vendor_issue_email_with_llm(
+            issue.get('vendor_name') or 'Vendor',
+            issue.get('issue_type'),
+            issue.get('description'),
+            issue.get('purchase_order_number'),
+            image_note
+        )
+        if result:
+            return jsonify({'success': True, 'subject': result['subject'], 'body': result['body']})
+        subject = f"Shipment issue – {(issue.get('issue_type') or 'issue').replace('_', ' ').title()} (PO: {issue.get('purchase_order_number') or 'N/A'})"
+        body = f"Hi,\n\nWe are writing regarding our order (PO: {issue.get('purchase_order_number') or 'N/A'}).\n\nWe have encountered the following issue: {(issue.get('issue_type') or 'issue').replace('_', ' ').title()}\n\nDetails: {issue.get('description') or 'Please see attached.'}\n\nPlease let us know how you would like to proceed.\n\nThank you."
+        return jsonify({'success': True, 'subject': subject, 'body': body})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 
 @app.route('/api/shipments/<int:shipment_id>/complete', methods=['POST'])
 def api_complete_verification(shipment_id):
@@ -6635,6 +6776,31 @@ def api_dashboard_statistics():
         from datetime import datetime, timedelta
         import sys
         
+        # Get query parameters
+        date_range = request.args.get('date_range', 'last_7_days').lower()
+        granularity = request.args.get('granularity', 'daily').lower()
+        
+        # Calculate date range
+        today = datetime.now().date()
+        if date_range == 'today':
+            start_date = today
+            days_back = 0
+        elif date_range == 'last_7_days':
+            start_date = today - timedelta(days=6)
+            days_back = 6
+        elif date_range == 'last_4_weeks':
+            start_date = today - timedelta(days=27)
+            days_back = 27
+        elif date_range == 'last_3_months':
+            start_date = today - timedelta(days=89)
+            days_back = 89
+        elif date_range == 'last_12_months':
+            start_date = today - timedelta(days=364)
+            days_back = 364
+        else:
+            start_date = today - timedelta(days=6)
+            days_back = 6
+        
         def get_result_value(result, key, index=0):
             """Helper to get value from result dict or tuple"""
             if result is None:
@@ -6816,28 +6982,99 @@ def api_dashboard_statistics():
         # Weekly revenue (last 7 days) - detailed
         revenue_rows = []
         try:
-            if is_postgres:
-                cursor.execute("""
-                    SELECT 
-                        order_date::date::text as date,
-                        COALESCE(SUM(total), 0) as revenue
-                    FROM orders
-                    WHERE order_date >= CURRENT_DATE - INTERVAL '7 days'
-                        AND (order_status != 'voided' OR order_status IS NULL)
-                    GROUP BY order_date::date
-                    ORDER BY date ASC
-                """)
-            else:
-                cursor.execute("""
-                    SELECT 
-                        strftime('%Y-%m-%d', order_date) as date,
-                        COALESCE(SUM(total), 0) as revenue
-                    FROM orders
-                    WHERE order_date >= datetime('now', '-7 days')
-                        AND (order_status != 'voided' OR order_status IS NULL)
-                    GROUP BY strftime('%Y-%m-%d', order_date)
-                    ORDER BY date ASC
-                """)
+            # Build query based on granularity
+            if granularity == 'hourly':
+                if is_postgres:
+                    cursor.execute(f"""
+                        SELECT 
+                            TO_CHAR(order_date, 'YYYY-MM-DD HH24:00') as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE order_date::date >= '{start_date}'
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY TO_CHAR(order_date, 'YYYY-MM-DD HH24:00')
+                        ORDER BY date ASC
+                    """)
+                else:
+                    cursor.execute(f"""
+                        SELECT 
+                            strftime('%Y-%m-%d %H:00', order_date) as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE date(order_date) >= date('{start_date}')
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY strftime('%Y-%m-%d %H:00', order_date)
+                        ORDER BY date ASC
+                    """)
+            elif granularity == 'weekly':
+                if is_postgres:
+                    cursor.execute(f"""
+                        SELECT 
+                            TO_CHAR(order_date, 'IYYY-IW') as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE order_date::date >= '{start_date}'
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY TO_CHAR(order_date, 'IYYY-IW')
+                        ORDER BY date ASC
+                    """)
+                else:
+                    cursor.execute(f"""
+                        SELECT 
+                            strftime('%Y-W%W', order_date) as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE date(order_date) >= date('{start_date}')
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY strftime('%Y-W%W', order_date)
+                        ORDER BY date ASC
+                    """)
+            elif granularity == 'monthly':
+                if is_postgres:
+                    cursor.execute(f"""
+                        SELECT 
+                            TO_CHAR(order_date, 'YYYY-MM') as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE order_date::date >= '{start_date}'
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY TO_CHAR(order_date, 'YYYY-MM')
+                        ORDER BY date ASC
+                    """)
+                else:
+                    cursor.execute(f"""
+                        SELECT 
+                            strftime('%Y-%m', order_date) as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE date(order_date) >= date('{start_date}')
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY strftime('%Y-%m', order_date)
+                        ORDER BY date ASC
+                    """)
+            else:  # daily (default)
+                if is_postgres:
+                    cursor.execute(f"""
+                        SELECT 
+                            order_date::date::text as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE order_date::date >= '{start_date}'
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY order_date::date
+                        ORDER BY date ASC
+                    """)
+                else:
+                    cursor.execute(f"""
+                        SELECT 
+                            strftime('%Y-%m-%d', order_date) as date,
+                            COALESCE(SUM(total), 0) as revenue
+                        FROM orders
+                        WHERE date(order_date) >= date('{start_date}')
+                            AND (order_status != 'voided' OR order_status IS NULL)
+                        GROUP BY strftime('%Y-%m-%d', order_date)
+                        ORDER BY date ASC
+                    """)
             
             revenue_rows = cursor.fetchall()
         except Exception as e:
@@ -6858,18 +7095,59 @@ def api_dashboard_statistics():
                         if date_key:
                             weekly_revenue[date_key] = revenue_val
         
-        today = datetime.now().date()
-        week_data = []
-        for i in range(6, -1, -1):  # Last 7 days
-            day = today - timedelta(days=i)
-            date_str = day.strftime('%Y-%m-%d')
-            day_name = day.strftime('%a')
-            revenue = weekly_revenue.get(date_str, 0)
-            week_data.append({
-                'date': date_str,
-                'day': day_name,
-                'revenue': float(revenue) if revenue else 0
-            })
+        # Generate data points based on date_range and granularity
+        chart_data = []
+        if granularity == 'daily':
+            for i in range(days_back, -1, -1):
+                day = today - timedelta(days=i)
+                date_str = day.strftime('%Y-%m-%d')
+                day_name = day.strftime('%a')
+                revenue = weekly_revenue.get(date_str, 0)
+                chart_data.append({
+                    'date': date_str,
+                    'day': day_name,
+                    'revenue': float(revenue) if revenue else 0
+                })
+        elif granularity == 'hourly':
+            # For hourly, use the date strings from weekly_revenue (which now contains hour data)
+            for date_key in sorted(weekly_revenue.keys()):
+                chart_data.append({
+                    'date': date_key,
+                    'day': date_key.split()[0] if ' ' in date_key else date_key,
+                    'revenue': float(weekly_revenue[date_key]) if weekly_revenue[date_key] else 0
+                })
+        elif granularity == 'weekly':
+            # For weekly, use the week strings from weekly_revenue
+            for date_key in sorted(weekly_revenue.keys()):
+                chart_data.append({
+                    'date': date_key,
+                    'day': f"Week {date_key}",
+                    'revenue': float(weekly_revenue[date_key]) if weekly_revenue[date_key] else 0
+                })
+        elif granularity == 'monthly':
+            # For monthly, use the month strings from weekly_revenue
+            for date_key in sorted(weekly_revenue.keys()):
+                month_date = datetime.strptime(date_key + '-01', '%Y-%m-%d').date()
+                chart_data.append({
+                    'date': date_key,
+                    'day': month_date.strftime('%b'),
+                    'revenue': float(weekly_revenue[date_key]) if weekly_revenue[date_key] else 0
+                })
+        else:
+            # Default to daily
+            for i in range(days_back, -1, -1):
+                day = today - timedelta(days=i)
+                date_str = day.strftime('%Y-%m-%d')
+                day_name = day.strftime('%a')
+                revenue = weekly_revenue.get(date_str, 0)
+                chart_data.append({
+                    'date': date_str,
+                    'day': day_name,
+                    'revenue': float(revenue) if revenue else 0
+                })
+        
+        # Keep week_data for backward compatibility
+        week_data = chart_data
         
         # Monthly revenue (last 12 months) - still needed for other parts
         monthly_rows = []

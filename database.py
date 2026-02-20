@@ -9301,21 +9301,149 @@ def report_shipment_issue(pending_shipment_id: int, pending_item_id: Optional[in
             WHERE pending_item_id = %s
         """, (description, pending_item_id))
     
-    # Update session stats
+    # Update session stats (most recent open session for this shipment/employee)
     cursor.execute("""
         UPDATE verification_sessions
         SET issues_reported = issues_reported + 1
-        WHERE pending_shipment_id = %s 
-        AND employee_id = %s
-        AND ended_at IS NULL
-        ORDER BY started_at DESC
-        LIMIT 1
+        WHERE session_id = (
+            SELECT session_id FROM verification_sessions
+            WHERE pending_shipment_id = %s AND employee_id = %s AND ended_at IS NULL
+            ORDER BY started_at DESC
+            LIMIT 1
+        )
     """, (pending_shipment_id, employee_id))
     
     conn.commit()
     conn.close()
     
     return issue_id
+
+
+def list_shipment_issues(limit: int = 50, resolution_status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List recent shipment issues for notifications and activity header.
+    resolution_status: None = all, 'open' = only open (for notification badge), 'resolved' = only resolved.
+    """
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if resolution_status:
+            status_filter = "AND (si.resolution_status = %s OR (si.resolution_status IS NULL AND %s = 'open'))"
+            params = [resolution_status, resolution_status, limit]
+        else:
+            status_filter = ""
+            params = [limit]
+        query = f"""
+            SELECT
+                si.issue_id,
+                si.pending_shipment_id,
+                si.pending_item_id,
+                si.issue_type,
+                si.severity,
+                si.quantity_affected,
+                si.reported_at,
+                si.description,
+                si.resolution_status,
+                si.photo_path,
+                ps.purchase_order_number,
+                ps.status as shipment_status,
+                v.vendor_name,
+                v.email as vendor_email,
+                v.contact_person as vendor_contact,
+                v.phone as vendor_phone,
+                e.first_name || ' ' || e.last_name as reported_by_name
+            FROM shipment_issues si
+            JOIN pending_shipments ps ON ps.pending_shipment_id = si.pending_shipment_id
+            LEFT JOIN vendors v ON ps.vendor_id = v.vendor_id
+            LEFT JOIN employees e ON si.reported_by = e.employee_id
+            WHERE 1=1 {status_filter}
+            ORDER BY si.reported_at DESC
+            LIMIT %s
+        """
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_issue_by_id(issue_id: int) -> Optional[Dict[str, Any]]:
+    """Get a single shipment issue by id with vendor info (for email draft)."""
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        cursor.execute("""
+            SELECT
+                si.issue_id,
+                si.pending_shipment_id,
+                si.issue_type,
+                si.description,
+                si.severity,
+                si.reported_at,
+                ps.purchase_order_number,
+                v.vendor_name,
+                v.email as vendor_email,
+                v.contact_person as vendor_contact,
+                v.phone as vendor_phone
+            FROM shipment_issues si
+            JOIN pending_shipments ps ON ps.pending_shipment_id = si.pending_shipment_id
+            LEFT JOIN vendors v ON ps.vendor_id = v.vendor_id
+            WHERE si.issue_id = %s
+        """, (issue_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_shipment_issues(pending_shipment_id: int) -> List[Dict[str, Any]]:
+    """Get all issues for a single shipment with vendor info (for email modal)."""
+    from psycopg2.extras import RealDictCursor
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        cursor.execute("""
+            SELECT
+                si.issue_id,
+                si.pending_shipment_id,
+                si.pending_item_id,
+                si.issue_type,
+                si.severity,
+                si.quantity_affected,
+                si.reported_at,
+                si.description,
+                si.photo_path,
+                ps.purchase_order_number,
+                v.vendor_name,
+                v.email as vendor_email,
+                v.contact_person as vendor_contact,
+                v.phone as vendor_phone,
+                e.first_name || ' ' || e.last_name as reported_by_name
+            FROM shipment_issues si
+            JOIN pending_shipments ps ON ps.pending_shipment_id = si.pending_shipment_id
+            LEFT JOIN vendors v ON ps.vendor_id = v.vendor_id
+            LEFT JOIN employees e ON si.reported_by = e.employee_id
+            WHERE si.pending_shipment_id = %s
+            ORDER BY si.reported_at DESC
+        """, (pending_shipment_id,))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
 
 def get_verification_progress(pending_shipment_id: int) -> Dict[str, Any]:
     """Get current verification progress"""

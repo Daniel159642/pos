@@ -50,6 +50,7 @@ import Customers from './pages/Customers'
 import OfflineBanner from './components/OfflineBanner'
 import NotificationPanel from './components/NotificationPanel'
 import { useOffline } from './contexts/OfflineContext'
+import { NotificationProvider, useNotifications } from './contexts/NotificationContext'
 import { cachedFetch } from './services/offlineSync'
 import { getPermissionsCache } from './services/employeeRolesCache'
 import './index.css'
@@ -350,9 +351,16 @@ function Layout({ children, employee, onLogout }) {
   const { hasPermission } = usePermissions()
   const { isOnline, isSyncing, pendingCount } = useOffline()
   const { disableScroll } = usePageScroll()
+  const { notifications, notificationCount, dismissNotification } = useNotifications()
   const showBanner = !isOnline || isSyncing || pendingCount > 0
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
-  const [notifications] = useState([]) // Optional: feed from context or API later
+
+  const handleNotificationClick = (notification) => {
+    if (notification.type === 'shipment_issue' && notification.pending_shipment_id) {
+      setNotificationPanelOpen(false)
+      navigate(`/shipment-verification?filter=all`, { state: { openShipmentId: notification.pending_shipment_id } })
+    }
+  }
 
   useEffect(() => {
     if (!navigator.onLine) return
@@ -441,7 +449,7 @@ function Layout({ children, employee, onLogout }) {
               lineHeight: 1.2
             }}
           >
-            Swiftly
+            Swyftly
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -451,19 +459,43 @@ function Layout({ children, employee, onLogout }) {
                 type="button"
                 onClick={() => setNotificationPanelOpen(true)}
                 title="Notifications"
-                aria-label="Notifications"
+                aria-label={notificationCount > 0 ? `Notifications (${notificationCount})` : 'Notifications'}
                 style={{
-                  padding: 0,
+                  padding: '4px',
                   margin: 0,
                   border: 'none',
                   background: 'none',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  position: 'relative'
                 }}
               >
-                <Bell size={20} style={{ color: '#888' }} />
+                <Bell size={28} style={{ color: '#888' }} />
+                {notificationCount > 0 && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      right: 0,
+                      minWidth: 20,
+                      height: 20,
+                      borderRadius: '50%',
+                      backgroundColor: '#ef4444',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 4px',
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    {notificationCount > 99 ? '99+' : notificationCount}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -510,6 +542,8 @@ function Layout({ children, employee, onLogout }) {
         open={notificationPanelOpen}
         onClose={() => setNotificationPanelOpen(false)}
         notifications={notifications}
+        onNotificationClick={handleNotificationClick}
+        onDismissNotification={dismissNotification}
       />
       <OfflineBanner />
       <main
@@ -649,6 +683,7 @@ function App() {
       <ThemeProvider>
         <ToastProvider>
           <PageScrollProvider>
+          <NotificationProvider>
           <PermissionProvider initialEmployee={employee}>
             <AppContent
             sessionToken={sessionToken}
@@ -659,6 +694,7 @@ function App() {
             sessionVerifying={sessionVerifying}
           />
           </PermissionProvider>
+          </NotificationProvider>
           </PageScrollProvider>
         </ToastProvider>
       </ThemeProvider>

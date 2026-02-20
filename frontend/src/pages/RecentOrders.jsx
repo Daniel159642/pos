@@ -58,8 +58,7 @@ function RecentOrders() {
   const [statusUpdatingOrderId, setStatusUpdatingOrderId] = useState(null) // order_id while PATCH status in progress
   const rowRefs = useRef({}) // Refs for table rows to enable scrolling
   const chipsContainerRef = useRef(null) // Ref for chips container
-  const scannerInputRef = useRef(null) // Focus target for hardware barcode scanner (persistent scanning)
-  const [scannerInputValue, setScannerInputValue] = useState('')
+  const searchInputRef = useRef(null) // Focus target for search (and hardware barcode scanner)
   const lastKnownOrderIdRef = useRef(null)
   const [newOrderToast, setNewOrderToast] = useState(null) // { order_id, order_number, order_source }
   const [statusPhaseModal, setStatusPhaseModal] = useState(null) // { row, orderId } when open; null when closed
@@ -935,16 +934,15 @@ function RecentOrders() {
     return { ...row, total: displayTotal, _actions: row }
   }) : []
 
-  const focusScannerInput = () => {
-    setScannerInputValue('')
-    setTimeout(() => scannerInputRef.current?.focus(), 0)
+  const focusSearchInput = () => {
+    setTimeout(() => searchInputRef.current?.focus(), 0)
   }
 
   const handleBarcodeScan = async (barcode) => {
     try {
       const scannedBarcode = barcode.toString().trim()
       if (!scannedBarcode) {
-        focusScannerInput()
+        focusSearchInput()
         return
       }
       
@@ -995,7 +993,7 @@ function RecentOrders() {
         setHighlightedOrderId(matchingOrder.order_id)
         setTimeout(() => setHighlightedOrderId(null), 5000)
         setShowBarcodeScanner(false)
-        focusScannerInput()
+        focusSearchInput()
         return
       }
       
@@ -1045,7 +1043,7 @@ function RecentOrders() {
           } else {
             setToast({ message: `${product.product_name} already scanned`, type: 'success' })
           }
-          focusScannerInput()
+          focusSearchInput()
           return
         }
       }
@@ -1060,7 +1058,7 @@ function RecentOrders() {
       console.error('Barcode scan error:', err)
       setToast({ message: 'Error processing barcode scan', type: 'error' })
     } finally {
-      focusScannerInput()
+      focusSearchInput()
     }
   }
 
@@ -1829,10 +1827,21 @@ function RecentOrders() {
             </div>
             
             <input
+              ref={searchInputRef}
               type="text"
               placeholder={(scannedOrderId || scannedProducts.length > 0) ? "" : "Search orders by order number, customer, or items..."}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const v = searchQuery.trim()
+                  if (v) {
+                    e.preventDefault()
+                    handleBarcodeScan(v)
+                  }
+                }
+              }}
+              title="Search or scan barcode / order # (hardware scanner types here)"
               onFocus={(e) => {
                 // Ensure cursor is at the end when focusing
                 const len = e.target.value.length
@@ -1877,35 +1886,6 @@ function RecentOrders() {
               }}
             />
           </div>
-          <input
-            ref={scannerInputRef}
-            type="text"
-            value={scannerInputValue}
-            onChange={(e) => setScannerInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                const v = scannerInputValue.trim()
-                if (v) {
-                  e.preventDefault()
-                  handleBarcodeScan(v)
-                }
-              }
-            }}
-            placeholder="Barcode / order #"
-            title="Scan with hardware scanner or type and press Enter"
-            style={{
-              width: isMobile ? 100 : 130,
-              maxWidth: '140px',
-              padding: '6px 10px',
-              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-              borderRadius: '8px',
-              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-              outline: 'none',
-              fontSize: '13px',
-              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-              boxSizing: 'border-box'
-            }}
-          />
           <button
             onClick={() => setShowBarcodeScanner(true)}
             style={{
@@ -2175,7 +2155,7 @@ function RecentOrders() {
           {showBarcodeScanner && (
             <BarcodeScanner
               onScan={handleBarcodeScan}
-              onClose={() => setScannerExpanded(false)}
+              onClose={() => { setScannerExpanded(false); focusSearchInput() }}
               themeColor={themeColor}
               inline
             />
@@ -2187,7 +2167,7 @@ function RecentOrders() {
       {showBarcodeScanner && !isMobile && (
         <BarcodeScanner
           onScan={handleBarcodeScan}
-          onClose={() => setShowBarcodeScanner(false)}
+          onClose={() => { setShowBarcodeScanner(false); focusSearchInput() }}
           themeColor={themeColor}
         />
       )}
