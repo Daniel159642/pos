@@ -27,78 +27,96 @@ class CalendarIntegrationSystem:
     
     def create_subscription(self, employee_id: int, preferences: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Create a calendar subscription for an employee"""
-        
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # Ensure table exists (lowercase name so unquoted Calendar_Subscriptions in any code resolves to it)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS calendar_subscriptions (
-                subscription_id SERIAL PRIMARY KEY,
-                employee_id INTEGER NOT NULL,
-                subscription_token VARCHAR(255) NOT NULL,
-                include_shifts SMALLINT DEFAULT 1,
-                include_shipments SMALLINT DEFAULT 1,
-                include_meetings SMALLINT DEFAULT 1,
-                include_deadlines SMALLINT DEFAULT 1,
-                calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
-                is_active SMALLINT DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        
-        # Generate unique token
-        token = hashlib.sha256(
-            f"{employee_id}{datetime.now().isoformat()}{uuid.uuid4()}".encode()
-        ).hexdigest()
-        
-        # Default preferences (ensure dict)
-        if preferences is None or not isinstance(preferences, dict):
-            prefs = {
-                'include_shifts': True,
-                'include_shipments': True,
-                'include_meetings': True,
-                'include_deadlines': True,
-                'calendar_name': 'My Work Schedule'
+        conn = None
+        cursor = None
+        try:
+            conn = get_connection()
+            if not conn:
+                raise Exception("Failed to get database connection")
+            cursor = conn.cursor()
+            
+            # Ensure table exists (lowercase name so unquoted Calendar_Subscriptions in any code resolves to it)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                    subscription_id SERIAL PRIMARY KEY,
+                    employee_id INTEGER NOT NULL,
+                    subscription_token VARCHAR(255) NOT NULL,
+                    include_shifts SMALLINT DEFAULT 1,
+                    include_shipments SMALLINT DEFAULT 1,
+                    include_meetings SMALLINT DEFAULT 1,
+                    include_deadlines SMALLINT DEFAULT 1,
+                    calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
+                    is_active SMALLINT DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            
+            # Generate unique token
+            token = hashlib.sha256(
+                f"{employee_id}{datetime.now().isoformat()}{uuid.uuid4()}".encode()
+            ).hexdigest()
+            
+            # Default preferences (ensure dict)
+            if preferences is None or not isinstance(preferences, dict):
+                prefs = {
+                    'include_shifts': True,
+                    'include_shipments': True,
+                    'include_meetings': True,
+                    'include_deadlines': True,
+                    'calendar_name': 'My Work Schedule'
+                }
+            else:
+                prefs = preferences
+            
+            cursor.execute("""
+                INSERT INTO calendar_subscriptions
+                (employee_id, subscription_token, include_shifts, include_shipments,
+                 include_meetings, include_deadlines, calendar_name)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING subscription_id
+            """, (
+                employee_id, token,
+                1 if prefs.get('include_shifts', True) else 0,
+                1 if prefs.get('include_shipments', True) else 0,
+                1 if prefs.get('include_meetings', True) else 0,
+                1 if prefs.get('include_deadlines', True) else 0,
+                prefs.get('calendar_name', 'My Work Schedule')
+            ))
+            
+            row = cursor.fetchone()
+            subscription_id = row[0] if isinstance(row, tuple) else (row['subscription_id'] if row else None)
+            conn.commit()
+            
+            # Generate subscription URLs
+            ical_url = f"{self.base_url}/calendar/subscribe/{token}.ics"
+            webcal_url = ical_url.replace('http://', 'webcal://').replace('https://', 'webcal://')
+            google_url = f"https://calendar.google.com/calendar/render?cid={ical_url}"
+            
+            return {
+                'subscription_id': subscription_id,
+                'token': token,
+                'ical_url': ical_url,
+                'webcal_url': webcal_url,  # For Apple Calendar
+                'google_url': google_url,
+                'outlook_url': ical_url  # Outlook can use iCal URL
             }
-        else:
-            prefs = preferences
-        
-        cursor.execute("""
-            INSERT INTO calendar_subscriptions
-            (employee_id, subscription_token, include_shifts, include_shipments,
-             include_meetings, include_deadlines, calendar_name)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING subscription_id
-        """, (
-            employee_id, token,
-            1 if prefs.get('include_shifts', True) else 0,
-            1 if prefs.get('include_shipments', True) else 0,
-            1 if prefs.get('include_meetings', True) else 0,
-            1 if prefs.get('include_deadlines', True) else 0,
-            prefs.get('calendar_name', 'My Work Schedule')
-        ))
-        
-        row = cursor.fetchone()
-        subscription_id = row[0] if isinstance(row, tuple) else (row['subscription_id'] if row else None)
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        # Generate subscription URLs
-        ical_url = f"{self.base_url}/calendar/subscribe/{token}.ics"
-        webcal_url = ical_url.replace('http://', 'webcal://').replace('https://', 'webcal://')
-        google_url = f"https://calendar.google.com/calendar/render?cid={ical_url}"
-        
-        return {
-            'subscription_id': subscription_id,
-            'token': token,
-            'ical_url': ical_url,
-            'webcal_url': webcal_url,  # For Apple Calendar
-            'google_url': google_url,
-            'outlook_url': ical_url  # Outlook can use iCal URL
-        }
+        except Exception as e:
+            print(f"[CalendarIntegration] Error in create_subscription: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
     
     def generate_ical_feed(self, token: str) -> Optional[bytes]:
         """Generate iCal feed for a subscription token"""
@@ -208,21 +226,21 @@ class CalendarIntegrationSystem:
                 end_dt_str = event_row['end_datetime']
                 
                 # Parse datetime strings (SQLite stores as TEXT)
-            try:
-                if 'T' in start_dt_str:
-                    start_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
-                else:
-                    start_dt = datetime.strptime(start_dt_str, '%Y-%m-%d %H:%M:%S')
+                try:
+                    if 'T' in start_dt_str:
+                        start_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
+                    else:
+                        start_dt = datetime.strptime(start_dt_str, '%Y-%m-%d %H:%M:%S')
+                    
+                    if 'T' in end_dt_str:
+                        end_dt = datetime.fromisoformat(end_dt_str.replace('Z', '+00:00'))
+                    else:
+                        end_dt = datetime.strptime(end_dt_str, '%Y-%m-%d %H:%M:%S')
+                except:
+                    # Fallback parsing
+                    start_dt = datetime.strptime(start_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
+                    end_dt = datetime.strptime(end_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
                 
-                if 'T' in end_dt_str:
-                    end_dt = datetime.fromisoformat(end_dt_str.replace('Z', '+00:00'))
-                else:
-                    end_dt = datetime.strptime(end_dt_str, '%Y-%m-%d %H:%M:%S')
-            except:
-                # Fallback parsing
-                start_dt = datetime.strptime(start_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
-                end_dt = datetime.strptime(end_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
-            
                 if event_row.get('all_day'):
                     event.add('dtstart', start_dt.date())
                     event.add('dtend', (end_dt + timedelta(days=1)).date())
@@ -497,46 +515,66 @@ class CalendarIntegrationSystem:
     
     def get_employee_calendar_url(self, employee_id: int) -> Optional[Dict[str, Any]]:
         """Get calendar subscription URLs for an employee"""
-        
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS calendar_subscriptions (
-                subscription_id SERIAL PRIMARY KEY,
-                employee_id INTEGER NOT NULL,
-                subscription_token VARCHAR(255) NOT NULL,
-                include_shifts SMALLINT DEFAULT 1,
-                include_shipments SMALLINT DEFAULT 1,
-                include_meetings SMALLINT DEFAULT 1,
-                include_deadlines SMALLINT DEFAULT 1,
-                calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
-                is_active SMALLINT DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        
-        cursor.execute("""
-            SELECT subscription_token FROM calendar_subscriptions
-            WHERE employee_id = %s AND is_active = 1
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (employee_id,))
-        
-        result = cursor.fetchone()
-        
-        cursor.close()
-        conn.close()
-        
-        if result:
-            token = result[0] if isinstance(result, (tuple, list)) else result.get('subscription_token')
-            ical_url = f"{self.base_url}/calendar/subscribe/{token}.ics"
-            return {
-                'ical_url': ical_url,
-                'webcal_url': ical_url.replace('http://', 'webcal://').replace('https://', 'webcal://'),
-                'google_url': f"https://calendar.google.com/calendar/render?cid={ical_url}"
-            }
-        
-        return None
+        conn = None
+        cursor = None
+        try:
+            conn = get_connection()
+            if not conn:
+                print("[CalendarIntegration] Failed to get database connection")
+                return None
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+                    subscription_id SERIAL PRIMARY KEY,
+                    employee_id INTEGER NOT NULL,
+                    subscription_token VARCHAR(255) NOT NULL,
+                    include_shifts SMALLINT DEFAULT 1,
+                    include_shipments SMALLINT DEFAULT 1,
+                    include_meetings SMALLINT DEFAULT 1,
+                    include_deadlines SMALLINT DEFAULT 1,
+                    calendar_name VARCHAR(255) DEFAULT 'My Work Schedule',
+                    is_active SMALLINT DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            
+            cursor.execute("""
+                SELECT subscription_token FROM calendar_subscriptions
+                WHERE employee_id = %s AND is_active = 1
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (employee_id,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                token = result[0] if isinstance(result, (tuple, list)) else result.get('subscription_token')
+                if not token:
+                    return None
+                ical_url = f"{self.base_url}/calendar/subscribe/{token}.ics"
+                return {
+                    'ical_url': ical_url,
+                    'webcal_url': ical_url.replace('http://', 'webcal://').replace('https://', 'webcal://'),
+                    'google_url': f"https://calendar.google.com/calendar/render?cid={ical_url}"
+                }
+            
+            return None
+        except Exception as e:
+            print(f"[CalendarIntegration] Error in get_employee_calendar_url: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
 

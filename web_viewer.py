@@ -9961,7 +9961,8 @@ def get_subscription_urls():
         employee_id = session_data['employee_id']
         
         from calendar_integration import CalendarIntegrationSystem
-        calendar_system = CalendarIntegrationSystem(base_url=request.url_root.rstrip('/'))
+        base_url = os.environ.get('CALENDAR_FEED_BASE_URL') or request.host_url.rstrip('/')
+        calendar_system = CalendarIntegrationSystem(base_url=base_url)
         
         urls = calendar_system.get_employee_calendar_url(employee_id)
         
@@ -9972,8 +9973,15 @@ def get_subscription_urls():
             subscription = calendar_system.create_subscription(employee_id)
             return jsonify({'success': True, 'data': subscription})
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({'success': False, 'message': str(e)}), 500
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[get_subscription_urls] Error: {e}")
+        print(error_trace)
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get subscription URLs: {str(e)}',
+            'error_type': type(e).__name__
+        }), 500
 
 @app.route('/api/calendar/events/<int:event_id>/export', methods=['GET'])
 def export_event(event_id):
