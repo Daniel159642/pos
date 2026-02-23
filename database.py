@@ -7238,46 +7238,50 @@ def clock_in(employee_id: int, schedule_id: Optional[int] = None, schedule_date:
     cursor = conn.cursor()
     
     try:
-        # Validate location if provided
+        # Validate location if provided — location is only informational, never blocks clock-in
         location_validation = None
         if latitude is not None and longitude is not None:
-            location_validation = validate_location(latitude, longitude)
-            if not location_validation['valid']:
-                conn.close()
-                return {
-                    'success': False,
-                    'message': location_validation['message'],
-                    'location_validation': location_validation
-                }
+            try:
+                location_validation = validate_location(latitude, longitude)
+            except Exception:
+                pass
+        
+        establishment_id = _get_or_create_default_establishment(conn)
+
+        # Determine if this clock-in is unscheduled
+        is_unscheduled = schedule_id is None
+        
+        # Create new time_clock entry
+        cursor.execute("""
+            INSERT INTO time_clock (establishment_id, employee_id, clock_in, status, is_unscheduled)
+            VALUES (%s, %s, CURRENT_TIMESTAMP, 'clocked_in', %s) RETURNING time_entry_id
+        """, (establishment_id, employee_id, is_unscheduled))
+        
+        time_entry = cursor.fetchone()
+        time_entry_id = time_entry[0] if time_entry else cursor.lastrowid
         
         if schedule_id:
-            # Update existing schedule
+            # Update existing schedule to link
             cursor.execute("""
                 UPDATE employee_schedule
-                SET clock_in_time = CURRENT_TIMESTAMP,
-                    status = 'clocked_in',
-                    clock_in_latitude = %s,
-                    clock_in_longitude = %s,
-                    clock_in_address = %s
+                SET time_entry_id = %s,
+                    status = 'clocked_in'
                 WHERE schedule_id = %s AND employee_id = %s
-            """, (latitude, longitude, address, schedule_id, employee_id))
+            """, (time_entry_id, schedule_id, employee_id))
             
-            if cursor.rowcount == 0:
-                conn.close()
-                return {'success': False, 'message': 'Schedule not found'}
-        else:
-            # Create new schedule entry
-            if not schedule_date:
-                schedule_date = datetime.now().date().isoformat()
-            
-            cursor.execute("""
-                INSERT INTO employee_schedule (
-                    employee_id, schedule_date, clock_in_time, status,
-                    clock_in_latitude, clock_in_longitude, clock_in_address
-                ) VALUES (%s, %s, CURRENT_TIMESTAMP, 'clocked_in', %s, %s, %s)
-            """, (employee_id, schedule_date, latitude, longitude, address))
-            
-            schedule_id = cursor.lastrowid
+        if is_unscheduled:
+            try:
+                log_audit_action(
+                    table_name='time_clock',
+                    record_id=time_entry_id,
+                    action_type='unscheduled_clock_in',
+                    employee_id=employee_id,
+                    old_values=None,
+                    new_values={'is_unscheduled': True},
+                    notes='Employee clocked in without a scheduled shift'
+                )
+            except Exception as _audit_err:
+                print(f'[clock_in] audit log error (non-fatal): {_audit_err}', flush=True)
         
         conn.commit()
         conn.close()
@@ -7285,67 +7289,75 @@ def clock_in(employee_id: int, schedule_id: Optional[int] = None, schedule_date:
         return {
             'success': True,
             'schedule_id': schedule_id,
+            'time_entry_id': time_entry_id,
             'message': 'Clocked in successfully',
             'location_validation': location_validation
         }
     except Exception as e:
         conn.rollback()
         conn.close()
+        import traceback
+        traceback.print_exc()
         return {'success': False, 'message': str(e)}
 
-def clock_out(employee_id: int, schedule_id: int) -> Dict[str, Any]:
+def clock_out(employee_id: int, schedule_id: Optional[int] = None, latitude: Optional[float] = None, longitude: Optional[float] = None, address: Optional[str] = None) -> Dict[str, Any]:
     """Clock out an employee and calculate hours worked"""
     conn = get_connection()
     cursor = conn.cursor()
+    from psycopg2.extras import RealDictCursor
+    cursor_dict = conn.cursor(cursor_factory=RealDictCursor)
     
     try:
-        # Get schedule with clock in time
-        cursor.execute("""
-            SELECT clock_in_time, start_time, end_time, break_duration
-            FROM employee_schedule
-            WHERE schedule_id = %s AND employee_id = %s
-        """, (schedule_id, employee_id))
+        # Get active time_clock entry
+        cursor_dict.execute("""
+            SELECT time_entry_id, clock_in
+            FROM time_clock
+            WHERE employee_id = %s AND status = 'clocked_in' AND clock_out IS NULL
+            ORDER BY clock_in DESC LIMIT 1
+        """, (employee_id,))
         
-        schedule = cursor.fetchone()
-        if not schedule:
+        time_entry = cursor_dict.fetchone()
+        if not time_entry:
             conn.close()
-            return {'success': False, 'message': 'Schedule not found'}
+            return {'success': False, 'message': 'No active clock-in found'}
+            
+        time_entry_id = time_entry['time_entry_id']
+        clock_in_time = time_entry['clock_in']
         
-        schedule = dict(schedule)
-        
-        if not schedule['clock_in_time']:
-            conn.close()
-            return {'success': False, 'message': 'Employee has not clocked in'}
-        
-        # Calculate hours worked
-        clock_in_str = schedule['clock_in_time']
-        if isinstance(clock_in_str, str):
-            clock_in = datetime.fromisoformat(clock_in_str.replace('Z', '+00:00') if 'Z' in clock_in_str else clock_in_str)
-        else:
-            clock_in = clock_in_str
-        
+        if isinstance(clock_in_time, str):
+            clock_in_time = datetime.fromisoformat(clock_in_time.replace('Z', '+00:00') if 'Z' in clock_in_time else clock_in_time)
+            
         clock_out_time = datetime.now()
         
-        # Calculate difference in hours
-        time_diff = clock_out_time - clock_in
+        # Calculate hours worked
+        time_diff = clock_out_time - clock_in_time
         hours_worked = time_diff.total_seconds() / 3600.0
         
-        # Subtract break duration
-        if schedule['break_duration']:
-            hours_worked -= (schedule['break_duration'] / 60.0)
+        # Subtract break duration if linked schedule exists
+        cursor_dict.execute("""
+            SELECT break_duration FROM employee_schedule WHERE time_entry_id = %s
+        """, (time_entry_id,))
+        sched_row = cursor_dict.fetchone()
+        if sched_row and sched_row.get('break_duration'):
+            hours_worked -= (sched_row['break_duration'] / 60.0)
+            
+        overtime_hours = max(0.0, hours_worked - 8.0)
         
-        # Calculate overtime (assuming 8 hours is standard, adjust as needed)
-        overtime_hours = max(0, hours_worked - 8.0)
+        # Update time_clock
+        cursor.execute("""
+            UPDATE time_clock 
+            SET clock_out = CURRENT_TIMESTAMP,
+                total_hours = %s,
+                status = 'clocked_out'
+            WHERE time_entry_id = %s
+        """, (hours_worked, time_entry_id))
         
-        # Update schedule
+        # Update employee_schedule
         cursor.execute("""
             UPDATE employee_schedule
-            SET clock_out_time = CURRENT_TIMESTAMP,
-                hours_worked = %s,
-                overtime_hours = %s,
-                status = 'clocked_out'
-            WHERE schedule_id = %s AND employee_id = %s
-        """, (hours_worked, overtime_hours, schedule_id, employee_id))
+            SET status = 'clocked_out'
+            WHERE time_entry_id = %s
+        """, (time_entry_id,))
         
         conn.commit()
         conn.close()
@@ -7359,6 +7371,8 @@ def clock_out(employee_id: int, schedule_id: int) -> Dict[str, Any]:
     except Exception as e:
         conn.rollback()
         conn.close()
+        import traceback
+        traceback.print_exc()
         return {'success': False, 'message': str(e)}
 
 def get_schedule(
@@ -7404,7 +7418,8 @@ def get_schedule(
 def get_current_clock_status(employee_id: int) -> Optional[Dict[str, Any]]:
     """Get current clock status for an employee (uses time_clock table; clock_in_time alias for API compatibility)."""
     conn = get_connection()
-    cursor = conn.cursor()
+    from psycopg2.extras import RealDictCursor
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cursor.execute("""
             SELECT 
@@ -7413,9 +7428,14 @@ def get_current_clock_status(employee_id: int) -> Optional[Dict[str, Any]]:
                 tc.clock_in,
                 tc.clock_out,
                 tc.status,
-                e.first_name || ' ' || e.last_name as employee_name
+                e.first_name || ' ' || e.last_name as employee_name,
+                es.schedule_id,
+                es.schedule_date,
+                es.start_time,
+                es.end_time
             FROM time_clock tc
             JOIN employees e ON tc.employee_id = e.employee_id
+            LEFT JOIN employee_schedule es ON es.time_entry_id = tc.time_entry_id
             WHERE tc.employee_id = %s 
               AND tc.clock_out IS NULL
             ORDER BY tc.clock_in DESC
@@ -7426,11 +7446,22 @@ def get_current_clock_status(employee_id: int) -> Optional[Dict[str, Any]]:
             return None
         d = dict(row)
         d['clock_in_time'] = d.get('clock_in')
-        d['schedule_id'] = None
-        d['schedule_date'] = d['clock_in'].date().isoformat() if hasattr(d.get('clock_in'), 'date') else None
-        d['start_time'] = None
-        d['end_time'] = None
+        clock_in_val = d.get('clock_in')
+        if clock_in_val is not None and hasattr(clock_in_val, 'date'):
+             sched_date_val = d.get('schedule_date')
+             if sched_date_val is not None and hasattr(sched_date_val, 'isoformat'):
+                 d['schedule_date'] = sched_date_val.isoformat()
+             else:
+                 d['schedule_date'] = clock_in_val.date().isoformat()
+        if d.get('start_time') and hasattr(d['start_time'], 'strftime'):
+             d['start_time'] = d['start_time'].strftime('%H:%M:%S')
+        if d.get('end_time') and hasattr(d['end_time'], 'strftime'):
+             d['end_time'] = d['end_time'].strftime('%H:%M:%S')
         return d
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return None
     finally:
         conn.close()
 
@@ -7797,7 +7828,7 @@ def verify_session(session_token: str) -> Dict[str, Any]:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute("""
-            SELECT es.*, e.first_name, e.last_name, e.position, e.active
+            SELECT es.*, e.first_name, e.last_name, e.position, e.active, e.email
             FROM employee_sessions es
             JOIN employees e ON es.employee_id = e.employee_id
             WHERE es.session_token = %s 
@@ -7829,7 +7860,8 @@ def verify_session(session_token: str) -> Dict[str, Any]:
                 'valid': True,
                 'employee_id': session_dict.get('employee_id'),
                 'employee_name': f"{session_dict.get('first_name', '')} {session_dict.get('last_name', '')}".strip(),
-                'position': session_dict.get('position', '')
+                'position': session_dict.get('position', ''),
+                'email': session_dict.get('email', '')
             }
         
         return {'valid': False}

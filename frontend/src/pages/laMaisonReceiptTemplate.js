@@ -268,7 +268,7 @@ export const LA_MAISON_ORDER_APP_NOTIFICATION_HTML = `<!DOCTYPE html>
         .order-header h1 { color: #1565c0; font-size: 32px; margin: 0; font-weight: 600; }
         .order-number { color: #546e7a; font-size: 14px; margin-top: 0; }
         .order-source-logos { display: flex; justify-content: center; gap: 12px; margin: 6px 0; flex-wrap: wrap; }
-        .order-source-logos img { height: 40px !important; width: auto !important; max-width: 120px !important; object-fit: contain; }
+        .order-source-logos img { display: block; margin: 0 auto; height: 40px !important; width: auto !important; max-width: 160px !important; object-fit: contain; }
         .order-summary { text-align: left; background: #f5faff; border-radius: 12px; padding: 20px; margin: 20px 0; font-size: 14px; }
         .order-summary .items-table { width: 100%; border-collapse: collapse; font-size: 13px; }
         .order-summary .items-table th { text-align: left; padding: 8px 0; font-size: 11px; text-transform: uppercase; color: #546e7a; border-bottom: 1px solid rgba(33,150,243,0.3); }
@@ -294,7 +294,7 @@ export const LA_MAISON_ORDER_APP_NOTIFICATION_HTML = `<!DOCTYPE html>
         <div class="email-container">
             <div class="glass-card">
                 <div class="order-header">
-                    <h1>New Order</h1>
+                    <h1>{{order_title}}</h1>
                     <div class="order-number">{{order_number}}</div>
                 </div>
                 <div class="order-source-logos">{{order_source_logo_html}}</div>

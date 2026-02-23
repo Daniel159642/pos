@@ -1,0 +1,1760 @@
+✓ Connected to PostgreSQL database
+Starting web viewer...
+Open your browser to: http://localhost:5001
+Socket.IO enabled - real-time features available
+ * Serving Flask app 'web_viewer'
+ * Debug mode: on
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.1.214:5001
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [20/Feb/2026 16:42:39] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:42:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:42:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:42:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:42:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:42:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "POST /api/my/permissions HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "POST /api/verify_session HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "POST /api/my/permissions HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "POST /api/verify_session HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/vendors HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/categories HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/inventory?limit=50&offset=0 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/pos-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/inventory?item_type=product&include_variants=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:05] "GET /api/order-delivery-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/register/session?session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/pos-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/register/session?status=open&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/vendors HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/categories HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/inventory?item_type=product&include_variants=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/inventory?limit=50&offset=0 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/pos-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/receipt-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/receipt-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/pos-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/register/session?session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/order-delivery-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/register/session?status=open&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/settings-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:06] "GET /api/settings-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "POST /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "GET /api/email-templates?store_id=1&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "GET /api/clockin-notification-settings?store_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "GET /api/schedule-notification-settings?store_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "GET /api/notification-settings?store_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "POST /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:10] "GET /api/employees/with-email HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:35] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:43:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:05] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:35] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:44:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:05] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:36] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:45:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:06] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:36] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:46:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:07] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:38] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:47:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:09] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:40] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:48:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:11] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:42] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:49:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:13] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:44] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:50:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:16] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:40] "GET /api/settings-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:41] "POST /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:46] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:51:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:17] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:48] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:52:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:19] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:50] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:53:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:21] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:52] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:54:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:23] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:55:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:25] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:56:56] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:27] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:57:58] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:00] "GET /api/employees HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:00] "GET /api/employees HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:29] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:58:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:00] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:05] "GET /api/settings-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:06] "POST /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:06] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:06] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:08] "GET /api/categories HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:08] "GET /api/vendors HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:08] "GET /api/vendors HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:08] "GET /api/categories HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:08] "GET /api/integrations HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:08] "GET /api/inventory?limit=50&offset=0 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:19] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:19] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:30] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:31] "GET /api/accounting/directory HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:31] "GET /api/accounting/directory HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:33] "GET /api/accounting/vendors HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:33] "GET /api/accounting/vendors HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:35] "GET /api/customers?limit=1000 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:35] "GET /api/customers?limit=1000 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:35] "GET /api/v1/invoices?page=1&limit=50 HTTP/1.1" 200 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/accounting_bootstrap.py", line 111, in ensure_accounting_schema
+    _seed_accounts(cur)
+    ~~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/accounting_bootstrap.py", line 84, in _seed_accounts
+    cur.execute(sql, row)
+    ~~~~~~~~~~~^^^^^^^^^^
+psycopg2.errors.CheckViolation: new row for relation "accounts" violates check constraint "accounts_account_type_check"
+DETAIL:  Failing row contains (1514, 4010, Sales Return, Contra Revenue, Contra Revenue, null, debit, Sales returns and refunds, t, f, null, 0.0000, null, 2026-02-20 16:59:35.095844, 2026-02-20 16:59:35.095844, null, null).
+
+127.0.0.1 - - [20/Feb/2026 16:59:35] "GET /api/v1/accounts?account_type=Revenue&is_active=true HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:43] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:43] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:44] "GET /api/order-delivery-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:44] "GET /api/order-delivery-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:44] "GET /api/pos-bootstrap HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:44] "GET /api/accounting/settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:44] "GET /api/accounting/settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/tables/orders HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:54] "GET /api/tables/orders HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 16:59:59] "POST /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:00] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:00] "GET /api/employees HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:00] "GET /api/roles HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:00] "GET /api/employees HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:00] "GET /api/roles HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:00] "POST /api/store-location-settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:01] "GET /api/employee_schedule?start_date=2026-02-13&end_date=2026-03-06 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:01] "GET /api/admin/employee_activity?start_date=2026-01-21&end_date=2026-02-20 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:30] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:00:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:00] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:30] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:01:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:00] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:31] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:02:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:02] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:32] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:33] "GET /api/employee_schedule?start_date=2026-02-13&end_date=2026-03-06 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:36] "GET /api/migrations/square/status HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:36] "GET /api/integrations/doordash/latest-store-deactivation HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:36] "GET /api/migrations/square/status HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:36] "GET /api/integrations HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:36] "GET /api/migrations/square/status HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:36] "GET /api/migrations/square/status HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:41] "GET /api/clockin-notification-settings?store_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:41] "GET /api/schedule-notification-settings?store_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:41] "GET /api/notification-settings?store_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:41] "GET /api/email-templates?store_id=1&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:41] "GET /api/employees/with-email HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:43] "GET /api/register/session?register_id=4&status=open&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:43] "GET /api/register/events?register_id=4&limit=100&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:43] "GET /api/register/session?register_id=4&status=closed&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:43] "GET /api/register/events?register_id=4&limit=100&session_token=KoD2bIv9gZZLi0HaGtLV-TNOdwC7InZJjwOjBXlEuEc HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:49] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:49] "GET /api/dashboard/statistics HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:50] "GET /api/dashboard/statistics?date_range=last_7_days&granularity=daily HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:50] "GET /api/dashboard/top_customers?limit=5 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:50] "GET /api/dashboard/top_customers?limit=5 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:50] "GET /api/dashboard/statistics?date_range=last_7_days&granularity=daily HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:55] "GET /api/dashboard/statistics?date_range=last_4_weeks&granularity=daily HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:03:55] "GET /api/dashboard/top_customers?limit=5 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:02] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:32] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:04:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:02] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:32] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:54] "GET /api/orders/latest HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:05:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:06:02] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:06:33] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+127.0.0.1 - - [20/Feb/2026 17:06:54] "GET /api/orders/latest HTTP/1.1" 200 -
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:06:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:06:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:06:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:06:54] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Feb/2026 17:07:04] "GET /api/shipment-issues?status=open&limit=50 HTTP/1.1" 200 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:07:35] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:07:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:07:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:07:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:07:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:07:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:08:05] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:08:35] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+127.0.0.1 - - [20/Feb/2026 17:08:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:08:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:08:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:08:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:08:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:06] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+psycopg2.pool.PoolError: connection pool exhausted
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+
+The above exception was the direct cause of the following exception:
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 3049, in api_list_receipt_templates
+    conn, cursor = _pg_conn()
+                   ~~~~~~~~^^
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 11827, in api_get_customer_rewards_settings
+    if k != 'access_token'}
+    ^
+Traceback (most recent call last):
+
+The above exception was the direct cause of the following exception:
+
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 11335, in api_get_store_location_settings
+    # Customer display settings
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 3155, in api_get_pos_settings
+    conn, cursor = _pg_conn()
+                   ~~~~~~~~^^
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 2916, in api_get_receipt_settings
+    settings = get_receipt_settings()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 10513, in get_customer_rewards_settings
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 289, in _pg_conn
+    conn = get_connection()
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database.py", line 10322, in get_store_location_settings
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 289, in _pg_conn
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+  File "/Users/daniellopez/POS FR/pos/receipt_generator.py", line 44, in get_receipt_settings
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 11044, in get_display_settings
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/pos-settings HTTP/1.1[0m" 500 -
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/store-location-settings HTTP/1.1[0m" 500 -
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+  File "/Users/daniellopez/POS FR/pos/customer_display_system.py", line 693, in get_display_settings
+    conn, cursor = self.get_connection()
+                   ~~~~~~~~~~~~~~~~~~~^^
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/receipt-settings HTTP/1.1[0m" 500 -
+  File "/Users/daniellopez/POS FR/pos/customer_display_system.py", line 19, in get_connection
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/receipt-templates HTTP/1.1[0m" 500 -
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/customer-display/settings HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/customer-rewards-settings HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[31m[1mGET /api/accounting/settings HTTP/1.1[0m" 401 -
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+Traceback (most recent call last):
+psycopg2.pool.PoolError: connection pool exhausted
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+
+The above exception was the direct cause of the following exception:
+
+
+The above exception was the direct cause of the following exception:
+
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+Traceback (most recent call last):
+Traceback (most recent call last):
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 3049, in api_list_receipt_templates
+    conn, cursor = _pg_conn()
+                   ~~~~~~~~^^
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 289, in _pg_conn
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+  File "/Users/daniellopez/POS FR/pos/database.py", line 7787, in verify_session
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 3155, in api_get_pos_settings
+    conn, cursor = _pg_conn()
+                   ~~~~~~~~^^
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 289, in _pg_conn
+    conn = get_connection()
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/receipt-templates HTTP/1.1[0m" 500 -
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+psycopg2.pool.PoolError: connection pool exhausted
+Traceback (most recent call last):
+psycopg2.pool.PoolError: connection pool exhausted
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[31m[1mGET /api/register/cash-settings?register_id=1&session_token=null HTTP/1.1[0m" 401 -
+
+The above exception was the direct cause of the following exception:
+
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 2916, in api_get_receipt_settings
+    settings = get_receipt_settings()
+  File "/Users/daniellopez/POS FR/pos/receipt_generator.py", line 44, in get_receipt_settings
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 7787, in verify_session
+    conn = get_connection()
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/pos-settings HTTP/1.1[0m" 500 -
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/receipt-settings HTTP/1.1[0m" 500 -
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 11335, in api_get_store_location_settings
+    # Customer display settings
+  File "/Users/daniellopez/POS FR/pos/database.py", line 10322, in get_store_location_settings
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[31m[1mGET /api/register/daily-count?count_date=2026-02-20&session_token=null HTTP/1.1[0m" 401 -
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/store-location-settings HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[31m[1mGET /api/accounting/settings HTTP/1.1[0m" 401 -
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+  File "/Users/daniellopez/POS FR/pos/database.py", line 7787, in verify_session
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 11827, in api_get_customer_rewards_settings
+    if k != 'access_token'}
+    ^
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database.py", line 10513, in get_customer_rewards_settings
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[31m[1mGET /api/register/cash-settings?register_id=1&session_token=null HTTP/1.1[0m" 401 -
+  File "/Users/daniellopez/POS FR/pos/database.py", line 7787, in verify_session
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 11044, in get_display_settings
+  File "/Users/daniellopez/POS FR/pos/customer_display_system.py", line 693, in get_display_settings
+    conn, cursor = self.get_connection()
+                   ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/daniellopez/POS FR/pos/customer_display_system.py", line 19, in get_connection
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/customer-rewards-settings HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[35m[1mGET /api/customer-display/settings HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:09:20] "[31m[1mGET /api/register/daily-count?count_date=2026-02-20&session_token=null HTTP/1.1[0m" 401 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:37] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:09:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:09:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:10:08] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:10:39] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:10:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:10:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:10:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:10:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:10:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:11:10] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:11:41] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:11:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:11:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:11:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:11:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:11:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:12:12] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:12:42] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:12:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:12:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:12:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:12:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:12:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:13:12] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:13:43] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+127.0.0.1 - - [20/Feb/2026 17:13:54] "[35m[1mGET /api/orders/latest HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:13:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:13:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:13:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 110, in get_connection
+    conn = p.getconn()
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 169, in getconn
+    return self._getconn(key)
+           ~~~~~~~~~~~~~^^^^^
+  File "/Users/daniellopez/POS FR/pos/venv/lib/python3.14/site-packages/psycopg2/pool.py", line 92, in _getconn
+    raise PoolError("connection pool exhausted")
+psycopg2.pool.PoolError: connection pool exhausted
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/daniellopez/POS FR/pos/web_viewer.py", line 1933, in api_list_shipment_issues
+    issues = list_shipment_issues(limit=min(limit, 100), resolution_status=status or None)
+  File "/Users/daniellopez/POS FR/pos/database.py", line 9327, in list_shipment_issues
+    conn = get_connection()
+  File "/Users/daniellopez/POS FR/pos/database.py", line 96, in get_connection
+    return get_postgres_connection()
+  File "/Users/daniellopez/POS FR/pos/database_postgres.py", line 114, in get_connection
+    raise ConnectionError(
+    ...<2 lines>...
+    ) from e
+ConnectionError: Failed to connect to PostgreSQL: connection pool exhausted. Check your database connection settings (DATABASE_URL or DB_* variables).
+127.0.0.1 - - [20/Feb/2026 17:13:54] "[35m[1mGET /api/shipment-issues?status=open&limit=50 HTTP/1.1[0m" 500 -

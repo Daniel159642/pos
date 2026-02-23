@@ -106,20 +106,38 @@ def _get_sms_settings(store_id: int = 1):
     return None
 
 
-def get_notification_preferences(store_id: int = 1) -> Dict[str, Dict[str, bool]]:
-    """Return merged preferences (DB + defaults)."""
+def get_notification_preferences(store_id: int = 1) -> Dict[str, Any]:
+    """Return merged preferences (DB + defaults).
+    
+    Boolean fields (email/sms toggles) are coerced to bool.
+    Extended fields (source_filter, recipient_employee_ids, email_enabled, etc.)
+    are passed through as-is so they are not destroyed.
+    """
     s = _get_sms_settings(store_id)
-    prefs = DEFAULT_PREFS.copy()
+    prefs: Dict[str, Any] = {k: dict(v) for k, v in DEFAULT_PREFS.items()}
     if s and s.get('notification_preferences'):
         np = s['notification_preferences']
         if isinstance(np, str):
             try:
-                np = json.loads(np) if np else {}
+                np_dict = json.loads(np) if np else {}
             except json.JSONDecodeError:
-                np = {}
-        for cat, chans in (np or {}).items():
-            if isinstance(chans, dict) and cat in prefs:
-                prefs[cat] = {**prefs[cat], **{k: bool(v) for k, v in chans.items()}}
+                np_dict = {}
+        elif np is None:
+            np_dict = {}
+        else:
+            np_dict = np
+            
+        for cat, chans in np_dict.items():
+            if not isinstance(chans, dict):
+                continue
+            cat_prefs = prefs.setdefault(cat, {})
+            for k, v in chans.items():
+                # Only coerce to bool for the two standard channel keys
+                if k in ('email', 'sms'):
+                    cat_prefs[k] = bool(v)
+                else:
+                    # Preserve lists, ints, strings as-is (e.g. source_filter, recipient_employee_ids)
+                    cat_prefs[k] = v
     return prefs
 
 
@@ -127,6 +145,90 @@ def should_send(store_id: int, category: str, channel: str) -> bool:
     """Check if we should send this type of notification."""
     prefs = get_notification_preferences(store_id)
     return prefs.get(category, {}).get(channel, False)
+
+
+def get_order_email_recipients(store_id: int, order_source: str = '') -> List[str]:
+    """Return the list of email addresses to notify for a new order.
+
+    Honors the notification_preferences.orders extended settings:
+      - email_enabled (bool): overall kill-switch
+      - source_filter (list[str]): ['all'] or ['doordash', 'shopify', ...]; empty => all
+      - recipient_employee_ids (list[int]): specific employees to email; [] => use store email
+    Returns [] if email notifications are disabled or the source is filtered out.
+    """
+    s = _get_sms_settings(store_id)
+    if not s:
+        return []
+    np_raw = s.get('notification_preferences') or {}
+    if isinstance(np_raw, str):
+        try:
+            np_raw = json.loads(np_raw) if np_raw else {}
+        except json.JSONDecodeError:
+            np_raw = {}
+    order_prefs = np_raw.get('orders') or {}
+    if not isinstance(order_prefs, dict):
+        order_prefs = {}
+
+    # Check kill-switch (email_enabled in the extended prefs; fall back to legacy 'email' bool)
+    email_enabled = order_prefs.get('email_enabled')
+    if email_enabled is None:
+        email_enabled = order_prefs.get('email', False)
+        
+    if not email_enabled:
+        return []
+
+    # Source filter: ['all'] or specific sources
+    source_filter0 = order_prefs.get('source_filter')
+    source_filter = source_filter0 if isinstance(source_filter0, list) else ['all']
+    if 'all' not in source_filter and source_filter:
+        normalized_source = (order_source or '').strip().lower()
+        if normalized_source not in [str(f).lower() for f in source_filter]:
+            return []  # This source is filtered out
+
+    # Build recipient list from selected employees
+    employee_ids = order_prefs.get('recipient_employee_ids') or []
+    emails: List[str] = []
+    if employee_ids:
+        try:
+            from database_postgres import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            # Fetch email for each selected employee id
+            placeholders = ','.join(['%s'] * len(employee_ids))
+            cur.execute(
+                f"SELECT email FROM employees WHERE employee_id IN ({placeholders}) AND email IS NOT NULL AND email <> ''",
+                employee_ids
+            )
+            rows = cur.fetchall()
+            conn.close()
+            for row in rows:
+                em = (row['email'] if hasattr(row, 'keys') else row[0] or '').strip()
+                if em and em not in emails:
+                    emails.append(em)
+        except Exception as e:
+            logger.warning("get_order_email_recipients: could not query employees: %s", e)
+
+    # Fall back to store email if no employees configured
+    if not emails:
+        try:
+            from database_postgres import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT store_email FROM store_location_settings WHERE store_id = %s LIMIT 1",
+                (store_id,)
+            )
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                em = (row['store_email'] if hasattr(row, 'keys') else row[0] or '').strip()
+                if em:
+                    emails.append(em)
+        except Exception as e:
+            logger.warning("get_order_email_recipients: could not query store email: %s", e)
+
+    return emails
+
 
 
 def send_email(
@@ -538,30 +640,102 @@ def send_order_notification(store_id: int, order_info: Dict, emails: List[str], 
         order_source = (order_info.get('order_source') or '').strip().lower()
         logo_html = order_info.get('order_source_logo_html', '')
         order_logo_png = None
+
+        # Known third-party source labels for dynamic email title
+        _SOURCE_LABELS = {
+            'doordash': 'DoorDash',
+            'shopify': 'Shopify',
+            'uber_eats': 'Uber Eats',
+            'ubereats': 'Uber Eats',
+            'grubhub': 'Grubhub',
+            'square': 'Square',
+            'clover': 'Clover',
+        }
+
+        # Determine a user-friendly order title
+        fulfillment = (order_info.get('fulfillment_type') or order_info.get('order_type') or '').strip().lower()
+        if order_source in _SOURCE_LABELS:
+            order_title = f"New {_SOURCE_LABELS[order_source]} Order"
+        elif fulfillment in ('pickup', 'pick up', 'carry out', 'carryout', 'take out', 'takeout'):
+            order_title = 'New Pickup Order'
+        elif fulfillment in ('delivery', 'deliver'):
+            order_title = 'New Delivery Order'
+        elif order_source in ('inhouse', 'in_house', 'in-house', 'pos', 'walk_in', 'walkin', 'dine_in', 'dinein', '') or not order_source:
+            order_title = 'New In-House Order'
+        else:
+            order_title = f"New {order_source.replace('_', ' ').title()} Order"
+
         if not logo_html and order_source and order_source in _EMAIL_LOGO_FILES:
+            # No logo HTML yet — generate one from the known order source
             order_logo_png = _get_email_logo_png_bytes(order_source)
             if order_logo_png:
-                alt = order_source.replace("_", " ").title()
-                logo_html = f'<img src="cid:{_EMAIL_LOGO_CID}" alt="{alt}" style="height:40px;width:auto;vertical-align:middle" />'
+                alt = _SOURCE_LABELS.get(order_source, order_source.replace("_", " ").title())
+                logo_html = f'<img src="cid:{_EMAIL_LOGO_CID}" alt="{alt}" style="height:40px;width:auto;display:block;margin:0 auto" />'
+        elif logo_html:
+            # logo_html was pre-supplied but may contain a relative SVG path (e.g. src="/doordash-email-logo.svg")
+            # that email clients can't load. Detect and convert to inline CID PNG.
+            import re as _re
+            for _lk, _fn in _EMAIL_LOGO_FILES.items():
+                if _re.search(r'src=[\'"]/?' + _re.escape(_fn) + r'[\'"]', logo_html):
+                    order_logo_png = _get_email_logo_png_bytes(_lk)
+                    if order_logo_png:
+                        logo_html = _re.sub(
+                            r'(src=[\'"])/?(?:[^"]*/)?' + _re.escape(_fn) + r'([\'"])',
+                            r'\g<1>cid:' + _EMAIL_LOGO_CID + r'\g<2>',
+                            logo_html
+                        )
+                    break
+
+        # For in-house / POS orders with no third-party logo, show Lucide Home SVG
+        if not logo_html and (not order_source or order_source in ('inhouse', 'in_house', 'in-house', 'pos', 'walk_in', 'walkin', 'dine_in', 'dinein')):
+            logo_html = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
+                '<polyline points="9 22 9 12 15 12 15 22"/>'
+                '</svg>'
+            )
+
+        txn_fee = float(order_info.get('transaction_fee', 0) or 0)
+        txn_fee_str = f"${txn_fee:.2f}" if txn_fee else ""
+        txn_fee_display = "" if txn_fee else "display:none"
         vars_.update({
-            "order_number": order_info.get('order_number', order_info.get('order_id', '?')),
-            "total": str(order_info.get('total', '0')),
-            "subtotal": str(order_info.get('subtotal', order_info.get('total', '0'))),
-            "tax": str(order_info.get('tax', '0')),
-            "tip": str(order_info.get('tip', '0')),
-            "items_html": order_info.get('items_html', ''),
-            "barcode_html": order_info.get('barcode_html', ''),
-            "order_url": order_info.get('order_url', '#'),
-            "order_source_logo_html": logo_html,
-            "order_details_html": order_info.get('order_details_html', ''),
+            "order_number":           order_info.get('order_number', order_info.get('order_id', '?')),
+            "total":                  f"{float(order_info.get('total', 0) or 0):.2f}",
+            "subtotal":               f"{float(order_info.get('subtotal', order_info.get('total', 0)) or 0):.2f}",
+            "tax":                    f"{float(order_info.get('tax', 0) or 0):.2f}",
+            "tip":                    f"{float(order_info.get('tip', 0) or 0):.2f}",
+            "transaction_fee":        txn_fee_str,
+            "transaction_fee_raw":    f"{txn_fee:.2f}",
+            "transaction_fee_display": txn_fee_display,
+            "employee_name":          order_info.get('employee_name', ''),
+            "order_date":             order_info.get('order_date', ''),
+            "order_time":             order_info.get('order_time', ''),
+            "meta_line":              order_info.get('meta_line', ''),
+            "customer_info_html":     order_info.get('customer_info_html', ''),
+            "payment_method":         (order_info.get('payment_method') or '').replace('_', ' ').title(),
+            "items_html":             order_info.get('items_html', ''),
+            "barcode_html":           order_info.get('barcode_html', ''),
+            "order_url":              order_info.get('order_url', '#'),
+            "order_source_logo_html":  logo_html,
+            "order_details_html":     order_info.get('order_details_html', ''),
+            "order_title":            order_title,
         })
+
         subj = render_template(tpl.get('subject_template', ''), vars_) or subj
         body_html = render_template(tpl.get('body_html_template', ''), vars_) or body_html
         body = render_template(tpl.get('body_text_template', ''), vars_) or body
 
-    inline_images = None
+    inline_images = []
     if order_logo_png:
-        inline_images = [(_EMAIL_LOGO_CID, order_logo_png)]
+        inline_images.append((_EMAIL_LOGO_CID, order_logo_png))
+    # Attach order barcode as CID so it renders in all email clients (data: URLs are blocked)
+    barcode_bytes = order_info.get('barcode_png_bytes')
+    if barcode_bytes:
+        inline_images.append(('orderbarcode', barcode_bytes))
+    if not inline_images:
+        inline_images = None
     if should_send(store_id, "orders", "email") and emails:
         for addr in emails:
             r = send_email(addr, subj, body_html, body, store_id, inline_images=inline_images)
@@ -1122,4 +1296,833 @@ def send_report_notification(store_id: int, to_emails: List[str], subject: str, 
     for addr in to_emails:
         r = send_email(addr, subject, body_html, body_text, store_id)
         results["email"].append({"to": addr, **r})
+    return results
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Clock-in / Clock-out Notification System
+# ───────────────────────────────────────────────────────────────────────────────
+
+def get_clockin_notification_settings(store_id: int = 1) -> Dict:
+    """Return the clockin_notification_settings row for store_id as a plain dict."""
+    try:
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM clockin_notification_settings WHERE store_id = %s", (store_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            d = dict(row) if hasattr(row, 'keys') else {}
+            if not d:
+                cols = ['id','store_id','notify_admin_on_clockin','notify_admin_on_clockout',
+                        'admin_email_ids','notify_employee_self','late_alert_enabled',
+                        'late_alert_threshold_min','late_alert_to_employee','late_alert_to_admin',
+                        'late_alert_delay_min','overtime_alert_enabled','overtime_threshold_hours','updated_at']
+                d = dict(zip(cols, row))
+            return d
+    except Exception as e:
+        logger.debug("clockin settings fetch error: %s", e)
+    return {}
+
+
+def save_clockin_notification_settings(store_id: int, settings: Dict) -> bool:
+    """Upsert clockin_notification_settings for store_id."""
+    try:
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO clockin_notification_settings
+                (store_id, notify_admin_on_clockin, notify_admin_on_clockout, admin_email_ids,
+                 notify_employee_self, late_alert_enabled, late_alert_threshold_min,
+                 late_alert_to_employee, late_alert_to_admin, late_alert_delay_min,
+                 overtime_alert_enabled, overtime_threshold_hours, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+            ON CONFLICT (store_id) DO UPDATE SET
+                notify_admin_on_clockin  = EXCLUDED.notify_admin_on_clockin,
+                notify_admin_on_clockout = EXCLUDED.notify_admin_on_clockout,
+                admin_email_ids          = EXCLUDED.admin_email_ids,
+                notify_employee_self     = EXCLUDED.notify_employee_self,
+                late_alert_enabled       = EXCLUDED.late_alert_enabled,
+                late_alert_threshold_min = EXCLUDED.late_alert_threshold_min,
+                late_alert_to_employee   = EXCLUDED.late_alert_to_employee,
+                late_alert_to_admin      = EXCLUDED.late_alert_to_admin,
+                late_alert_delay_min     = EXCLUDED.late_alert_delay_min,
+                overtime_alert_enabled   = EXCLUDED.overtime_alert_enabled,
+                overtime_threshold_hours = EXCLUDED.overtime_threshold_hours,
+                updated_at               = NOW()
+        """, (
+            store_id,
+            settings.get('notify_admin_on_clockin', False),
+            settings.get('notify_admin_on_clockout', False),
+            settings.get('admin_email_ids', []),
+            settings.get('notify_employee_self', False),
+            settings.get('late_alert_enabled', False),
+            settings.get('late_alert_threshold_min', 10),
+            settings.get('late_alert_to_employee', False),
+            settings.get('late_alert_to_admin', True),
+            settings.get('late_alert_delay_min', 15),
+            settings.get('overtime_alert_enabled', False),
+            settings.get('overtime_threshold_hours', 8.0),
+        ))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("save_clockin_settings error: %s", e)
+    return False
+
+
+def _get_admin_emails_for_clockin(store_id: int, settings: Dict) -> List[str]:
+    """Resolve admin_email_ids → email addresses."""
+    ids = settings.get('admin_email_ids') or []
+    if not ids:
+        return []
+    try:
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT email FROM employees WHERE employee_id = ANY(%s) AND email IS NOT NULL AND email != ''",
+            (list(ids),)
+        )
+        emails = [r[0] if isinstance(r, (list, tuple)) else r.get('email','') for r in cur.fetchall()]
+        conn.close()
+        return [e for e in emails if e]
+    except Exception as e:
+        logger.debug("admin email lookup error: %s", e)
+    return []
+
+
+def _build_clockin_email_html(
+    event_type: str,           # 'clock_in' | 'clock_out' | 'late_alert'
+    employee_name: str,
+    employee_email: str,
+    event_time_str: str,
+    store_name: str = "Your Store",
+    scheduled_time_str: str = "",
+    minutes_late: int = 0,
+    hours_worked: Optional[float] = None,
+    overtime_hours: Optional[float] = None,
+    is_late: bool = False,
+    is_early: bool = False,
+    is_unscheduled: bool = False,
+    notes: str = "",
+) -> str:
+    """Build a rich HTML email for clock events matching the order email design."""
+
+    # ── Icon SVGs (Lucide) ────────────────────────────────────────────────────
+    ICON_IN  = ('<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>'
+                '<polyline points="10 17 15 12 10 7"/>'
+                '<line x1="15" y1="12" x2="3" y2="12"/>'
+                '</svg>')
+    ICON_OUT = ('<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
+                '<polyline points="16 17 21 12 16 7"/>'
+                '<line x1="21" y1="12" x2="9" y2="12"/>'
+                '</svg>')
+    ICON_LATE = ('<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                 'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                 'style="display:block;margin:0 auto">'
+                 '<circle cx="12" cy="12" r="10"/>'
+                 '<polyline points="12 6 12 12 16 14"/>'
+                 '</svg>')
+
+    icon_svg = ICON_LATE if event_type == 'late_alert' else (ICON_IN if event_type == 'clock_in' else ICON_OUT)
+
+    # ── Title + subtitle ──────────────────────────────────────────────────────
+    if event_type == 'clock_in':
+        title = f"{employee_name} Clocked In"
+        subtitle = "Clock-In Notification"
+    elif event_type == 'clock_out':
+        title = f"{employee_name} Clocked Out"
+        subtitle = "Clock-Out Notification"
+    else:
+        title = f"Late Alert — {employee_name}"
+        subtitle = "Employee Running Late"
+
+    # ── Status badge ──────────────────────────────────────────────────────────
+    if event_type == 'clock_in':
+        if is_unscheduled:
+            badge = '<div style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Unscheduled Shift</div>'
+        elif is_late and minutes_late > 0:
+            badge = f'<div style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">{minutes_late} min late</div>'
+        elif is_early:
+            badge = '<div style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Early ✓</div>'
+        else:
+            badge = '<div style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">On Time ✓</div>'
+    elif event_type == 'clock_out':
+        if overtime_hours and overtime_hours > 0:
+            badge = f'<div style="display:inline-block;background:#fce4ec;color:#c62828;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">{overtime_hours:.1f}h overtime</div>'
+        else:
+            badge = '<div style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Shift Complete ✓</div>'
+    else:
+        badge = f'<div style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">{minutes_late} min past schedule</div>'
+
+    # ── Card rows ─────────────────────────────────────────────────────────────
+    _LBL = 'color:#90a4ae;font-size:10px;text-transform:uppercase;padding:5px 14px 5px 0;white-space:nowrap;vertical-align:middle'
+    _VAL = 'color:#37474f;font-size:13px;font-weight:500;padding:5px 0;vertical-align:middle'
+    _VALBOLD = 'color:#1565c0;font-size:13px;font-weight:700;padding:5px 0;vertical-align:middle'
+
+    rows = f'<tr><td style="{_LBL}">Employee</td><td style="{_VAL}">{employee_name}</td></tr>'
+    if employee_email:
+        rows += f'<tr><td style="{_LBL}">Email</td><td style="{_VAL}"><a href="mailto:{employee_email}" style="color:#1976d2;text-decoration:none">{employee_email}</a></td></tr>'
+
+    if event_type in ('clock_in', 'late_alert'):
+        rows += f'<tr><td style="{_LBL}">Clocked In</td><td style="{_VALBOLD}">{event_time_str}</td></tr>'
+        if scheduled_time_str:
+            rows += f'<tr><td style="{_LBL}">Scheduled</td><td style="{_VAL}">{scheduled_time_str}</td></tr>'
+        if is_unscheduled:
+            rows += f'<tr><td style="{_LBL}">Status</td><td style="color:#e65100;font-size:13px;font-weight:600;padding:5px 0">Unscheduled shift</td></tr>'
+        elif is_late and minutes_late > 0:
+            rows += f'<tr><td style="{_LBL}">Late By</td><td style="color:#e65100;font-size:13px;font-weight:700;padding:5px 0">{minutes_late} minutes</td></tr>'
+        elif is_early:
+            rows += f'<tr><td style="{_LBL}">Status</td><td style="color:#2e7d32;font-size:13px;font-weight:600;padding:5px 0">Clocked in early</td></tr>'
+        else:
+            rows += f'<tr><td style="{_LBL}">Status</td><td style="color:#2e7d32;font-size:13px;font-weight:600;padding:5px 0">On time</td></tr>'
+    else:
+        rows += f'<tr><td style="{_LBL}">Clocked Out</td><td style="{_VALBOLD}">{event_time_str}</td></tr>'
+        if hours_worked is not None:
+            rows += f'<tr><td style="{_LBL}">Hours Worked</td><td style="{_VAL}">{hours_worked:.2f} hours</td></tr>'
+        if overtime_hours and overtime_hours > 0:
+            rows += f'<tr><td style="{_LBL}">Overtime</td><td style="color:#c62828;font-size:13px;font-weight:700;padding:5px 0">+{overtime_hours:.2f} hours</td></tr>'
+        elif scheduled_time_str:
+            rows += f'<tr><td style="{_LBL}">Scheduled End</td><td style="{_VAL}">{scheduled_time_str}</td></tr>'
+
+    if notes:
+        rows += f'<tr><td style="{_LBL};vertical-align:top">Notes</td><td style="{_VAL};font-style:italic">{notes}</td></tr>'
+
+    # ── Assemble full email ───────────────────────────────────────────────────
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="color-scheme" content="light only">
+<title>{title}</title>
+<style>
+:root{{color-scheme:light only}}
+html,body{{color-scheme:light only;margin:0;padding:0;background:linear-gradient(135deg,#e3f2fd 0%,#bbdefb 50%,#90caf9 100%)}}
+@media(prefers-color-scheme:dark){{html,body{{background:linear-gradient(135deg,#e3f2fd,#bbdefb,#90caf9)!important;color:#333!important}}}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif}}
+</style>
+</head>
+<body>
+<div style="width:100%;padding:32px 16px 20px;box-sizing:border-box">
+  <div style="max-width:520px;margin:0 auto">
+    <!-- Main card -->
+    <div style="background:#fff;border-radius:22px;border:1px solid #e3f2fd;padding:28px 36px 36px;text-align:center;box-shadow:0 8px 32px rgba(33,150,243,.18);position:relative;overflow:hidden">
+      <!-- Top accent bar -->
+      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#42a5f5,#2196f3,#1976d2)"></div>
+
+      <!-- Icon -->
+      <div style="margin:8px auto 14px">{icon_svg}</div>
+
+      <!-- Title -->
+      <h1 style="color:#1565c0;font-size:22px;margin:0 0 4px;font-weight:700">{title}</h1>
+      <div style="color:#90a4ae;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">{store_name}</div>
+      {badge}
+
+      <!-- Detail card -->
+      <div style="background:#f5faff;border-radius:12px;padding:14px 18px;margin-top:18px;text-align:left;border:1px solid rgba(33,150,243,.18)">
+        <div style="font-size:11px;font-weight:600;color:#1565c0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">{subtitle}</div>
+        <table style="width:100%;border-collapse:collapse">{rows}</table>
+      </div>
+    </div>
+
+    <!-- Swftly footer -->
+    <div style="text-align:center;padding:14px 16px 24px;margin-top:4px">
+      <hr style="border:none;border-top:1px solid rgba(33,150,243,.15);margin:0 0 12px">
+      <div style="font-size:15px;font-weight:700;color:#1565c0;letter-spacing:.5px">Swftly</div>
+      <div style="font-size:11px;color:#90a4ae;letter-spacing:.3px">Point of Sale &amp; Business Management Platform</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>"""
+    return html
+
+
+def send_clockin_notification(
+    store_id: int,
+    employee_id: int,
+    employee_name: str,
+    employee_email: str,
+    event_type: str,            # 'clock_in' | 'clock_out'
+    event_time,                 # datetime object
+    scheduled_start=None,       # time or str
+    scheduled_end=None,
+    minutes_late: int = 0,
+    is_late: bool = False,
+    is_early: bool = False,
+    is_unscheduled: bool = False,
+    hours_worked: Optional[float] = None,
+    overtime_hours: Optional[float] = None,
+    notes: str = "",
+) -> Dict[str, List[Dict]]:
+    """Send clock-in or clock-out email notification per store settings."""
+    results: Dict[str, List[Dict]] = {"email": []}
+    settings = get_clockin_notification_settings(store_id)
+    if not settings:
+        return results
+
+    store_settings = _get_store_settings(store_id)
+    store_name = (store_settings or {}).get('store_name') or (store_settings or {}).get('business_name') or 'Your Store'
+
+    # Format times
+    from datetime import datetime as _dt
+    if hasattr(event_time, 'strftime'):
+        event_time_str = event_time.strftime('%I:%M %p').lstrip('0') + '  ·  ' + event_time.strftime('%b %d, %Y')
+    else:
+        event_time_str = str(event_time)
+
+    def _fmt_time(t):
+        if t is None:
+            return ''
+        if hasattr(t, 'strftime'):
+            return t.strftime('%I:%M %p').lstrip('0')
+        s = str(t)
+        try:
+            from datetime import datetime as _dt2
+            parsed = _dt2.strptime(s[:5], '%H:%M')
+            return parsed.strftime('%I:%M %p').lstrip('0')
+        except Exception:
+            return s
+
+    sched_str = _fmt_time(scheduled_start if event_type == 'clock_in' else scheduled_end)
+
+    # Build HTML
+    html = _build_clockin_email_html(
+        event_type=event_type,
+        employee_name=employee_name,
+        employee_email=employee_email,
+        event_time_str=event_time_str,
+        store_name=store_name,
+        scheduled_time_str=sched_str,
+        minutes_late=minutes_late,
+        hours_worked=hours_worked,
+        overtime_hours=overtime_hours,
+        is_late=is_late,
+        is_early=is_early,
+        is_unscheduled=is_unscheduled,
+        notes=notes,
+    )
+
+    is_in = (event_type == 'clock_in')
+    subject = (f"{'Clock-In' if is_in else 'Clock-Out'}: {employee_name}"
+               + (f" — {minutes_late} min late" if is_late and minutes_late > 0 else "")
+               + (f" — {overtime_hours:.1f}h overtime" if not is_in and overtime_hours and overtime_hours > 0 else ""))
+
+    text = f"{subject}\n{store_name}\n\nEmployee: {employee_name}\nTime: {event_time_str}\n"
+    if sched_str:
+        text += f"Scheduled: {sched_str}\n"
+    if is_unscheduled:
+        text += f"Status: Unscheduled Shift\n"
+    elif is_late:
+        text += f"Late by: {minutes_late} minutes\n"
+    if hours_worked is not None:
+        text += f"Hours worked: {hours_worked:.2f}\n"
+
+    to_send = set()
+
+    # Notify admin employees
+    notify_admin = settings.get('notify_admin_on_clockin' if is_in else 'notify_admin_on_clockout', False)
+    if notify_admin:
+        admin_emails = _get_admin_emails_for_clockin(store_id, settings)
+        to_send.update(admin_emails)
+
+    # Notify employee themselves
+    if settings.get('notify_employee_self', False) and employee_email:
+        to_send.add(employee_email)
+
+    for addr in to_send:
+        r = send_email(addr, subject, html, text, store_id)
+        results["email"].append({"to": addr, **r})
+
+    return results
+
+
+def send_late_alert_notification(
+    store_id: int,
+    employee_id: int,
+    employee_name: str,
+    employee_email: str,
+    scheduled_start_str: str,
+    now_str: str,
+    minutes_late: int,
+) -> Dict[str, List[Dict]]:
+    """Send a 'this employee hasn't clocked in yet' alert after late_alert_delay_min."""
+    results: Dict[str, List[Dict]] = {"email": []}
+    settings = get_clockin_notification_settings(store_id)
+    if not settings or not settings.get('late_alert_enabled', False):
+        return results
+
+    store_settings = _get_store_settings(store_id)
+    store_name = (store_settings or {}).get('store_name') or (store_settings or {}).get('business_name') or 'Your Store'
+
+    html = _build_clockin_email_html(
+        event_type='late_alert',
+        employee_name=employee_name,
+        employee_email=employee_email,
+        event_time_str=now_str,
+        store_name=store_name,
+        scheduled_time_str=scheduled_start_str,
+        minutes_late=minutes_late,
+        is_late=True,
+    )
+
+    subject = f"Late Alert: {employee_name} has not clocked in ({minutes_late} min late)"
+    text = f"{subject}\n{store_name}\n\nScheduled: {scheduled_start_str}\nCurrent time: {now_str}\nLate by: {minutes_late} minutes"
+
+    to_send = set()
+    if settings.get('late_alert_to_admin', True):
+        to_send.update(_get_admin_emails_for_clockin(store_id, settings))
+    if settings.get('late_alert_to_employee', False) and employee_email:
+        to_send.add(employee_email)
+
+    for addr in to_send:
+        r = send_email(addr, subject, html, text, store_id)
+        results["email"].append({"to": addr, **r})
+
+    return results
+
+# ── Schedule Notification Settings ───────────────────────────────────────────
+
+def get_schedule_notification_settings(store_id: int = 1) -> Dict:
+    conn = None
+    try:
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM schedule_notification_settings WHERE store_id = %s", (store_id,))
+        row = cur.fetchone()
+        if not row:
+            return {
+                'store_id': store_id,
+                'employee_schedule_view': 'shifts_only',
+                'notify_on_edit': True,
+                'admin_email_ids': []
+            }
+        d = dict(row) if hasattr(row, 'keys') else dict(zip([c[0] for c in cur.description], row))
+        return d
+    except Exception as e:
+        print(f"Error getting schedule notif settings: {e}")
+        return {}
+    finally:
+        if conn:
+            conn.close()
+
+def save_schedule_notification_settings(store_id: int, data: Dict) -> bool:
+    conn = None
+    try:
+        from database_postgres import get_connection
+        import json
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO schedule_notification_settings 
+            (store_id, employee_schedule_view, notify_on_edit, admin_email_ids)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (store_id) DO UPDATE SET
+                employee_schedule_view = EXCLUDED.employee_schedule_view,
+                notify_on_edit = EXCLUDED.notify_on_edit,
+                admin_email_ids = EXCLUDED.admin_email_ids
+        """, (
+            store_id,
+            data.get('employee_schedule_view', 'shifts_only'),
+            bool(data.get('notify_on_edit', True)),
+            json.dumps(data.get('admin_email_ids', []))
+        ))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error saving schedule notif settings: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
+def send_schedule_notification_advanced(
+    store_id: int,
+    period_id: int,
+    employees_data: List[Dict],
+    is_edit: bool = False
+) -> Dict[str, List[Dict]]:
+    """
+    Sends personalized schedule emails to employees.
+    employees_data = [
+      {
+        'employee_id': 1,
+        'name': 'John Doe',
+        'email': 'john@example.com',
+        'is_admin': False,
+        'shifts': [ {'date_str':'Mon, Feb 20', 'time_str':'9:00 AM - 5:00 PM', 'start_dt':datetime, 'end_dt':datetime, 'position':'Bar'}, ... ],
+        'changed_shifts': [ shift_id1, shift_id2 ]  # empty if publish
+      }
+    ]
+    """
+    results: Dict[str, List[Dict]] = {"email": []}
+    if not should_send(store_id, "scheduling", "email"):
+        return results
+
+    settings = get_schedule_notification_settings(store_id)
+    view_pref = settings.get('employee_schedule_view', 'shifts_only')
+    admin_ids = settings.get('admin_email_ids', [])
+
+    tpl = get_email_template(store_id, "schedule")
+    store_settings = _get_store_settings(store_id)
+    store_name = (store_settings or {}).get('store_name') or (store_settings or {}).get('business_name') or 'Your Store'
+    base_vars = _build_store_header_vars(store_settings)
+    if tpl: _merge_order_design_into_vars(base_vars, tpl)
+
+    import urllib.parse
+
+    # Pre-build "full schedule" table if needed
+    full_schedule_html = ""
+    # We can group by date, then print each shift
+    all_shifts = []
+    for ed in employees_data:
+        for s in ed.get('shifts', []):
+            all_shifts.append({**s, 'emp_name': ed['name']})
+    all_shifts.sort(key=lambda x: x['start_dt'])
+
+    if all_shifts:
+        full_schedule_html += f'<table style="width:100%; border-collapse:collapse; margin-top:20px; font-family:Inter,-apple-system,sans-serif; font-size:14px;">'
+        full_schedule_html += f'<tr style="background:#f1f5f9;"><th style="padding:10px;text-align:left;border-bottom:2px solid #cbd5e1;">Date</th>'
+        full_schedule_html += f'<th style="padding:10px;text-align:left;border-bottom:2px solid #cbd5e1;">Time</th>'
+        full_schedule_html += f'<th style="padding:10px;text-align:left;border-bottom:2px solid #cbd5e1;">Employee</th>'
+        full_schedule_html += f'<th style="padding:10px;text-align:left;border-bottom:2px solid #cbd5e1;">Position</th></tr>'
+        for s in all_shifts:
+            full_schedule_html += f'<tr><td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#334155;">{s["date_str"]}</td>'
+            full_schedule_html += f'<td style="padding:10px;border-bottom:1px solid #e2e8f0;color:#475569;">{s["time_str"]}</td>'
+            full_schedule_html += f'<td style="padding:10px;border-bottom:1px solid #e2e8f0;color:#475569;">{s["emp_name"]}</td>'
+            full_schedule_html += f'<td style="padding:10px;border-bottom:1px solid #e2e8f0;color:#64748b;">{s.get("position","")}</td></tr>'
+        full_schedule_html += '</table>'
+
+    for ed in employees_data:
+        email = (ed.get('email') or '').strip()
+        if not email:
+            continue
+        
+        # If this is an edit pass, skip employees who had no changed shifts (unless they are admin)
+        is_admin = ed['employee_id'] in admin_ids
+        if is_edit and not is_admin and not ed.get('changed_shifts'):
+            continue
+
+        vars_ = dict(base_vars)
+        
+        subj = f"Schedule {'Published' if not is_edit else 'Updated'}: {store_name}"
+        
+        # Build individual shift table
+        shifts_html = ""
+        if ed.get('shifts'):
+            shifts_html += f'<table style="width:100%; border-collapse:collapse; margin-top:10px; font-family:Inter,-apple-system,sans-serif; font-size:14px; background:#fff; border-radius:8px; overflow:hidden;">'
+            for s in ed['shifts']:
+                is_changed = is_edit and (s.get('scheduled_shift_id') in ed.get('changed_shifts', []))
+                row_bg = '#fef3c7' if is_changed else '#ffffff'
+                shifts_html += f'<tr style="background:{row_bg};">'
+                shifts_html += f'<td style="padding:12px;border-bottom:1px solid #f1f5f9;font-weight:600;color:#0f172a;width:120px;">{s["date_str"]}</td>'
+                shifts_html += f'<td style="padding:12px;border-bottom:1px solid #f1f5f9;color:#334155;">{s["time_str"]}<br/><span style="font-size:12px;color:#64748b;">{s.get("position","")}</span></td>'
+                
+                # Calendar links
+                gcal = ""
+                if s.get('start_dt') and s.get('end_dt'):
+                    stz = s['start_dt'].strftime('%Y%m%dT%H%M%SZ')
+                    etz = s['end_dt'].strftime('%Y%m%dT%H%M%SZ')
+                    t_enc = urllib.parse.quote(f"Shift at {store_name}")
+                    d_enc = urllib.parse.quote(f"Position: {s.get('position','')}")
+                    
+                    # Google
+                    gcal_url = f"https://calendar.google.com/calendar/r/eventedit?text={t_enc}&dates={stz}/{etz}&details={d_enc}"
+                    gcal += f'<a href="{gcal_url}" style="font-size:11px;color:#fff;background:#4285F4;text-decoration:none;display:inline-block;padding:4px 8px;border-radius:4px;margin-right:4px;margin-top:4px;">Google</a>'
+                    
+                    # Outlook
+                    out_url = f"https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&startdt={stz}&enddt={etz}&subject={t_enc}&body={d_enc}"
+                    gcal += f'<a href="{out_url}" style="font-size:11px;color:#fff;background:#0078D4;text-decoration:none;display:inline-block;padding:4px 8px;border-radius:4px;margin-right:4px;margin-top:4px;">Outlook</a>'
+                    
+                    # Office 365
+                    o365_url = f"https://outlook.office.com/calendar/0/deeplink/compose?path=/calendar/action/compose&startdt={stz}&enddt={etz}&subject={t_enc}&body={d_enc}"
+                    gcal += f'<a href="{o365_url}" style="font-size:11px;color:#fff;background:#eb3c00;text-decoration:none;display:inline-block;padding:4px 8px;border-radius:4px;margin-top:4px;">Office 365</a>'
+                
+                shifts_html += f'<td style="padding:12px;border-bottom:1px solid #f1f5f9;text-align:right;">{gcal}</td>'
+                shifts_html += f'</tr>'
+            shifts_html += '</table>'
+        else:
+            shifts_html = "<p style='color:#64748b'>No shifts scheduled for this period.</p>"
+
+        # Determine what to show
+        show_full = is_admin or (view_pref == 'full_schedule')
+        
+        msg_html = f"<div style='margin-bottom:20px;'><strong style='font-size:16px;'>Hello {ed['name']},</strong><p style='color:#475569;'>Your schedule has been {'updated' if is_edit else 'published'} for the upcoming period.</p></div>"
+        
+        msg_html += f"<h3 style='margin:0 0 10px 0;font-size:14px;color:#334155;'>Your Shifts:</h3>{shifts_html}"
+        
+        if show_full and full_schedule_html:
+            msg_html += f"<div style='margin-top:30px;padding-top:20px;border-top:2px dashed #e2e8f0;'><h3 style='margin:0 0 10px 0;font-size:14px;color:#334155;'>Full Team Schedule:</h3>{full_schedule_html}</div>"
+
+        body_html = msg_html
+        if tpl:
+            vars_["message"] = msg_html
+            subj = render_template(tpl.get('subject_template', ''), vars_) or subj
+            # We inject our table directly into the body html template
+            dtpl = tpl.get('body_html_template', '')
+            body_html = render_template(dtpl, vars_) or body_html
+
+        r = send_email(email, subj, body_html, "Your schedule has been updated. Please check the email HTML version.", store_id)
+        results["email"].append({"to": email, **r})
+
+    return results
+
+# ── Register Notification Settings ───────────────────────────────────────────
+
+def get_register_notification_settings(store_id: int = 1) -> Dict:
+    try:
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM register_notification_settings WHERE store_id = %s", (store_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            d = dict(row) if hasattr(row, 'keys') else {}
+            if not d:
+                cols = ['id','store_id','notify_admin_on_open','notify_admin_on_close',
+                        'notify_admin_on_drop','notify_admin_on_withdraw','admin_email_ids',
+                        'notify_employee_self','updated_at']
+                d = dict(zip(cols, row))
+            return d
+    except Exception as e:
+        logger.debug("register settings fetch error: %s", e)
+    return {}
+
+def save_register_notification_settings(store_id: int, settings: Dict) -> bool:
+    try:
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO register_notification_settings
+                (store_id, notify_admin_on_open, notify_admin_on_close, notify_admin_on_drop,
+                 notify_admin_on_withdraw, admin_email_ids, notify_employee_self, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+            ON CONFLICT (store_id) DO UPDATE SET
+                notify_admin_on_open     = EXCLUDED.notify_admin_on_open,
+                notify_admin_on_close    = EXCLUDED.notify_admin_on_close,
+                notify_admin_on_drop     = EXCLUDED.notify_admin_on_drop,
+                notify_admin_on_withdraw = EXCLUDED.notify_admin_on_withdraw,
+                admin_email_ids          = EXCLUDED.admin_email_ids,
+                notify_employee_self     = EXCLUDED.notify_employee_self,
+                updated_at               = NOW()
+        """, (
+            store_id,
+            settings.get('notify_admin_on_open', False),
+            settings.get('notify_admin_on_close', False),
+            settings.get('notify_admin_on_drop', False),
+            settings.get('notify_admin_on_withdraw', False),
+            settings.get('admin_email_ids', []),
+            settings.get('notify_employee_self', False),
+        ))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error("save_register_settings error: %s", e)
+    return False
+
+def _build_register_email_html(
+    event_type: str,           # 'open' | 'close' | 'drop' | 'withdraw'
+    employee_name: str,
+    employee_email: str,
+    event_time_str: str,
+    store_name: str = "Your Store",
+    amount: Optional[float] = None,
+    notes: str = "",
+) -> str:
+    ICON_OPEN  = ('<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                  'fill="none" stroke="#2e7d32" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                  'style="display:block;margin:0 auto">'
+                  '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>'
+                  '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+                  '</svg>')
+    ICON_CLOSE = ('<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                  'fill="none" stroke="#c62828" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                  'style="display:block;margin:0 auto">'
+                  '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>'
+                  '<path d="M7 11V7a5 5 0 0 1 9.9-1"/>'
+                  '</svg>')
+    ICON_MONEY = ('<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                  'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                  'style="display:block;margin:0 auto">'
+                  '<line x1="12" y1="1" x2="12" y2="23"/>'
+                  '<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'
+                  '</svg>')
+
+    if event_type == 'open':
+        icon_svg = ICON_OPEN
+        title = "Register Opened"
+        subtitle = "Cash Register Opened"
+        badge = '<div style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Register Open</div>'
+    elif event_type == 'close':
+        icon_svg = ICON_CLOSE
+        title = "Register Closed"
+        subtitle = "Cash Register Closed"
+        badge = '<div style="display:inline-block;background:#fce4ec;color:#c62828;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Register Closed</div>'
+    elif event_type == 'drop':
+        icon_svg = ICON_MONEY
+        title = "Cash Drop"
+        subtitle = "Register Cash Drop"
+        badge = '<div style="display:inline-block;background:#e3f2fd;color:#1565c0;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Deposit</div>'
+    else:
+        icon_svg = ICON_MONEY
+        title = "Cash Withdrawn"
+        subtitle = "Register Payout"
+        badge = '<div style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;margin-top:6px;letter-spacing:.3px">Withdrawal</div>'
+
+    _LBL = 'color:#90a4ae;font-size:10px;text-transform:uppercase;padding:5px 14px 5px 0;white-space:nowrap;vertical-align:middle'
+    _VAL = 'color:#37474f;font-size:13px;font-weight:500;padding:5px 0;vertical-align:middle'
+    _VALBOLD = 'color:#1565c0;font-size:13px;font-weight:700;padding:5px 0;vertical-align:middle'
+
+    rows = f'<tr><td style="{_LBL}">Employee</td><td style="{_VAL}">{employee_name}</td></tr>'
+    if employee_email:
+        rows += f'<tr><td style="{_LBL}">Email</td><td style="{_VAL}"><a href="mailto:{employee_email}" style="color:#1976d2;text-decoration:none">{employee_email}</a></td></tr>'
+
+    rows += f'<tr><td style="{_LBL}">Time</td><td style="{_VALBOLD}">{event_time_str}</td></tr>'
+    
+    if amount is not None:
+        try:
+            amt_float = float(amount)
+            rows += f'<tr><td style="{_LBL}">Amount</td><td style="{_VALBOLD}">${amt_float:.2f}</td></tr>'
+        except (ValueError, TypeError):
+            rows += f'<tr><td style="{_LBL}">Amount</td><td style="{_VALBOLD}">${amount}</td></tr>'
+
+    if notes:
+        rows += f'<tr><td style="{_LBL};vertical-align:top">Notes</td><td style="{_VAL};font-style:italic">{notes}</td></tr>'
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="color-scheme" content="light only">
+<title>{title}</title>
+<style>
+:root{{color-scheme:light only}}
+html,body{{color-scheme:light only;margin:0;padding:0;background:linear-gradient(135deg,#e3f2fd 0%,#bbdefb 50%,#90caf9 100%)}}
+@media(prefers-color-scheme:dark){{html,body{{background:linear-gradient(135deg,#e3f2fd,#bbdefb,#90caf9)!important;color:#333!important}}}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif}}
+</style>
+</head>
+<body>
+<div style="width:100%;padding:32px 16px 20px;box-sizing:border-box">
+  <div style="max-width:520px;margin:0 auto">
+    <!-- Main card -->
+    <div style="background:#fff;border-radius:22px;border:1px solid #e3f2fd;padding:28px 36px 36px;text-align:center;box-shadow:0 8px 32px rgba(33,150,243,.18);position:relative;overflow:hidden">
+      <!-- Top accent bar -->
+      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#42a5f5,#2196f3,#1976d2)"></div>
+
+      <!-- Icon -->
+      <div style="margin:8px auto 14px">{icon_svg}</div>
+
+      <!-- Title -->
+      <h1 style="color:#1565c0;font-size:22px;margin:0 0 4px;font-weight:700">{title}</h1>
+      <div style="color:#90a4ae;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">{store_name}</div>
+      {badge}
+
+      <!-- Detail card -->
+      <div style="background:#f5faff;border-radius:12px;padding:14px 18px;margin-top:18px;text-align:left;border:1px solid rgba(33,150,243,.18)">
+        <div style="font-size:11px;font-weight:600;color:#1565c0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">{subtitle}</div>
+        <table style="width:100%;border-collapse:collapse">{rows}</table>
+      </div>
+    </div>
+
+    <!-- Swftly footer -->
+    <div style="text-align:center;padding:14px 16px 24px;margin-top:4px">
+      <hr style="border:none;border-top:1px solid rgba(33,150,243,.15);margin:0 0 12px">
+      <div style="font-size:15px;font-weight:700;color:#1565c0;letter-spacing:.5px">Swftly</div>
+      <div style="font-size:11px;color:#90a4ae;letter-spacing:.3px">Point of Sale &amp; Business Management Platform</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>"""
+    return html
+
+def send_register_notification(
+    store_id: int,
+    employee_id: int,
+    employee_name: str,
+    employee_email: str,
+    event_type: str,            # 'open' | 'close' | 'drop' | 'withdraw'
+    amount: Optional[float] = None,
+    notes: str = "",
+) -> Dict[str, List[Dict]]:
+    results: Dict[str, List[Dict]] = {"email": []}
+    settings = get_register_notification_settings(store_id)
+    if not settings:
+        return results
+
+    # Determine if we should notify admin
+    notify_admin = False
+    if event_type == 'open' and settings.get('notify_admin_on_open'): notify_admin = True
+    if event_type == 'close' and settings.get('notify_admin_on_close'): notify_admin = True
+    if event_type == 'drop' and settings.get('notify_admin_on_drop'): notify_admin = True
+    if event_type == 'withdraw' and settings.get('notify_admin_on_withdraw'): notify_admin = True
+
+    notify_self = settings.get('notify_employee_self', False)
+
+    if not notify_admin and not notify_self:
+        return results
+
+    store_settings = _get_store_settings(store_id)
+    store_name = (store_settings or {}).get('store_name') or (store_settings or {}).get('business_name') or 'Your Store'
+
+    from datetime import datetime
+    now = datetime.now()
+    event_time_str = now.strftime('%I:%M %p').lstrip('0') + '  ·  ' + now.strftime('%b %d, %Y')
+
+    html = _build_register_email_html(
+        event_type=event_type,
+        employee_name=employee_name,
+        employee_email=employee_email,
+        event_time_str=event_time_str,
+        store_name=store_name,
+        amount=amount,
+        notes=notes,
+    )
+
+    action_label = {
+        'open': 'Register Opened',
+        'close': 'Register Closed',
+        'drop': 'Cash Drop',
+        'withdraw': 'Cash Withdrawn'
+    }.get(event_type, 'Register Event')
+
+    subject = f"{action_label}: {employee_name}"
+    text = f"{subject}\n{store_name}\n\nEmployee: {employee_name}\nTime: {event_time_str}\n"
+    if amount is not None:
+        try:
+            text += f"Amount: ${float(amount):.2f}\n"
+        except (ValueError, TypeError):
+            text += f"Amount: {amount}\n"
+
+    to_send = set()
+
+    if notify_admin:
+        admin_emails = _get_admin_emails_for_clockin(store_id, settings)
+        to_send.update(admin_emails)
+
+    if notify_self and employee_email:
+        to_send.add(employee_email)
+
+    for addr in to_send:
+        r = send_email(addr, subject, html, text, store_id)
+        results["email"].append({"to": addr, **r})
+
     return results

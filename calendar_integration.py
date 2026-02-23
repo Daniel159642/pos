@@ -208,21 +208,21 @@ class CalendarIntegrationSystem:
                 end_dt_str = event_row['end_datetime']
                 
                 # Parse datetime strings (SQLite stores as TEXT)
-            try:
-                if 'T' in start_dt_str:
-                    start_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
-                else:
-                    start_dt = datetime.strptime(start_dt_str, '%Y-%m-%d %H:%M:%S')
+                try:
+                    if 'T' in start_dt_str:
+                        start_dt = datetime.fromisoformat(start_dt_str.replace('Z', '+00:00'))
+                    else:
+                        start_dt = datetime.strptime(start_dt_str, '%Y-%m-%d %H:%M:%S')
+                    
+                    if 'T' in end_dt_str:
+                        end_dt = datetime.fromisoformat(end_dt_str.replace('Z', '+00:00'))
+                    else:
+                        end_dt = datetime.strptime(end_dt_str, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    # Fallback parsing
+                    start_dt = datetime.strptime(start_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
+                    end_dt = datetime.strptime(end_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
                 
-                if 'T' in end_dt_str:
-                    end_dt = datetime.fromisoformat(end_dt_str.replace('Z', '+00:00'))
-                else:
-                    end_dt = datetime.strptime(end_dt_str, '%Y-%m-%d %H:%M:%S')
-            except:
-                # Fallback parsing
-                start_dt = datetime.strptime(start_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
-                end_dt = datetime.strptime(end_dt_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
-            
                 if event_row.get('all_day'):
                     event.add('dtstart', start_dt.date())
                     event.add('dtend', (end_dt + timedelta(days=1)).date())

@@ -290,19 +290,364 @@ def _pg_conn():
     return conn, conn.cursor(cursor_factory=RealDictCursor)
 
 
+def _enrich_order_info_for_notification(order_info: dict) -> dict:
+    """Fetch full order detail from DB. Adds:
+    - items_html (no header row)
+    - meta_line (date · time · employee)
+    - barcode_html / barcode_png_bytes (CID Code128)
+    - order_source_logo_html  (inline SVG per platform)
+    - customer_info_html      (for delivery/pickup orders)
+    - order_url               → /recent-orders
+    Returns enriched copy of order_info.
+    """
+    from datetime import datetime as _dt
+    import base64 as _b64
+
+    info = dict(order_info)
+    order_id = info.get('order_id')
+    if not order_id:
+        return info
+
+    try:
+        conn, cur = _pg_conn()
+        try:
+            # ── Order header ──────────────────────────────────────────────────
+            cur.execute("""
+                SELECT o.order_date, o.order_number, o.total, o.subtotal,
+                       o.tax_amount, o.tip, o.transaction_fee, o.discount,
+                       o.payment_method, o.order_source, o.order_type,
+                       o.prepare_by, o.notes, o.customer_id,
+                       COALESCE(e.first_name || ' ' || e.last_name,
+                                e.first_name, e.last_name,
+                                e.employee_code, 'Staff') AS employee_name
+                FROM orders o
+                LEFT JOIN employees e ON o.employee_id = e.employee_id
+                WHERE o.order_id = %s
+            """, (order_id,))
+            row = cur.fetchone()
+            if row:
+                def _g(key, idx):
+                    return row.get(key) if hasattr(row, 'get') else row[idx]
+                order_date   = _g('order_date', 0)
+                customer_id  = _g('customer_id', 13)
+                order_type   = (_g('order_type', 10) or '').strip().lower()
+                prepare_by   = _g('prepare_by', 11)
+                order_notes  = (_g('notes', 12) or '').strip()
+                info.setdefault('order_number',   _g('order_number', 1))
+                info.setdefault('total',    float(_g('total', 2) or 0))
+                info.setdefault('subtotal', float(_g('subtotal', 3) or 0))
+                info.setdefault('tax',      float(_g('tax_amount', 4) or 0))
+                info.setdefault('tip',      float(_g('tip', 5) or 0))
+                info['transaction_fee'] = float(_g('transaction_fee', 6) or 0)
+                info.setdefault('discount', float(_g('discount', 7) or 0))
+                info.setdefault('payment_method', _g('payment_method', 8))
+                info.setdefault('order_source',   _g('order_source', 9))
+                info['employee_name'] = (_g('employee_name', 14) or 'Staff').strip()
+                info['order_type']    = order_type
+
+                if order_date:
+                    try:
+                        d = order_date if hasattr(order_date, 'strftime') else _dt.fromisoformat(str(order_date))
+                        info['order_date'] = d.strftime('%b %d, %Y')
+                        info['order_time'] = d.strftime('%I:%M %p').lstrip('0')
+                    except Exception:
+                        info['order_date'] = str(order_date)[:10]
+                        info['order_time'] = ''
+
+                # Build meta line: date · time · employee
+                parts = [p for p in [
+                    info.get('order_date', ''),
+                    info.get('order_time', ''),
+                    info.get('employee_name', ''),
+                ] if p]
+                info['meta_line'] = ' &nbsp;·&nbsp; '.join(parts)
+
+                # ── Pickup / delivery ready time ──────────────────────────
+                ready_str = ''
+                if prepare_by:
+                    try:
+                        pb = prepare_by if hasattr(prepare_by, 'strftime') else _dt.fromisoformat(str(prepare_by))
+                        ready_str = pb.strftime('%I:%M %p').lstrip('0') + ' on ' + pb.strftime('%b %d')
+                    except Exception:
+                        ready_str = str(prepare_by)
+
+                # ── Customer info card — varies by order source ─────────
+                # Shared card style: blue, no left-border strip
+                _CARD = 'background:#f5faff;border-radius:12px;padding:14px 18px;margin-top:12px;text-align:left;border:1px solid rgba(33,150,243,.18)'
+                _LBL  = 'color:#90a4ae;font-size:10px;text-transform:uppercase;padding:3px 12px 3px 0;white-space:nowrap'
+                _VAL  = 'color:#37474f;font-size:13px;padding:3px 0'
+                _VALBOLD = 'color:#37474f;font-weight:600;font-size:13px;padding:3px 0'
+                _HDR  = 'font-size:11px;font-weight:600;color:#1565c0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px'
+
+                cust_html = ''
+                _src_now = (info.get('order_source') or '').strip().lower()
+                _GIG     = ('doordash', 'uber_eats', 'ubereats', 'grubhub')
+                _SHOPIFY = ('shopify',)
+
+                if customer_id:
+                    try:
+                        cur.execute("""
+                            SELECT customer_name, phone, email, COALESCE(address, '') as address
+                            FROM customers WHERE customer_id = %s
+                        """, (customer_id,))
+                        cust = cur.fetchone()
+                        if cust:
+                            def _cg(k, i):
+                                return (cust.get(k) if hasattr(cust, 'get') else cust[i]) or ''
+                            cname   = _cg('customer_name', 0).strip()
+                            phone   = _cg('phone', 1).strip()
+                            email   = _cg('email', 2).strip()
+                            address = _cg('address', 3).strip()
+
+                            if _src_now in _GIG:
+                                # ── Gig platform (DoorDash / UberEats / Grubhub) ──
+                                # Driver picks up from store; show customer + ready time + driver slot
+                                rows = ''
+                                # Customer + phone on same line
+                                cust_cell = cname
+                                if phone:
+                                    cust_cell += f' &nbsp;<a href="tel:{phone}" style="color:#1976d2;text-decoration:none;font-size:12px">{phone}</a>'
+                                if cust_cell:
+                                    rows += f'<tr><td style="{_LBL}">Customer</td><td style="{_VAL}">{cust_cell}</td></tr>'
+                                if ready_str:
+                                    rows += f'<tr><td style="{_LBL}">Ready By</td><td style="{_VALBOLD}">{ready_str}</td></tr>'
+                                # Driver info placeholder — to be filled when driver is assigned
+                                rows += f'<tr><td style="{_LBL};vertical-align:top;padding-top:8px">Driver</td><td style="color:#b0bec5;font-size:12px;font-style:italic;padding:8px 0 3px">Driver info will appear when assigned by platform</td></tr>'
+                                if order_notes:
+                                    rows += f'<tr><td style="{_LBL};vertical-align:top">Notes</td><td style="{_VAL};font-style:italic">{order_notes}</td></tr>'
+                                cust_html = (
+                                    f'<div style="{_CARD}">'
+                                    f'<div style="{_HDR}">Driver Pickup</div>'
+                                    f'<table style="width:100%;border-collapse:collapse">{rows}</table>'
+                                    f'</div>'
+                                )
+
+                            elif _src_now in _SHOPIFY:
+                                # ── Shopify e-commerce order ─────────────────────
+                                rows = ''
+                                # Customer name + phone on same line
+                                cust_cell = cname
+                                if phone:
+                                    cust_cell += f' &nbsp;<a href="tel:{phone}" style="color:#1976d2;text-decoration:none;font-size:12px">{phone}</a>'
+                                if cust_cell:
+                                    rows += f'<tr><td style="{_LBL}">Customer</td><td style="{_VAL}">{cust_cell}</td></tr>'
+                                if email:
+                                    rows += f'<tr><td style="{_LBL}">Email</td><td style="{_VAL}"><a href="mailto:{email}" style="color:#1976d2;text-decoration:none">{email}</a></td></tr>'
+                                if ready_str:
+                                    rows += f'<tr><td style="{_LBL}">Ship By</td><td style="{_VALBOLD}">{ready_str}</td></tr>'
+                                if order_notes:
+                                    rows += f'<tr><td style="{_LBL};vertical-align:top">Notes</td><td style="{_VAL};font-style:italic">{order_notes}</td></tr>'
+                                # Delivery address — not in DB yet, placeholder row
+                                rows += f'<tr><td style="{_LBL};vertical-align:top;padding-top:8px">Delivery Address</td><td style="color:#b0bec5;font-size:12px;font-style:italic;padding:8px 0 3px">See Shopify dashboard for shipping address</td></tr>'
+                                cust_html = (
+                                    f'<div style="{_CARD}">'
+                                    f'<div style="{_HDR}">Customer Details</div>'
+                                    f'<table style="width:100%;border-collapse:collapse">{rows}</table>'
+                                    f'</div>'
+                                )
+
+                            else:
+                                # ── In-house delivery / pickup ────────────────────
+                                rows = ''
+                                cust_cell = cname
+                                if phone:
+                                    cust_cell += f' &nbsp;<a href="tel:{phone}" style="color:#1976d2;text-decoration:none;font-size:12px">{phone}</a>'
+                                if cust_cell:
+                                    rows += f'<tr><td style="{_LBL}">Customer</td><td style="{_VAL}">{cust_cell}</td></tr>'
+                                if email:
+                                    rows += f'<tr><td style="{_LBL}">Email</td><td style="{_VAL}">{email}</td></tr>'
+                                if address and order_type in ('delivery', 'deliver'):
+                                    rows += f'<tr><td style="{_LBL};vertical-align:top">Address</td><td style="{_VALBOLD}">{address}</td></tr>'
+                                if ready_str:
+                                    label = 'Pickup Time' if order_type in ('pickup', 'pick up', 'carry out', 'carryout', 'takeout') else 'Ready By'
+                                    rows += f'<tr><td style="{_LBL}">{label}</td><td style="{_VALBOLD}">{ready_str}</td></tr>'
+                                if order_notes:
+                                    rows += f'<tr><td style="{_LBL};vertical-align:top">Notes</td><td style="{_VAL};font-style:italic">{order_notes}</td></tr>'
+                                if rows:
+                                    _type_label = {
+                                        'delivery': 'Delivery Order',
+                                        'pickup':   'Pickup Order',
+                                        'carry out': 'Carry Out',
+                                        'takeout':   'Take Out',
+                                    }.get(order_type, 'Order Details')
+                                    cust_html = (
+                                        f'<div style="{_CARD}">'
+                                        f'<div style="{_HDR}">{_type_label}</div>'
+                                        f'<table style="width:100%;border-collapse:collapse">{rows}</table>'
+                                        f'</div>'
+                                    )
+                    except Exception as ce:
+                        print(f"[notification] customer fetch error: {ce}", flush=True)
+
+                elif ready_str:
+                    # No customer_id linked — gig platform or anonymous order
+                    if _src_now in _GIG:
+                        rows = f'<tr><td style="{_LBL}">Ready By</td><td style="{_VALBOLD}">{ready_str}</td></tr>'
+                        rows += f'<tr><td style="{_LBL};vertical-align:top;padding-top:8px">Driver</td><td style="color:#b0bec5;font-size:12px;font-style:italic;padding:8px 0 3px">Driver info will appear when assigned by platform</td></tr>'
+                        cust_html = (
+                            f'<div style="{_CARD}">'
+                            f'<div style="{_HDR}">Driver Pickup</div>'
+                            f'<table style="width:100%;border-collapse:collapse">{rows}</table>'
+                            f'</div>'
+                        )
+                    else:
+                        label = 'Pickup Time' if 'pickup' in order_type else 'Ready By'
+                        rows = f'<tr><td style="{_LBL}">{label}</td><td style="{_VALBOLD}">{ready_str}</td></tr>'
+                        cust_html = (
+                            f'<div style="{_CARD}">'
+                            f'<div style="{_HDR}">{label}</div>'
+                            f'<table style="width:100%;border-collapse:collapse">{rows}</table>'
+                            f'</div>'
+                        )
+                info['customer_info_html'] = cust_html
+
+            # ── Order items ───────────────────────────────────────────────
+            cur.execute("""
+                SELECT oi.quantity, oi.unit_price, oi.subtotal,
+                       COALESCE(i.product_name, 'Item') AS product_name,
+                       oi.notes
+                FROM order_items oi
+                LEFT JOIN inventory i ON oi.product_id = i.product_id
+                WHERE oi.order_id = %s
+                ORDER BY oi.order_item_id
+            """, (order_id,))
+            items = cur.fetchall()
+
+            rows_html = ''
+            for it in items:
+                if hasattr(it, 'get'):
+                    name  = it.get('product_name', 'Item')
+                    qty   = int(it.get('quantity', 1) or 1)
+                    price = float(it.get('subtotal', 0) or 0)
+                    notes = (it.get('notes') or '').strip()
+                else:
+                    qty, _up, sub, name, notes = it[0], it[1], it[2], it[3] or 'Item', (it[4] or '').strip()
+                    price = float(sub or 0)
+
+                notes_row = f'<tr><td colspan="3" style="padding:0 0 8px;color:#78909c;font-size:11px;font-style:italic">{notes}</td></tr>' if notes else ''
+                rows_html += (
+                    f'<tr>'
+                    f'<td style="padding:9px 0 4px;color:#37474f;font-weight:500">{name}</td>'
+                    f'<td style="padding:9px 0 4px;color:#546e7a;text-align:center">{qty}</td>'
+                    f'<td style="padding:9px 0 4px;color:#37474f;text-align:right">${price:.2f}</td>'
+                    f'</tr>{notes_row}'
+                )
+            info['items_html'] = rows_html
+
+        finally:
+            conn.close()
+    except Exception as db_err:
+        import traceback
+        print(f"[notification] enrich DB error: {db_err}", flush=True)
+        traceback.print_exc()
+
+    # ── Platform-specific inline SVG logos ───────────────────────────────────
+    _src = (info.get('order_source') or '').strip().lower()
+    _order_type = (info.get('order_type') or '').strip().lower()
+
+    # Only set SVG logo if no external logo was already loaded
+    if not info.get('order_source_logo_html'):
+        if not _src or _src in ('inhouse', 'in_house', 'in-house', 'pos', 'walk_in', 'walkin', 'dine_in', 'dinein'):
+            # Lucide Home icon
+            info['order_source_logo_html'] = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
+                '<polyline points="9 22 9 12 15 12 15 22"/>'
+                '</svg>'
+            )
+        elif _order_type in ('delivery', 'deliver'):
+            # Lucide Truck icon for in-house delivery
+            info['order_source_logo_html'] = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/>'
+                '<rect x="9" y="11" width="14" height="10" rx="2"/>'
+                '<circle cx="12" cy="21" r="1"/>'
+                '<circle cx="20" cy="21" r="1"/>'
+                '</svg>'
+            )
+        elif _order_type in ('pickup', 'pick up', 'carry out', 'carryout', 'take out', 'takeout'):
+            # Lucide ShoppingBag icon for pickup
+            info['order_source_logo_html'] = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>'
+                '<line x1="3" y1="6" x2="21" y2="6"/>'
+                '<path d="M16 10a4 4 0 0 1-8 0"/>'
+                '</svg>'
+            )
+        # Note: doordash / shopify / uber_eats / grubhub — leave order_source_logo_html unset here.
+        # notification_service._get_email_logo_png_bytes() loads the real brand PNG via cairosvg
+        # and attaches it as a CID image — far better than an SVG placeholder.
+        else:
+            # Generic store / unknown source
+            info['order_source_logo_html'] = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" '
+                'fill="none" stroke="#1565c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" '
+                'style="display:block;margin:0 auto">'
+                '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
+                '<polyline points="9 22 9 12 15 12 15 22"/>'
+                '</svg>'
+            )
+
+
+    # ── Real Code128 barcode via CID (data: URLs are blocked by Gmail) ──────────
+    order_num = info.get('order_number', f'ORD-{order_id}')
+    try:
+        from receipt_generator import generate_barcode_data
+        bc_bytes = generate_barcode_data(order_num)
+        if bc_bytes:
+            # Store raw bytes so send_order_notification can attach them as CID
+            info['barcode_png_bytes'] = bc_bytes
+            info['barcode_html'] = (
+                f'<div style="text-align:center">'
+                f'<img src="cid:orderbarcode" alt="Order barcode" '
+                f'style="max-width:280px;width:100%;height:auto;display:block;margin:0 auto" />'
+                f'<div style="font-size:11px;color:#78909c;margin-top:4px;letter-spacing:1px">{order_num}</div>'
+                f'</div>'
+            )
+        else:
+            info['barcode_html'] = f'<div style="text-align:center;font-size:11px;color:#78909c;letter-spacing:1px">{order_num}</div>'
+    except Exception as bc_err:
+        print(f"[notification] barcode error: {bc_err}", flush=True)
+        info['barcode_html'] = f'<div style="text-align:center;font-size:11px;color:#78909c;letter-spacing:1px">{order_num}</div>'
+
+    # ── View Order URL → Recent Orders page ──────────────────────────────────
+    info['order_url'] = f"http://localhost:3000/recent-orders?order_id={order_id}"
+
+
+    return info
+
+
 def _send_order_notification_async(order_info):
     """Fire-and-forget: send order notification (email/SMS) if enabled. Runs in thread."""
+    print(f"[notification] queuing email for order {order_info.get('order_number')}", flush=True)
     def _do():
         try:
-            from notification_service import send_order_notification
+            from notification_service import send_order_notification, get_order_email_recipients
+            # Enrich order_info with full DB details before sending
+            enriched = _enrich_order_info_for_notification(order_info)
+            order_source = (enriched.get('order_source') or '').strip().lower()
+            print(f"[notification] checking order email for source='{order_source}' order={enriched.get('order_number')}", flush=True)
+            emails = get_order_email_recipients(1, order_source)
+            print(f"[notification] resolved emails: {emails}", flush=True)
             store_settings = get_store_location_settings() or {}
-            emails = [e for e in [(store_settings.get('store_email') or '').strip()] if e]
-            phones = [p for p in [(store_settings.get('store_phone') or '').replace('-', '').replace(' ', '').strip()] if p and len(p) >= 10]
+            phones = [p for p in [(store_settings.get('store_phone') or store_settings.get('store_phone_number') or '').replace('-', '').replace(' ', '').strip()] if p and len(p) >= 10]
             if emails or phones:
-                send_order_notification(1, order_info, emails, phones)
+                result = send_order_notification(1, enriched, emails, phones)
+                print(f"[notification] send result: {result}", flush=True)
+            else:
+                print(f"[notification] no recipients — email disabled or filtered", flush=True)
         except Exception as e:
-            print(f"[notification] order notify error: {e}")
+            import traceback
+            print(f"[notification] order notify error: {e}", flush=True)
+            traceback.print_exc()
     threading.Thread(target=_do, daemon=True).start()
+
 
 
 def _json_serial(obj):
@@ -2439,6 +2784,15 @@ def api_create_order():
                                 pcur.execute("SELECT order_number FROM orders WHERE order_id = %s", (order_id,))
                                 onum = pcur.fetchone()
                                 order_number = (onum.get('order_number') if isinstance(onum, dict) else onum[0]) if onum else None
+                                return_info = {
+                                    'order_id': order_id,
+                                    'order_number': order_number or f'ORD-{order_id}',
+                                    'total': new_total,
+                                }
+                                src = (data.get('order_source') or '').strip()
+                                if src:
+                                    return_info['order_source'] = src
+                                _send_order_notification_async(return_info)
                                 return jsonify({
                                     'success': True,
                                     'order_id': order_id,
@@ -6104,6 +6458,34 @@ def api_clock_in():
             }
             if 'location_validation' in clock_result:
                 response['location_validation'] = clock_result['location_validation']
+
+            # ── Fire clock-in notification (non-blocking) ──────────────────
+            try:
+                from notification_service import send_clockin_notification
+                import threading
+                emp_email = employee.get('email', '') or ''
+                sched_start = comparison_result.get('scheduled_start_time')
+                threading.Thread(
+                    target=send_clockin_notification,
+                    kwargs=dict(
+                        store_id=1,
+                        employee_id=employee_id,
+                        employee_name=employee_name,
+                        employee_email=emp_email,
+                        event_type='clock_in',
+                        event_time=clock_in_time,
+                        scheduled_start=sched_start,
+                        minutes_late=comparison_result.get('minutes_late', 0),
+                        is_late=(comparison_result.get('status') == 'late'),
+                        is_early=(comparison_result.get('status') == 'early'),
+                        is_unscheduled=(not bool(schedule_id)),
+                    ),
+                    daemon=True
+                ).start()
+            except Exception as _ne:
+                print(f'[clockin notif] error: {_ne}', flush=True)
+            # ──────────────────────────────────────────────────────────────
+
             return jsonify(response)
         else:
             return jsonify({
@@ -6133,8 +6515,6 @@ def api_clock_out():
             return jsonify({'success': False, 'message': 'Not currently clocked in'}), 400
         
         schedule_id = clock_status.get('schedule_id')
-        if not schedule_id:
-            return jsonify({'success': False, 'message': 'Schedule ID not found'}), 400
         
         # Get location from request
         latitude = request.json.get('latitude') if request.is_json else None
@@ -6142,24 +6522,49 @@ def api_clock_out():
         address = request.json.get('address') if request.is_json else None
         
         # Clock out
-        clock_result = clock_out(employee_id, schedule_id,
+        clock_result = clock_out(employee_id, schedule_id=schedule_id,
                                  latitude=latitude, longitude=longitude, address=address)
         
         if clock_result['success']:
             # Get employee info
             employee = get_employee(employee_id)
             employee_name = f"{employee['first_name']} {employee['last_name']}" if employee else 'Unknown'
-            
+            clock_out_time = datetime.now()
+
             response = {
                 'success': True,
                 'message': 'Clocked out successfully',
                 'employee_name': employee_name,
-                'clock_out_time': datetime.now().isoformat(),
+                'clock_out_time': clock_out_time.isoformat(),
                 'hours_worked': clock_result.get('hours_worked'),
                 'overtime_hours': clock_result.get('overtime_hours')
             }
             if 'location_validation' in clock_result:
                 response['location_validation'] = clock_result['location_validation']
+
+            # ── Fire clock-out notification (non-blocking) ─────────────────
+            try:
+                from notification_service import send_clockin_notification
+                import threading
+                emp_email = (employee or {}).get('email', '') or ''
+                threading.Thread(
+                    target=send_clockin_notification,
+                    kwargs=dict(
+                        store_id=1,
+                        employee_id=employee_id,
+                        employee_name=employee_name,
+                        employee_email=emp_email,
+                        event_type='clock_out',
+                        event_time=clock_out_time,
+                        hours_worked=clock_result.get('hours_worked'),
+                        overtime_hours=clock_result.get('overtime_hours'),
+                    ),
+                    daemon=True
+                ).start()
+            except Exception as _ne:
+                print(f'[clockout notif] error: {_ne}', flush=True)
+            # ──────────────────────────────────────────────────────────────
+
             return jsonify(response)
         else:
             return jsonify({
@@ -6170,6 +6575,207 @@ def api_clock_out():
     except Exception as e:
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/clockin-notification-settings', methods=['GET'])
+def api_get_clockin_notification_settings():
+    """Get clock-in/out notification settings for a store."""
+    try:
+        store_id = int(request.args.get('store_id', 1))
+        from notification_service import get_clockin_notification_settings
+        settings = get_clockin_notification_settings(store_id)
+        # Convert Decimal/datetime to JSON-safe types
+        if 'overtime_threshold_hours' in settings:
+            settings['overtime_threshold_hours'] = float(settings['overtime_threshold_hours'])
+        if 'updated_at' in settings:
+            settings['updated_at'] = settings['updated_at'].isoformat() if settings.get('updated_at') else None
+        if 'admin_email_ids' in settings and settings['admin_email_ids'] is None:
+            settings['admin_email_ids'] = []
+        return jsonify({'success': True, 'data': settings})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/clockin-notification-settings', methods=['POST'])
+def api_save_clockin_notification_settings():
+    """Save clock-in/out notification settings for a store."""
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        from notification_service import save_clockin_notification_settings
+        # Ensure admin_email_ids is a list of ints
+        ids = data.get('admin_email_ids', [])
+        if isinstance(ids, list):
+            ids = [int(i) for i in ids if str(i).strip().isdigit()]
+        else:
+            ids = []
+        data['admin_email_ids'] = ids
+        ok = save_clockin_notification_settings(store_id, data)
+        return jsonify({'success': ok, 'message': 'Settings saved' if ok else 'Failed to save'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/schedule-notification-settings', methods=['GET'])
+def api_get_schedule_notification_settings():
+    """Get schedule notification settings for a store."""
+    try:
+        store_id = int(request.args.get('store_id', 1))
+        from notification_service import get_schedule_notification_settings
+        settings = get_schedule_notification_settings(store_id)
+        if 'updated_at' in settings:
+            settings['updated_at'] = settings['updated_at'].isoformat() if settings.get('updated_at') else None
+        if 'admin_email_ids' in settings and settings['admin_email_ids'] is None:
+            settings['admin_email_ids'] = []
+        return jsonify({'success': True, 'data': settings})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/schedule-notification-settings', methods=['POST'])
+def api_save_schedule_notification_settings():
+    """Save schedule notification settings for a store."""
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        from notification_service import save_schedule_notification_settings
+        # Ensure admin_email_ids is a list of ints
+        ids = data.get('admin_email_ids', [])
+        if isinstance(ids, list):
+            ids = [int(i) for i in ids if str(i).strip().isdigit()]
+        else:
+            ids = []
+        data['admin_email_ids'] = ids
+        ok = save_schedule_notification_settings(store_id, data)
+        return jsonify({'success': ok, 'message': 'Settings saved' if ok else 'Failed to save'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/register-notification-settings', methods=['GET'])
+def api_get_register_notification_settings():
+    """Get register notification settings for a store."""
+    try:
+        store_id = int(request.args.get('store_id', 1))
+        from notification_service import get_register_notification_settings
+        settings = get_register_notification_settings(store_id)
+        if 'updated_at' in settings:
+            settings['updated_at'] = settings['updated_at'].isoformat() if settings.get('updated_at') else None
+        if 'admin_email_ids' in settings and settings['admin_email_ids'] is None:
+            settings['admin_email_ids'] = []
+        return jsonify({'success': True, 'data': settings})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/register-notification-settings', methods=['POST'])
+def api_save_register_notification_settings():
+    """Save register notification settings for a store."""
+    try:
+        data = request.json or {}
+        store_id = int(data.get('store_id', 1))
+        from notification_service import save_register_notification_settings
+        ids = data.get('admin_email_ids', [])
+        if isinstance(ids, list):
+            ids = [int(i) for i in ids if str(i).strip().isdigit()]
+        else:
+            ids = []
+        data['admin_email_ids'] = ids
+        ok = save_register_notification_settings(store_id, data)
+        return jsonify({'success': ok, 'message': 'Settings saved' if ok else 'Failed to save'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# ── Late-alert background scheduler ──────────────────────────────────────────
+def _run_late_alert_scheduler():
+    """Background thread: every 60s check for employees who should have clocked in but haven't."""
+    import time as _time
+    _STORE_ID = 1
+    _sent_alerts: set = set()   # avoid duplicate alerts per shift per day
+
+    while True:
+        _time.sleep(60)
+        try:
+            from notification_service import (get_clockin_notification_settings,
+                                              send_late_alert_notification)
+            settings = get_clockin_notification_settings(_STORE_ID)
+            if not settings.get('late_alert_enabled', False):
+                continue
+
+            delay_min = int(settings.get('late_alert_delay_min', 15))
+            threshold_min = int(settings.get('late_alert_threshold_min', 10))
+            now = datetime.now()
+            today = now.date().isoformat()
+
+            conn2, cur2 = _pg_conn()
+            # Find scheduled shifts starting today where employee has NOT clocked in
+            cur2.execute("""
+                SELECT
+                    ss.employee_id,
+                    ss.start_time,
+                    e.first_name || ' ' || e.last_name AS employee_name,
+                    e.email
+                FROM employee_schedule ss
+                JOIN employees e ON e.employee_id = ss.employee_id
+                WHERE ss.schedule_date = %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM time_clock tc
+                    WHERE tc.employee_id = ss.employee_id
+                      AND tc.clock_in::date = %s
+                  )
+            """, (today, today))
+            rows = cur2.fetchall()
+            for row in rows:
+                d = dict(row) if hasattr(row, 'keys') else dict(zip(
+                    ['employee_id','start_time','employee_name','email'], row))
+                emp_id   = d['employee_id']
+                start_t  = d['start_time']  # e.g. '09:00' or timedelta
+                emp_name = d['employee_name']
+                emp_email = d.get('email', '') or ''
+
+                # Parse shift start time
+                try:
+                    if hasattr(start_t, 'seconds'):
+                        total_s = int(start_t.total_seconds())
+                        sched_h, sched_m = divmod(total_s // 60, 60)
+                    else:
+                        parts = str(start_t).split(':')
+                        sched_h, sched_m = int(parts[0]), int(parts[1])
+
+                    from datetime import time as _time_cls
+                    from datetime import datetime as _dt
+                    sched_dt = _dt.combine(now.date(), _time_cls(sched_h, sched_m))
+                    minutes_past = (now - sched_dt).total_seconds() / 60
+
+                    if minutes_past >= (delay_min + threshold_min):
+                        alert_key = f"{today}:{emp_id}"
+                        if alert_key not in _sent_alerts:
+                            sched_str = sched_dt.strftime('%I:%M %p').lstrip('0')
+                            now_str   = now.strftime('%I:%M %p').lstrip('0')
+                            send_late_alert_notification(
+                                store_id=_STORE_ID,
+                                employee_id=emp_id,
+                                employee_name=emp_name,
+                                employee_email=emp_email,
+                                scheduled_start_str=sched_str,
+                                now_str=now_str,
+                                minutes_late=int(minutes_past),
+                            )
+                            _sent_alerts.add(alert_key)
+                except Exception as _pe:
+                    print(f'[late-alert] parse error for emp {emp_id}: {_pe}', flush=True)
+        except Exception as _e:
+            print(f'[late-alert scheduler] error: {_e}', flush=True)
+
+# Start late-alert scheduler at import time (daemon thread, won't block shutdown)
+import threading as _threading_late
+_late_alert_thread = _threading_late.Thread(target=_run_late_alert_scheduler, daemon=True)
+_late_alert_thread.start()
+
 
 @app.route('/api/face/register', methods=['POST'])
 def api_register_face():
@@ -6558,6 +7164,9 @@ def api_face_clock():
                     schedule_dict = dict(schedule)
             
             conn.close()
+            
+            # Extract schedule_id if schedule was found
+            schedule_id = schedule_dict.get('schedule_id') if schedule_dict else None
             
             # Clock in using the database function
             # Get location from request
@@ -9390,6 +9999,97 @@ def api_get_schedule(period_id):
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
+def _trigger_schedule_update_email(period_id: int, changed_emp_ids: list = None):
+    """Fire a background thread to gather shifts and send advanced notifications."""
+    try:
+        from notification_service import send_schedule_notification_advanced, send_schedule_notification
+        import threading
+        from datetime import datetime, timedelta
+        
+        def run_it():
+            conn = None
+            try:
+                conn, cursor = _pg_conn()
+                cursor.execute("""
+                    SELECT e.employee_id, e.first_name, e.last_name, e.email, e.phone,
+                           ss.scheduled_shift_id, ss.shift_date, ss.start_time, ss.end_time, ss.position
+                    FROM employees e
+                    LEFT JOIN scheduled_shifts ss ON ss.employee_id = e.employee_id AND ss.period_id = %s AND ss.is_draft = 0
+                    WHERE (e.active = 1) 
+                      AND (ss.period_id IS NOT NULL OR e.employee_id = ANY(%s::int[]))
+                """, (period_id, changed_emp_ids or []))
+                rows = cursor.fetchall() or []
+                
+                emp_map = {}
+                phones = set()
+                for r in rows:
+                    eid = r['employee_id']
+                    if eid not in emp_map:
+                        emp_map[eid] = {
+                            'employee_id': eid,
+                            'name': f"{r.get('first_name','')} {r.get('last_name','')}".strip(),
+                            'email': r.get('email'),
+                            'shifts': [],
+                            'changed_shifts': [1] if changed_emp_ids else [] # legacy flag indicating 'is_edit' logic should pass them
+                        }
+                    
+                    if r.get('start_time') is None:
+                        continue # no shifts
+                        
+                    if r.get('phone'):
+                        phones.add(r['phone'].replace('-', '').replace(' ', '').strip())
+                    
+                    dt_str = r['shift_date']
+                    st_str = r['start_time']
+                    et_str = r['end_time']
+                    try:
+                        dt = datetime.strptime(dt_str, '%Y-%m-%d').date()
+                        st = datetime.strptime(st_str, '%H:%M:%S').time()
+                        et = datetime.strptime(et_str, '%H:%M:%S').time()
+                        
+                        start_dt = datetime.combine(dt, st)
+                        end_dt = datetime.combine(dt, et)
+                        if et < st:
+                            end_dt += timedelta(days=1)
+                            
+                        t_fmt = f"{st.strftime('%I:%M %p').lstrip('0')} - {et.strftime('%I:%M %p').lstrip('0')}"
+                        raw_d = start_dt.strftime('%a, %b %d')
+                    except Exception:
+                        start_dt = end_dt = None
+                        t_fmt = f"{st_str} - {et_str}"
+                        raw_d = dt_str
+                        
+                    emp_map[eid]['shifts'].append({
+                        'scheduled_shift_id': r['scheduled_shift_id'],
+                        'date_str': raw_d,
+                        'time_str': t_fmt,
+                        'start_dt': start_dt,
+                        'end_dt': end_dt,
+                        'position': r.get('position', '')
+                    })
+                
+                if emp_map:
+                    # Filter if changed_emp_ids is provided (so only those changed are processed, plus admins which happens in advanced())
+                    v = list(emp_map.values())
+                    if changed_emp_ids:
+                        # The advanced sender also sends to admins. We will pass everyone and let advanced filter based on 'changed_shifts'
+                        pass
+                    send_schedule_notification_advanced(1, period_id, v, is_edit=bool(changed_emp_ids))
+                    
+                phones_list = [p for p in phones if p]
+                if phones_list and not changed_emp_ids:
+                    send_schedule_notification(1, [], phones_list, "Your schedule has been updated. Please check the calendar.")
+            except Exception as e:
+                print(f"[schedule msg db error] {e}", flush=True)
+            finally:
+                if conn:
+                    conn.close()
+                
+        threading.Thread(target=run_it, daemon=True).start()
+    except Exception as ne:
+        print(f"[notification launch err] {ne}", flush=True)
+
+
 @app.route('/api/schedule/<int:period_id>/publish', methods=['POST'])
 def api_publish_schedule(period_id):
     """Publish schedule to employees and add to master calendar"""
@@ -9405,23 +10105,7 @@ def api_publish_schedule(period_id):
 
         # Send schedule notifications (email/SMS) if enabled
         if result:
-            try:
-                from notification_service import send_schedule_notification
-                conn, cursor = _pg_conn()
-                try:
-                    cursor.execute("""
-                        SELECT DISTINCT e.email, e.phone FROM employees e
-                        JOIN scheduled_shifts ss ON ss.employee_id = e.employee_id
-                        WHERE ss.period_id = %s AND e.active = 1
-                    """, (period_id,))
-                    rows = cursor.fetchall() or []
-                    emails = [r.get('email') for r in rows if r and (r.get('email') or '').strip()]
-                    phones = [r.get('phone') for r in rows if r and (r.get('phone') or '').replace('-', '').replace(' ', '').strip()]
-                    send_schedule_notification(1, emails, phones, 'Your schedule has been updated. Please check the calendar.')
-                finally:
-                    conn.close()
-            except Exception as ne:
-                print(f"[notification] schedule notify error: {ne}")
+            _trigger_schedule_update_email(period_id)
 
         # Published shifts are shown via /api/employee_schedule (Scheduled_Shifts).
         # Do NOT add them to master_calendar — the Calendar loads both APIs and would
@@ -9578,6 +10262,11 @@ def api_manage_shift(period_id):
         
         conn, cursor = _pg_conn()
         
+        # Check if schedule is already published
+        cursor.execute("SELECT status FROM schedule_periods WHERE period_id = %s", (period_id,))
+        p_row = cursor.fetchone()
+        is_published = (p_row and p_row.get('status') == 'published')
+        
         if request.method == 'POST':
             # Create new shift
             data = request.json
@@ -9586,11 +10275,11 @@ def api_manage_shift(period_id):
                 INSERT INTO Scheduled_Shifts
                 (period_id, employee_id, shift_date, start_time, end_time,
                  break_duration, position, notes, is_draft)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING scheduled_shift_id
             """, (period_id, data['employee_id'], data['shift_date'],
                   data['start_time'], data['end_time'], data.get('break_duration', 30),
-                  data.get('position'), data.get('notes')))
+                  data.get('position'), data.get('notes'), 0 if is_published else 1))
             shift_id = cursor.fetchone()['scheduled_shift_id']
             try:
                 cursor.execute("""
@@ -9600,6 +10289,9 @@ def api_manage_shift(period_id):
                 """, (period_id, shift_id, employee_id, json.dumps(data, default=_json_serial)))
             except Exception:
                 pass  # Schedule_Changes table may not exist
+            
+            if is_published:
+                _trigger_schedule_update_email(period_id, [data['employee_id']])
             
         elif request.method == 'PUT':
             # Update shift
@@ -9635,6 +10327,12 @@ def api_manage_shift(period_id):
             except Exception:
                 pass  # Schedule_Changes table may not exist
             
+            if is_published:
+                affected_emps = list({old_values['employee_id'], data['employee_id']})
+                from notification_service import get_schedule_notification_settings
+                if get_schedule_notification_settings(1).get('notify_on_edit', True):
+                    _trigger_schedule_update_email(period_id, affected_emps)
+            
         elif request.method == 'DELETE':
             # Delete shift
             shift_id = request.args.get('shift_id')
@@ -9665,6 +10363,11 @@ def api_manage_shift(period_id):
                 """, (period_id, shift_id, employee_id, json.dumps(old_values, default=_json_serial)))
             except Exception:
                 pass  # Schedule_Changes table may not exist
+            
+            if is_published:
+                from notification_service import get_schedule_notification_settings
+                if get_schedule_notification_settings(1).get('notify_on_edit', True):
+                    _trigger_schedule_update_email(period_id, [old_values['employee_id']])
         
         conn.commit()
         cursor.close()
@@ -11627,9 +12330,38 @@ def api_sms_migrate_to_aws(store_id):
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/employees/with-email', methods=['GET'])
+def api_employees_with_email():
+    """Return all active employees that have an email address set — used for notification recipient selection."""
+    ok, err = _require_notification_auth()
+    if not ok:
+        return err
+    try:
+        conn, cursor = _pg_conn()
+        try:
+            cursor.execute("""
+                SELECT employee_id,
+                       TRIM(COALESCE(first_name || ' ' || last_name, first_name, last_name, employee_code, 'Employee')) AS name,
+                       email,
+                       COALESCE(position, 'Employee') AS role
+                FROM employees
+                WHERE active = 1
+                  AND email IS NOT NULL
+                  AND TRIM(email) <> ''
+                ORDER BY first_name, last_name
+            """)
+            rows = cursor.fetchall()
+            return jsonify([dict(r) for r in rows] if rows else [])
+        finally:
+            conn.close()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/notification-settings', methods=['GET'])
 def api_notification_settings_get():
     """Get notification settings (email/SMS config + preferences) for Settings page."""
+
     try:
         store_id = int(request.args.get('store_id', 1))
         from notification_service import _get_sms_settings, get_notification_preferences
@@ -11707,6 +12439,7 @@ def api_notifications_test_email():
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
+
 @app.route('/api/notifications/test-sms', methods=['POST'])
 def api_notifications_test_sms():
     """Send a test SMS."""
@@ -11736,6 +12469,7 @@ def api_email_templates_send_test():
     if not ok:
         return err
     try:
+        import re
         data = request.json or {}
         to_addr = (data.get('to_address') or data.get('to') or '').strip()
         if not to_addr:
@@ -11744,8 +12478,25 @@ def api_email_templates_send_test():
         body_html = (data.get('body_html') or data.get('body_html_template') or '<p>Test</p>').strip() or '<p>Test</p>'
         body_text = (data.get('body_text') or data.get('body_text_template') or '').strip()
         store_id = int(data.get('store_id', 1))
-        from notification_service import send_email
-        result = send_email(to_addr, subj, body_html, body_text or None, store_id)
+        from notification_service import send_email, _get_email_logo_png_bytes, _EMAIL_LOGO_CID, _EMAIL_LOGO_FILES
+
+        # Detect order-source logos embedded as relative paths (e.g. src="/doordash-email-logo.svg")
+        # in the preview HTML and convert them to CID-attached PNGs so they render in email clients.
+        inline_images = None
+        for logo_key, fname in _EMAIL_LOGO_FILES.items():
+            if re.search(r'src=[\'"]/?' + re.escape(fname) + r'[\'"]', body_html):
+                logo_png = _get_email_logo_png_bytes(logo_key)
+                if logo_png:
+                    # Rewrite the relative path to a cid: reference so the attachment renders inline
+                    body_html = re.sub(
+                        r'(src=[\'"])/?(?:[^"]*/)?' + re.escape(fname) + r'([\'"])',
+                        r'\g<1>cid:' + _EMAIL_LOGO_CID + r'\g<2>',
+                        body_html
+                    )
+                    inline_images = [(_EMAIL_LOGO_CID, logo_png)]
+                break  # Only one logo per email
+
+        result = send_email(to_addr, subj, body_html, body_text or None, store_id, inline_images=inline_images)
         if result.get('success'):
             return jsonify({'success': True, 'message': 'Test email sent'})
         return jsonify({'success': False, 'message': result.get('message', 'Failed to send')}), 400
@@ -12168,6 +12919,21 @@ def api_open_register():
         )
         
         if result.get('success'):
+            try:
+                from notification_service import send_register_notification
+                emp_name = session_result.get('employee_name', 'Employee')
+                emp_email = session_result.get('email', '')
+                send_register_notification(
+                    store_id=1,
+                    employee_id=employee_id,
+                    employee_name=emp_name,
+                    employee_email=emp_email,
+                    event_type='open',
+                    amount=data.get('starting_cash', 0.0),
+                    notes=data.get('notes', '')
+                )
+            except Exception as ne:
+                print(f"Notification error: {ne}")
             return jsonify(result), 200
         else:
             return jsonify(result), 400
@@ -12233,6 +12999,21 @@ def api_close_register():
                         print(f"Accounting register close (session {session_id}): {jr.get('message', 'unknown')}")
                 except Exception as je:
                     print(f"Accounting register close error (session {session_id}): {je}")
+            try:
+                from notification_service import send_register_notification
+                emp_name = session_result.get('employee_name', 'Employee')
+                emp_email = session_result.get('email', '')
+                send_register_notification(
+                    store_id=1,
+                    employee_id=employee_id,
+                    employee_name=emp_name,
+                    employee_email=emp_email,
+                    event_type='close',
+                    amount=float(ending_cash),
+                    notes=data.get('notes', '')
+                )
+            except Exception as ne:
+                print(f"Notification error: {ne}")
             return jsonify(result), 200
         else:
             return jsonify(result), 400
@@ -12292,6 +13073,23 @@ def api_add_cash_transaction():
                     print(f"Accounting cash transaction: {jr.get('message', 'unknown')}")
             except Exception as je:
                 print(f"Accounting cash transaction error: {je}")
+            try:
+                from notification_service import send_register_notification
+                emp_name = session_result.get('employee_name', 'Employee')
+                emp_email = session_result.get('email', '')
+                action_type = 'withdraw' if data.get('transaction_type') == 'out' else 'drop'
+                send_register_notification(
+                    store_id=1,
+                    employee_id=employee_id,
+                    employee_name=emp_name,
+                    employee_email=emp_email,
+                    event_type=action_type,
+                    amount=float(data.get('amount', 0)),
+                    notes=data.get('reason', '') or data.get('notes', '')
+                )
+            except Exception as ne:
+                print(f"Notification error: {ne}")
+            
             return jsonify(result), 200
         else:
             return jsonify(result), 400
@@ -12595,6 +13393,24 @@ def api_daily_cash_count():
                             print(f"Accounting journalize_cash_drop error: {jr.get('message')}")
                     except Exception as je:
                         print(f"Accounting journalize_cash_drop error: {je}")
+                
+                try:
+                    from notification_service import send_register_notification
+                    emp_name = session_result.get('employee_name', 'Employee')
+                    emp_email = session_result.get('email', '')
+                    action_type = 'drop' if count_type == 'drop' else 'withdraw'
+                    send_register_notification(
+                        store_id=1,
+                        employee_id=employee_id,
+                        employee_name=emp_name,
+                        employee_email=emp_email,
+                        event_type=action_type,
+                        amount=float(total_amount),
+                        notes=notes or ""
+                    )
+                except Exception as ne:
+                    print(f"Notification error: {ne}")
+                
                 return jsonify(result), 200
             else:
                 return jsonify(result), 400

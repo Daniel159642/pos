@@ -10,6 +10,7 @@ import { formLabelStyle, formTitleStyle, inputBaseStyle, getInputFocusHandlers, 
 import Table from '../components/Table'
 import CustomerDisplayPopup from '../components/CustomerDisplayPopup'
 import { playNewOrderSound } from '../utils/notificationSound'
+import { useToast } from '../contexts/ToastContext'
 
 const NEW_ORDER_TOAST_OPTIONS_KEY = 'pos_new_order_toast_options'
 const DEFAULT_NEW_ORDER_TOAST_OPTIONS = { play_sound: true, sound_type: 'default', volume: 0.5, sound_until_dismiss: false, auto_dismiss_sec: 0, click_action: 'go_to_order' }
@@ -21,7 +22,7 @@ function getNewOrderToastOptions() {
       const parsed = JSON.parse(s)
       return { ...DEFAULT_NEW_ORDER_TOAST_OPTIONS, ...parsed }
     }
-  } catch (_) {}
+  } catch (_) { }
   return { ...DEFAULT_NEW_ORDER_TOAST_OPTIONS }
 }
 
@@ -108,13 +109,13 @@ function RecentOrders() {
   const [returnReceiptOptionsLoading, setReturnReceiptOptionsLoading] = useState(false)
   const [returnCheckoutUi, setReturnCheckoutUi] = useState(null) // Checkout UI from API so return receipt screen matches POS Settings from first frame
   const [allowPayAtPickup, setAllowPayAtPickup] = useState(false)
-  
+
   // Convert hex to RGB for rgba usage
   const hexToRgb = (hex) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
     return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
   }
-  
+
   const themeColorRgb = hexToRgb(themeColor)
 
   const ordersQueryKey = ['orders', filterReturns, filterCanceled, filterOrderTypePickup, filterOrderTypeDelivery, filterOrderTypeInPerson, ordersPage]
@@ -169,20 +170,20 @@ function RecentOrders() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
   })
-  
+
   useEffect(() => {
     const checkDarkMode = () => {
       setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
     }
-    
+
     checkDarkMode()
-    
+
     const observer = new MutationObserver(checkDarkMode)
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['class']
     })
-    
+
     return () => observer.disconnect()
   }, [themeMode])
 
@@ -232,7 +233,7 @@ function RecentOrders() {
           })
         }
       })
-      .catch(() => {})
+      .catch(() => { })
     return () => { cancelled = true }
   }, [])
 
@@ -247,7 +248,7 @@ function RecentOrders() {
           setTipRefundFrom(v === 'employee' ? 'employee' : 'store')
         }
       })
-      .catch(() => {})
+      .catch(() => { })
     return () => { cancelled = true }
   }, [])
 
@@ -261,7 +262,7 @@ function RecentOrders() {
           setAllowPayAtPickup(data.allow_pay_at_pickup)
         }
       })
-      .catch(() => {})
+      .catch(() => { })
     return () => { cancelled = true }
   }, [])
 
@@ -334,7 +335,7 @@ function RecentOrders() {
       const itemsResult = await itemsResponse.json()
       const items = itemsResult.data || []
       setAllOrderItems(items)
-      
+
       // Group items by order_id (normalize to number for consistent lookups)
       const itemsByOrder = {}
       items.forEach(item => {
@@ -349,14 +350,14 @@ function RecentOrders() {
           }
         }
       })
-      
+
       console.log('Order items map populated:', Object.keys(itemsByOrder).length, 'orders')
       setOrderItemsMap(itemsByOrder)
     } catch (err) {
       console.error('Error loading order items:', err)
     }
   }
-  
+
   const loadOrderItems = async () => {
     try {
       const itemsResponse = await fetch('/api/order_items')
@@ -417,7 +418,7 @@ function RecentOrders() {
           }
           invalidateOrders()
         }
-      } catch (_) {}
+      } catch (_) { }
     }, 12000)
     return () => clearInterval(interval)
   }, [])
@@ -435,11 +436,15 @@ function RecentOrders() {
   }, [highlightedOrderId])
 
   // New order toast: play sound and/or auto-dismiss per settings
+  const { show: showToast } = useToast()
   const newOrderSoundIntervalRef = useRef(null)
+
   useEffect(() => {
     if (!newOrderToast) return
     const opts = getNewOrderToastOptions()
     const soundOpts = { sound_type: opts.sound_type ?? 'default', volume: opts.volume ?? 0.5 }
+
+    // Play sound logic
     if (opts.play_sound && opts.sound_type !== 'none') {
       if (opts.sound_until_dismiss) {
         playNewOrderSound(soundOpts)
@@ -450,13 +455,43 @@ function RecentOrders() {
         playNewOrderSound(soundOpts)
       }
     }
+
+    // Determine icon and color based on source
+    let sourceIcon = null
+    let sourceColor = 'blue'
+    const source = newOrderToast.order_source || ''
+    if (source.includes('doordash')) {
+      sourceIcon = { src: '/doordash-logo.svg', alt: 'DoorDash' }
+      sourceColor = 'red'
+    } else if (source.includes('uber')) {
+      sourceIcon = { src: '/uber-eats-logo.svg', alt: 'Uber Eats' }
+      sourceColor = 'green'
+    } else if (source.includes('shopify')) {
+      sourceIcon = { src: '/shopify-logo.svg', alt: 'Shopify' }
+      sourceColor = 'shopify'
+    }
+
+    // Show the visual toast
+    const toastId = showToast(`Order ${newOrderToast.order_number} from ${source || 'Integration'}`, 'success', {
+      icon: sourceIcon,
+      variant: 'sidebar',
+      pulseColor: sourceColor,
+      autoDismiss: opts.auto_dismiss_sec === 4 ? 4000 : false,
+      onDismiss: () => {
+        if (newOrderSoundIntervalRef.current) {
+          clearInterval(newOrderSoundIntervalRef.current)
+          newOrderSoundIntervalRef.current = null
+        }
+      }
+    })
+
     return () => {
       if (newOrderSoundIntervalRef.current) {
         clearInterval(newOrderSoundIntervalRef.current)
         newOrderSoundIntervalRef.current = null
       }
     }
-  }, [newOrderToast])
+  }, [newOrderToast, showToast])
 
   useEffect(() => {
     if (!newOrderToast) return
@@ -499,7 +534,7 @@ function RecentOrders() {
       if (data && data.data) {
         foundOrder = data.data.find(o => o.order_id === parseInt(orderId))
       }
-      
+
       // If not found, search for it
       if (!foundOrder) {
         const searchResponse = await fetch(`/api/orders/search?order_id=${orderId}`)
@@ -528,7 +563,7 @@ function RecentOrders() {
       const itemsResult = await itemsResponse.json()
       const items = itemsResult.data?.filter(item => item.order_id === parseInt(orderId)) || []
       setOrderItems(items)
-      
+
       // Update orderItemsMap for filtering
       setOrderItemsMap(prev => ({
         ...prev,
@@ -557,7 +592,7 @@ function RecentOrders() {
   const updateItemQuantity = (itemId, quantity, maxQuantity) => {
     if (quantity < 1) quantity = 1
     if (quantity > maxQuantity) quantity = maxQuantity
-    
+
     setSelectedItems(prev => ({
       ...prev,
       [itemId]: { ...prev[itemId], quantity }
@@ -607,7 +642,7 @@ function RecentOrders() {
     let returnSubtotal = 0
     let returnTax = 0
     let returnProcessingFee = 0
-    
+
     Object.entries(selectedItems).forEach(([itemId, data]) => {
       const item = orderItems.find(i => i.order_item_id === parseInt(itemId))
       if (item) {
@@ -616,12 +651,12 @@ function RecentOrders() {
         const itemSubtotalAfterDiscount = itemSubtotal - itemDiscount
         const itemTaxRate = parseFloat(item.tax_rate || order.tax_rate || 0.08)
         const itemTax = itemSubtotalAfterDiscount * itemTaxRate
-        
+
         returnSubtotal += itemSubtotalAfterDiscount
         returnTax += itemTax
       }
     })
-    
+
     // Proportional order-level discount (deduct from refund)
     const orderSubtotal = parseFloat(order.subtotal) || 0
     const orderDiscount = parseFloat(order.discount) || 0
@@ -945,11 +980,11 @@ function RecentOrders() {
         focusSearchInput()
         return
       }
-      
+
       // First, check if barcode matches an order number (receipt barcode)
       const orderIdMatch = parseInt(scannedBarcode)
       let matchingOrder = null
-      
+
       if (!isNaN(orderIdMatch)) {
         try {
           const orderIdResponse = await cachedFetch(`/api/orders/search?order_id=${orderIdMatch}`)
@@ -961,7 +996,7 @@ function RecentOrders() {
           console.log('Error searching by order_id:', err)
         }
       }
-      
+
       if (!matchingOrder) {
         try {
           const orderNumResponse = await cachedFetch(`/api/orders/search?order_number=${encodeURIComponent(scannedBarcode)}`)
@@ -980,7 +1015,7 @@ function RecentOrders() {
           console.log('Error searching by order_number:', err)
         }
       }
-      
+
       if (matchingOrder) {
         setToast({ message: `Found order: ${matchingOrder.order_number}`, type: 'success' })
         if (data && data.data) {
@@ -996,7 +1031,7 @@ function RecentOrders() {
         focusSearchInput()
         return
       }
-      
+
       // Use cached inventory (from useQuery) so we don't refetch on every scan
       let inventoryData = inventoryResponse?.data
       if (!inventoryData) {
@@ -1004,7 +1039,7 @@ function RecentOrders() {
         const result = await res.json()
         inventoryData = result.data
       }
-      
+
       let product = null
       if (inventoryData) {
         const barcodeStr = scannedBarcode
@@ -1027,7 +1062,7 @@ function RecentOrders() {
             p.sku && p.sku.toString().trim() === barcodeStr
           )
         }
-        
+
         if (product) {
           const alreadyScanned = scannedProducts.some(sp =>
             sp.product_id === product.product_id || sp.sku === product.sku
@@ -1047,7 +1082,7 @@ function RecentOrders() {
           return
         }
       }
-      
+
       const looksLikeOrderNumber = /^[A-Z0-9-]+$/i.test(scannedBarcode) && scannedBarcode.length >= 3
       if (looksLikeOrderNumber) {
         setToast({ message: `Order or product with barcode "${barcode}" not found. Please check the barcode and try again.`, type: 'error' })
@@ -1144,16 +1179,16 @@ function RecentOrders() {
     filteredData = filteredData.filter(row => {
       const orderId = row.order_id || row.orderId
       if (!orderId) return false
-      
+
       // Normalize orderId to number for consistent lookups
       const normalizedOrderId = parseInt(orderId)
       if (isNaN(normalizedOrderId)) return false
-      
+
       // If row is expanded, keep it visible (items are being loaded)
       if (expandedRow === normalizedOrderId) {
         return true
       }
-      
+
       // Check order items map first
       const items = orderItemsMap[normalizedOrderId]
       if (items && items.length > 0) {
@@ -1164,11 +1199,11 @@ function RecentOrders() {
             const itemBarcode = (item.barcode || '').toString().trim()
             const scannedSku = (scanned.sku || '').toString().trim()
             const scannedBarcode = (scanned.barcode || '').toString().trim()
-            
+
             const productIdMatch = itemProductId === scanned.product_id
             const skuMatch = itemSku && scannedSku && itemSku === scannedSku
             const barcodeMatch = itemBarcode && scannedBarcode && itemBarcode === scannedBarcode
-            
+
             return productIdMatch || skuMatch || barcodeMatch
           })
           if (found) {
@@ -1178,7 +1213,7 @@ function RecentOrders() {
         })
         return matches
       }
-      
+
       // Check order details if available
       if (orderDetails[normalizedOrderId] && orderDetails[normalizedOrderId].items) {
         const items = orderDetails[normalizedOrderId].items
@@ -1189,11 +1224,11 @@ function RecentOrders() {
             const itemBarcode = (item.barcode || '').toString().trim()
             const scannedSku = (scanned.sku || '').toString().trim()
             const scannedBarcode = (scanned.barcode || '').toString().trim()
-            
+
             const productIdMatch = itemProductId === scanned.product_id
             const skuMatch = itemSku && scannedSku && itemSku === scannedSku
             const barcodeMatch = itemBarcode && scannedBarcode && itemBarcode === scannedBarcode
-            
+
             return productIdMatch || skuMatch || barcodeMatch
           })
           if (found) {
@@ -1203,7 +1238,7 @@ function RecentOrders() {
         })
         return matches
       }
-      
+
       // Check allOrderItems as fallback
       const orderItems = allOrderItems.filter(item => {
         const itemOrderId = item.order_id || item.orderId
@@ -1217,11 +1252,11 @@ function RecentOrders() {
             const itemBarcode = (item.barcode || '').toString().trim()
             const scannedSku = (scanned.sku || '').toString().trim()
             const scannedBarcode = (scanned.barcode || '').toString().trim()
-            
+
             const productIdMatch = itemProductId === scanned.product_id
             const skuMatch = itemSku && scannedSku && itemSku === scannedSku
             const barcodeMatch = itemBarcode && scannedBarcode && itemBarcode === scannedBarcode
-            
+
             return productIdMatch || skuMatch || barcodeMatch
           })
           if (found) {
@@ -1231,7 +1266,7 @@ function RecentOrders() {
         })
         return matches
       }
-      
+
       // If we don't have items loaded yet, include it (will be filtered when items load)
       return true
     })
@@ -1242,29 +1277,29 @@ function RecentOrders() {
     filteredData = filteredData.filter(row => {
       const orderId = row.order_id || row.orderId
       const query = searchQuery.toLowerCase()
-      
+
       // First check if search matches order fields directly
       const matchesOrderFields = Object.values(row).some(value => {
         if (value === null || value === undefined) return false
         return String(value).toLowerCase().includes(query)
       })
-      
+
       // If not found in order fields, check order items
       if (!matchesOrderFields && orderId) {
         // Check order items map first
         const items = orderItemsMap[orderId] || []
         if (items.length === 0) {
           // Fallback to allOrderItems
-          const orderItems = allOrderItems.filter(item => 
+          const orderItems = allOrderItems.filter(item =>
             (item.order_id || item.orderId) === orderId
           )
-          
+
           const matchesItems = orderItems.some(item => {
             const productName = (item.product_name || '').toLowerCase()
             const sku = (item.sku || '').toLowerCase()
             return productName.includes(query) || sku.includes(query)
           })
-          
+
           return matchesItems
         } else {
           const matchesItems = items.some(item => {
@@ -1275,7 +1310,7 @@ function RecentOrders() {
           return matchesItems
         }
       }
-      
+
       return matchesOrderFields
     })
   }
@@ -1300,7 +1335,7 @@ function RecentOrders() {
 
   // Fields to hide from main table (shown in row dropdown); order_status/payment_* combined into Status column
   const hiddenFields = ['order_id', 'orderId', 'employee_id', 'employeeId', 'customer_id', 'customerId', 'subtotal', 'tax_rate', 'tax_amount', 'tax', 'discount', 'discount_type', 'transaction_fee', 'notes', 'tip', 'receipt_type', 'receipt_email', 'receipt_phone', 'establishment_id', 'employee_name', 'order_status', 'payment_status', 'payment_method', 'order_source', 'orderSource', 'exchange_return_id', 'prepare_by', 'external_order_id', 'integration_experience', 'doordash_promo_details', 'doordash_total_merchant_funded_discount_cents', 'doordash_total_doordash_funded_discount_cents', 'dasher_status', 'dasher_status_at', 'dasher_info']
-  
+
   // Status: In Progress (pickup/delivery when placed/being_made), Ready, Out for delivery (delivery only), Completed (in-person always; pickup/delivery when done)
   const getStatusLabel = (orderStatus, orderType) => {
     const s = (orderStatus || 'completed').toLowerCase()
@@ -1553,95 +1588,95 @@ function RecentOrders() {
           }
           const handlePrimaryClick = opts.click_action === 'go_to_order' ? handleGoToOrder : opts.click_action === 'print_receipt' ? handlePrintReceipt : null
           return (
-        <div
-          style={{
-            position: 'fixed',
-            top: '16px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 10000,
-            padding: '14px 20px',
-            borderRadius: '12px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
-            backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-            border: `2px solid rgba(${themeColorRgb}, 0.8)`,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            maxWidth: '90vw',
-            flexWrap: 'wrap',
-            animation: 'fadeIn 0.3s ease'
-          }}
-        >
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1 1 auto', minWidth: 0, cursor: handlePrimaryClick ? 'pointer' : 'default' }}
-            onClick={handlePrimaryClick || undefined}
-            onKeyDown={e => { if (handlePrimaryClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); handlePrimaryClick() } }}
-            role={handlePrimaryClick ? 'button' : undefined}
-            tabIndex={handlePrimaryClick ? 0 : undefined}
-          >
-            {toastLogo && !toastLogo.textOnly && (
-              <img src={toastLogo.src} alt="" style={{ height: '28px', width: 'auto', maxWidth: '80px', objectFit: 'contain', flexShrink: 0 }} />
-            )}
-            <span style={{ fontWeight: 600, color: `rgba(${themeColorRgb}, 1)` }}>New order</span>
-            <span style={{ color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
-              {newOrderToast.order_number} from {fromLabel}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-            {opts.click_action === 'go_to_order' && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handleGoToOrder() }}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  background: `rgba(${themeColorRgb}, 0.9)`,
-                  color: '#fff',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: 600
-                }}
-              >
-                View order
-              </button>
-            )}
-            {opts.click_action === 'print_receipt' && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handlePrintReceipt() }}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  background: `rgba(${themeColorRgb}, 0.9)`,
-                  color: '#fff',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: 600
-                }}
-              >
-                Print receipt
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setNewOrderToast(null) }}
+            <div
               style={{
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: 'none',
-                background: isDarkMode ? '#444' : '#eee',
-                color: isDarkMode ? '#fff' : '#333',
-                cursor: 'pointer',
-                fontSize: '13px'
+                position: 'fixed',
+                top: '16px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 10000,
+                padding: '14px 20px',
+                borderRadius: '12px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+                backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                border: `2px solid rgba(${themeColorRgb}, 0.8)`,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                maxWidth: '90vw',
+                flexWrap: 'wrap',
+                animation: 'fadeIn 0.3s ease'
               }}
             >
-              Dismiss
-            </button>
-          </div>
-        </div>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1 1 auto', minWidth: 0, cursor: handlePrimaryClick ? 'pointer' : 'default' }}
+                onClick={handlePrimaryClick || undefined}
+                onKeyDown={e => { if (handlePrimaryClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); handlePrimaryClick() } }}
+                role={handlePrimaryClick ? 'button' : undefined}
+                tabIndex={handlePrimaryClick ? 0 : undefined}
+              >
+                {toastLogo && !toastLogo.textOnly && (
+                  <img src={toastLogo.src} alt="" style={{ height: '28px', width: 'auto', maxWidth: '80px', objectFit: 'contain', flexShrink: 0 }} />
+                )}
+                <span style={{ fontWeight: 600, color: `rgba(${themeColorRgb}, 1)` }}>New order</span>
+                <span style={{ color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+                  {newOrderToast.order_number} from {fromLabel}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                {opts.click_action === 'go_to_order' && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleGoToOrder() }}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: `rgba(${themeColorRgb}, 0.9)`,
+                      color: '#fff',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 600
+                    }}
+                  >
+                    View order
+                  </button>
+                )}
+                {opts.click_action === 'print_receipt' && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handlePrintReceipt() }}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: `rgba(${themeColorRgb}, 0.9)`,
+                      color: '#fff',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 600
+                    }}
+                  >
+                    Print receipt
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setNewOrderToast(null) }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: isDarkMode ? '#444' : '#eee',
+                    color: isDarkMode ? '#fff' : '#333',
+                    cursor: 'pointer',
+                    fontSize: '13px'
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
           )
         })(),
         document.body
@@ -1660,939 +1695,787 @@ function RecentOrders() {
           overflow: 'hidden'
         }}
       >
-      <div style={{ flexShrink: 0, marginBottom: isMobile ? '12px' : '20px', paddingTop: isMobile ? '12px' : 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px', flexWrap: 'wrap' }}>
-          <div style={{ 
-            position: 'relative', 
-            flex: 1, 
-            minWidth: isMobile ? '0' : '200px',
-            display: 'flex',
-            alignItems: 'center'
-          }}>
-            {/* Chips Container - Inside search input */}
-            <div
-              ref={(el) => {
-                chipsContainerRef.current = el
-                if (el) {
-                  // Update input padding based on chips container width
-                  const chipsWidth = el.offsetWidth
-                  const input = el.nextElementSibling
-                  if (input) {
-                    input.style.paddingLeft = chipsWidth > 0 ? `${chipsWidth + 12}px` : '0'
-                  }
-                }
-              }}
-              style={{
-                position: 'absolute',
-                left: '0',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                zIndex: 2,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                flexWrap: 'wrap',
-                maxWidth: 'calc(100% - 60px)',
-                pointerEvents: 'auto',
-                marginLeft: '4px'
-              }}
-            >
-              {/* Scanned Order Chip (Receipt Barcode) */}
-              {scannedOrderId && (
-                <div 
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '4px 8px',
-                    backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
-                    border: `1px solid rgba(${themeColorRgb}, 0.4)`,
-                    borderRadius: '20px',
-                    fontSize: '12px',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    whiteSpace: 'nowrap',
-                    height: '24px',
-                    lineHeight: '16px',
-                    userSelect: 'none'
-                  }}>
-                  <span>
-                    {data?.data?.find(o => o.order_id === scannedOrderId)?.order_number || `Order #${scannedOrderId}`}
-                  </span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      clearScannedOrder()
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      cursor: 'pointer',
-                      padding: '0',
-                      marginLeft: '2px',
-                      fontSize: '14px',
-                      lineHeight: '1',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      transition: 'background-color 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = 'transparent'
-                    }}
-                    title="Show all orders"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-              
-              {/* Scanned Products Chips */}
-              {scannedProducts.map((product) => (
-                <div
-                  key={product.product_id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '4px 8px',
-                    backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
-                    border: `1px solid rgba(${themeColorRgb}, 0.4)`,
-                    borderRadius: '20px',
-                    fontSize: '12px',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    whiteSpace: 'nowrap',
-                    height: '24px',
-                    lineHeight: '16px',
-                    userSelect: 'none',
-                    maxWidth: '200px',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}
-                >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {product.product_name || product.sku}
-                  </span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      removeScannedProduct(product.product_id)
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                      cursor: 'pointer',
-                      padding: '0',
-                      marginLeft: '2px',
-                      fontSize: '14px',
-                      lineHeight: '1',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      transition: 'background-color 0.2s',
-                      flexShrink: 0
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = 'transparent'
-                    }}
-                    title="Remove filter"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-            
-            <input
-              ref={searchInputRef}
-              type="text"
-              placeholder={(scannedOrderId || scannedProducts.length > 0) ? "" : "Search orders by order number, customer, or items..."}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const v = searchQuery.trim()
-                  if (v) {
-                    e.preventDefault()
-                    handleBarcodeScan(v)
-                  }
-                }
-              }}
-              title="Search or scan barcode / order # (hardware scanner types here)"
-              onFocus={(e) => {
-                // Ensure cursor is at the end when focusing
-                const len = e.target.value.length
-                setTimeout(() => {
-                  e.target.setSelectionRange(len, len)
-                }, 0)
-              }}
-              onMouseDown={(e) => {
-                // Prevent clicking inside the chips area
-                const chipsContainer = e.target.previousElementSibling
-                if (chipsContainer) {
-                  const chipsRect = chipsContainer.getBoundingClientRect()
-                  const inputRect = e.target.getBoundingClientRect()
-                  const clickX = e.clientX - inputRect.left
-                  const chipsEnd = chipsRect.right - inputRect.left + 12
-                  if (clickX < chipsEnd) {
-                    e.preventDefault()
-                    const len = e.target.value.length
-                    setTimeout(() => {
-                      e.target.focus()
-                      e.target.setSelectionRange(len, len)
-                    }, 0)
-                  }
-                }
-              }}
-              style={{
-                flex: 1,
-                padding: '8px 0',
-                paddingLeft: '0',
-                border: 'none',
-                borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd',
-                borderRadius: '0',
-                backgroundColor: 'transparent',
-                outline: 'none',
-                fontSize: '14px',
-                boxSizing: 'border-box',
-                fontFamily: '"Product Sans", sans-serif',
-                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                transition: 'padding-left 0.2s ease',
-                position: 'relative',
-                zIndex: 1
-              }}
-            />
-          </div>
-          <button
-            onClick={() => setShowBarcodeScanner(true)}
-            style={{
-              padding: '4px',
-              width: isMobile ? '36px' : '40px',
-              height: isMobile ? '36px' : '40px',
-              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              color: '#fff',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: 600,
-              boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
-              transition: 'all 0.3s ease',
+        <div style={{ flexShrink: 0, marginBottom: isMobile ? '12px' : '20px', paddingTop: isMobile ? '12px' : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px', flexWrap: 'wrap' }}>
+            <div style={{
+              position: 'relative',
+              flex: 1,
+              minWidth: isMobile ? '0' : '200px',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
-              e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
-              e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
-            }}
-            title="Scan barcode to filter by product or find order by receipt"
-          >
-            <ScanBarcode size={isMobile ? 20 : 24} />
-          </button>
-        </div>
-        
-        {/* Order Status Filters */}
-        {(() => {
-          const statusFilters = [
-            { value: 'in_progress', label: 'In progress' },
-            { value: 'ready', label: 'Ready' },
-            { value: 'out_for_delivery', label: 'Out for delivery' },
-            { value: 'completed', label: 'Completed' }
-          ]
-            return (
-            <div style={{ display: 'flex', gap: isMobile ? '6px' : '8px', marginTop: isMobile ? '8px' : '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-              {statusFilters.map(({ value, label }) => {
-                const isSelected = selectedStatus === value
-                const showInProgressBadge = value === 'in_progress' && inProgressCount > 0
-                const showReadyBadge = value === 'ready' && readyCount > 0
-                return (
-                  <button
-                    key={value}
-                    onClick={() => setSelectedStatus(value === 'all' ? 'all' : (isSelected ? 'all' : value))}
-                    style={{
-                      position: 'relative',
-                      padding: isMobile ? '5px 12px' : '6px 16px',
-                      height: isMobile ? '28px' : '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      whiteSpace: 'nowrap',
-                      fontSize: isMobile ? '13px' : '14px',
-                      backgroundColor: isSelected
-                        ? `rgba(${themeColorRgb}, 0.7)`
-                        : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-                      border: isSelected
-                        ? `1px solid rgba(${themeColorRgb}, 0.5)`
-                        : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: isSelected ? 600 : 500,
-                      color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
-                      cursor: 'pointer',
-                      transition: 'all 0.3s ease',
-                      boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
-                    }}
-                  >
-                    {label}
-                    {showInProgressBadge && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          bottom: '-4px',
-                          right: '-4px',
-                          minWidth: '18px',
-                          height: '18px',
-                          padding: '0 4px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: '#dc2626',
-                          color: '#fff',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          borderRadius: '9px',
-                          lineHeight: 1,
-                          boxSizing: 'border-box'
-                        }}
-                      >
-                        {inProgressCount > 99 ? '99+' : inProgressCount}
-                      </span>
-                    )}
-                    {showReadyBadge && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          bottom: '-4px',
-                          right: '-4px',
-                          minWidth: '18px',
-                          height: '18px',
-                          padding: '0 4px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: '#dc2626',
-                          color: '#fff',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          borderRadius: '9px',
-                          lineHeight: 1,
-                          boxSizing: 'border-box'
-                        }}
-                      >
-                        {readyCount > 99 ? '99+' : readyCount}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-              {/* View mode Table | Cards + Filter - grouped on the right */}
-              <div style={{ display: 'flex', gap: isMobile ? '6px' : '8px', alignItems: 'center', marginLeft: isMobile ? '0' : 'auto' }}>
-              {[
-                { value: 'table', label: 'Table', icon: List },
-                { value: 'cards', label: 'Cards', icon: LayoutGrid }
-              ].map(({ value, label, icon: Icon }) => {
-                const isSelected = viewMode === value
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setViewMode(value)}
-                    style={{
-                      padding: isMobile ? '5px 10px' : '6px 14px',
-                      height: isMobile ? '28px' : '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      whiteSpace: 'nowrap',
-                      fontSize: isMobile ? '13px' : '14px',
-                      backgroundColor: isSelected
-                        ? `rgba(${themeColorRgb}, 0.7)`
-                        : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-                      border: isSelected
-                        ? `1px solid rgba(${themeColorRgb}, 0.5)`
-                        : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '8px',
-                      fontWeight: isSelected ? 600 : 500,
-                      color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
-                      cursor: 'pointer',
-                      transition: 'all 0.3s ease',
-                      boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
-                    }}
-                  >
-                    <Icon size={16} />
-                    {label}
-                  </button>
-                )
-              })}
-              {/* Filter button with dropdown */}
-              <div ref={filterDropdownRef} style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  onClick={() => setFilterDropdownOpen(prev => !prev)}
-                  style={{
-                    padding: isMobile ? '5px 10px' : '6px 14px',
-                    height: isMobile ? '28px' : '32px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    whiteSpace: 'nowrap',
-                    fontSize: isMobile ? '13px' : '14px',
-                    backgroundColor: (filterReturns || filterCanceled || filterOrderTypePickup || filterOrderTypeDelivery || filterOrderTypeInPerson || dateRange != null)
-                      ? `rgba(${themeColorRgb}, 0.5)`
-                      : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
-                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Filter
-                </button>
-                {filterDropdownOpen && (
+              alignItems: 'center'
+            }}>
+              {/* Chips Container - Inside search input */}
+              <div
+                ref={(el) => {
+                  chipsContainerRef.current = el
+                  if (el) {
+                    // Update input padding based on chips container width
+                    const chipsWidth = el.offsetWidth
+                    const input = el.nextElementSibling
+                    if (input) {
+                      input.style.paddingLeft = chipsWidth > 0 ? `${chipsWidth + 12}px` : '0'
+                    }
+                  }
+                }}
+                style={{
+                  position: 'absolute',
+                  left: '0',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  zIndex: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  flexWrap: 'wrap',
+                  maxWidth: 'calc(100% - 60px)',
+                  pointerEvents: 'auto',
+                  marginLeft: '4px'
+                }}
+              >
+                {/* Scanned Order Chip (Receipt Barcode) */}
+                {scannedOrderId && (
                   <div
                     style={{
-                      position: 'absolute',
-                      top: '100%',
-                      right: 0,
-                      marginTop: '6px',
-                      minWidth: '220px',
-                      padding: '12px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                      border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                      borderRadius: '8px',
-                      boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.1)',
-                      zIndex: 1000
-                    }}
-                  >
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginBottom: '8px', textTransform: 'uppercase' }}>Date range</div>
-                    {[
-                      { value: null, label: 'All' },
-                      { value: 'today', label: 'Today' },
-                      { value: 'week', label: 'Week' },
-                      { value: 'month', label: 'Month' }
-                    ].map(({ value, label }) => (
-                      <label key={value ?? 'all'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
-                        <input type="radio" name="dateRange" checked={dateRange === value} onChange={() => setDateRange(value)} />
-                        {label}
-                      </label>
-                    ))}
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginTop: '12px', marginBottom: '8px', textTransform: 'uppercase' }}>Status</div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
-                      <input type="checkbox" checked={filterReturns} onChange={() => setFilterReturns(v => !v)} />
-                      Returns
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
-                      <input type="checkbox" checked={filterCanceled} onChange={() => setFilterCanceled(v => !v)} />
-                      Canceled
-                    </label>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginTop: '12px', marginBottom: '8px', textTransform: 'uppercase' }}>Order type</div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
-                      <input type="checkbox" checked={filterOrderTypePickup} onChange={() => setFilterOrderTypePickup(v => !v)} />
-                      Pickup
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
-                      <input type="checkbox" checked={filterOrderTypeDelivery} onChange={() => setFilterOrderTypeDelivery(v => !v)} />
-                      Delivery
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
-                      <input type="checkbox" checked={filterOrderTypeInPerson} onChange={() => setFilterOrderTypeInPerson(v => !v)} />
-                      In-person
-                    </label>
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '4px 8px',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
+                      border: `1px solid rgba(${themeColorRgb}, 0.4)`,
+                      borderRadius: '20px',
+                      fontSize: '12px',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      whiteSpace: 'nowrap',
+                      height: '24px',
+                      lineHeight: '16px',
+                      userSelect: 'none'
+                    }}>
+                    <span>
+                      {data?.data?.find(o => o.order_id === scannedOrderId)?.order_number || `Order #${scannedOrderId}`}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        clearScannedOrder()
+                      }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        cursor: 'pointer',
+                        padding: '0',
+                        marginLeft: '2px',
+                        fontSize: '14px',
+                        lineHeight: '1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '14px',
+                        height: '14px',
+                        borderRadius: '50%',
+                        transition: 'background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = 'transparent'
+                      }}
+                      title="Show all orders"
+                    >
+                      ×
+                    </button>
                   </div>
                 )}
+
+                {/* Scanned Products Chips */}
+                {scannedProducts.map((product) => (
+                  <div
+                    key={product.product_id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '4px 8px',
+                      backgroundColor: `rgba(${themeColorRgb}, 0.2)`,
+                      border: `1px solid rgba(${themeColorRgb}, 0.4)`,
+                      borderRadius: '20px',
+                      fontSize: '12px',
+                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                      whiteSpace: 'nowrap',
+                      height: '24px',
+                      lineHeight: '16px',
+                      userSelect: 'none',
+                      maxWidth: '200px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {product.product_name || product.sku}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        removeScannedProduct(product.product_id)
+                      }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        cursor: 'pointer',
+                        padding: '0',
+                        marginLeft: '2px',
+                        fontSize: '14px',
+                        lineHeight: '1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '14px',
+                        height: '14px',
+                        borderRadius: '50%',
+                        transition: 'background-color 0.2s',
+                        flexShrink: 0
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.3)`
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = 'transparent'
+                      }}
+                      title="Remove filter"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
-              </div>
+
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder={(scannedOrderId || scannedProducts.length > 0) ? "" : "Search orders by order number, customer, or items..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = searchQuery.trim()
+                    if (v) {
+                      e.preventDefault()
+                      handleBarcodeScan(v)
+                    }
+                  }
+                }}
+                title="Search or scan barcode / order # (hardware scanner types here)"
+                onFocus={(e) => {
+                  // Ensure cursor is at the end when focusing
+                  const len = e.target.value.length
+                  setTimeout(() => {
+                    e.target.setSelectionRange(len, len)
+                  }, 0)
+                }}
+                onMouseDown={(e) => {
+                  // Prevent clicking inside the chips area
+                  const chipsContainer = e.target.previousElementSibling
+                  if (chipsContainer) {
+                    const chipsRect = chipsContainer.getBoundingClientRect()
+                    const inputRect = e.target.getBoundingClientRect()
+                    const clickX = e.clientX - inputRect.left
+                    const chipsEnd = chipsRect.right - inputRect.left + 12
+                    if (clickX < chipsEnd) {
+                      e.preventDefault()
+                      const len = e.target.value.length
+                      setTimeout(() => {
+                        e.target.focus()
+                        e.target.setSelectionRange(len, len)
+                      }, 0)
+                    }
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '8px 0',
+                  paddingLeft: '0',
+                  border: 'none',
+                  borderBottom: isDarkMode ? '2px solid var(--border-color, #404040)' : '2px solid #ddd',
+                  borderRadius: '0',
+                  backgroundColor: 'transparent',
+                  outline: 'none',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  fontFamily: '"Product Sans", sans-serif',
+                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                  transition: 'padding-left 0.2s ease',
+                  position: 'relative',
+                  zIndex: 1
+                }}
+              />
             </div>
-          )
-        })()}
-      </div>
+            <button
+              onClick={() => setShowBarcodeScanner(true)}
+              style={{
+                padding: '4px',
+                width: isMobile ? '36px' : '40px',
+                height: isMobile ? '36px' : '40px',
+                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                color: '#fff',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+                boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
+                transition: 'all 0.3s ease',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.8)`
+                e.target.style.boxShadow = `0 4px 20px rgba(${themeColorRgb}, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.7)`
+                e.target.style.boxShadow = `0 4px 15px rgba(${themeColorRgb}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`
+              }}
+              title="Scan barcode to filter by product or find order by receipt"
+            >
+              <ScanBarcode size={isMobile ? 20 : 24} />
+            </button>
+          </div>
 
-      {/* Barcode Scanner - inline below filters on mobile only, smooth expand/collapse */}
-      {(showBarcodeScanner || scannerExpanded) && isMobile && (
-        <div
-          style={{
-            maxHeight: scannerExpanded ? '420px' : '0',
-            overflow: 'hidden',
-            transition: 'max-height 0.35s ease-out',
-            marginBottom: scannerExpanded ? '16px' : '0',
-            transitionProperty: 'max-height, margin-bottom'
-          }}
-          onTransitionEnd={() => {
-            if (!scannerExpanded) setShowBarcodeScanner(false)
-          }}
-        >
-          {showBarcodeScanner && (
-            <BarcodeScanner
-              onScan={handleBarcodeScan}
-              onClose={() => { setScannerExpanded(false); focusSearchInput() }}
-              themeColor={themeColor}
-              inline
-            />
-          )}
-        </div>
-      )}
-
-      {/* Barcode Scanner - modal overlay on desktop */}
-      {showBarcodeScanner && !isMobile && (
-        <BarcodeScanner
-          onScan={handleBarcodeScan}
-          onClose={() => { setShowBarcodeScanner(false); focusSearchInput() }}
-          themeColor={themeColor}
-        />
-      )}
-
-      <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        {error && <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#e57373' : '#c62828' }}>{error}</div>}
-        {!error && (
-          loading ? (
-            /* Desktop: table with headers + loading row. Mobile: loading message. */
-            isMobile ? (
-              <div style={{ padding: '24px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontSize: '14px' }}>Loading…</div>
-            ) : (
-              <div style={{
-                backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#fff',
-                borderRadius: '4px',
-                overflowX: 'auto',
-                boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
-                width: '100%'
-              }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa' }}>
-                      {columnsWithActions.map(col => (
-                        <th
-                          key={col}
+          {/* Order Status Filters */}
+          {(() => {
+            const statusFilters = [
+              { value: 'in_progress', label: 'In progress' },
+              { value: 'ready', label: 'Ready' },
+              { value: 'out_for_delivery', label: 'Out for delivery' },
+              { value: 'completed', label: 'Completed' }
+            ]
+            return (
+              <div style={{ display: 'flex', gap: isMobile ? '6px' : '8px', marginTop: isMobile ? '8px' : '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {statusFilters.map(({ value, label }) => {
+                  const isSelected = selectedStatus === value
+                  const showInProgressBadge = value === 'in_progress' && inProgressCount > 0
+                  const showReadyBadge = value === 'ready' && readyCount > 0
+                  return (
+                    <button
+                      key={value}
+                      onClick={() => setSelectedStatus(value === 'all' ? 'all' : (isSelected ? 'all' : value))}
+                      style={{
+                        position: 'relative',
+                        padding: isMobile ? '5px 12px' : '6px 16px',
+                        height: isMobile ? '28px' : '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        whiteSpace: 'nowrap',
+                        fontSize: isMobile ? '13px' : '14px',
+                        backgroundColor: isSelected
+                          ? `rgba(${themeColorRgb}, 0.7)`
+                          : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                        border: isSelected
+                          ? `1px solid rgba(${themeColorRgb}, 0.5)`
+                          : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: isSelected ? 600 : 500,
+                        color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                        boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                      }}
+                    >
+                      {label}
+                      {showInProgressBadge && (
+                        <span
                           style={{
-                            position: 'sticky',
-                            top: 0,
-                            zIndex: 1,
-                            padding: '12px',
-                            textAlign: 'left',
-                            fontWeight: 600,
-                            borderBottom: '2px solid #dee2e6',
-                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
-                            fontSize: '13px',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
-                            boxShadow: '0 1px 0 0 #dee2e6'
+                            position: 'absolute',
+                            bottom: '-4px',
+                            right: '-4px',
+                            minWidth: '18px',
+                            height: '18px',
+                            padding: '0 4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: '#dc2626',
+                            color: '#fff',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            borderRadius: '9px',
+                            lineHeight: 1,
+                            boxSizing: 'border-box'
                           }}
                         >
-                          {getColumnHeaderLabel(col)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td colSpan={columnsWithActions.length} style={{ textAlign: 'center', padding: '40px 20px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontSize: '14px' }}>
-                        Loading…
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )
-          ) : data.data && data.data.length > 0 ? (
-            <>
-            {viewMode === 'cards' ? (
-              <>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))',
-                gap: isMobile ? '10px' : '16px',
-                alignContent: 'start'
-              }}>
-                {filteredData.map((row, idx) => {
-                  const orderId = row.order_id || row.orderId
-                  const normalizedOrderId = parseInt(orderId)
-                  const details = orderDetails[normalizedOrderId]
-                  const isLoading = loadingDetails[normalizedOrderId]
-                  // Order total should include tip (updated by process_payment). Fallback: add tip for legacy orders where total wasn't updated
-                  const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount) || 0) - (parseFloat(row.discount) || 0)
-                  const tipAmt = parseFloat(row.tip) || 0
-                  const storedTotal = parseFloat(row.total) || 0
-                  const totalVal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0))
-                  const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
-                  const cardSource = String(row?.order_source ?? row?.orderSource ?? '').toLowerCase().trim()
-                  const cardOutline = cardSource === 'doordash' ? '2px solid #FF3008' : cardSource === 'shopify' ? '2px solid #5A863E' : cardSource === 'uber_eats' ? '2px solid #1a1a1a' : (isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee')
-                  const cardThemeColor = cardSource === 'doordash' ? '#FF3008' : cardSource === 'shopify' ? '#5A863E' : cardSource === 'uber_eats' ? '#1a1a1a' : themeColor
-                  const isIntegrationCard = cardSource === 'doordash' || cardSource === 'shopify' || cardSource === 'uber_eats'
-                  const isInhouseCard = !isIntegrationCard
-                  const glassClass = isIntegrationCard
-                    ? `integration-card-glass${cardSource === 'shopify' ? ' integration-card-shopify-bg' : ''}${cardSource === 'doordash' ? ' integration-card-doordash-bg' : ''}${cardSource === 'uber_eats' ? ' integration-card-ubereats-bg' : ''}`
-                    : isInhouseCard
-                      ? 'integration-card-glass integration-card-inhouse-bg'
-                      : ''
-                  return (
-                    <div
-                      key={`order-${normalizedOrderId ?? 'n/a'}-${idx}`}
-                      onClick={() => handleCardClick(row, idx)}
-                      className={glassClass || undefined}
+                          {inProgressCount > 99 ? '99+' : inProgressCount}
+                        </span>
+                      )}
+                      {showReadyBadge && (
+                        <span
+                          style={{
+                            position: 'absolute',
+                            bottom: '-4px',
+                            right: '-4px',
+                            minWidth: '18px',
+                            height: '18px',
+                            padding: '0 4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: '#dc2626',
+                            color: '#fff',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            borderRadius: '9px',
+                            lineHeight: 1,
+                            boxSizing: 'border-box'
+                          }}
+                        >
+                          {readyCount > 99 ? '99+' : readyCount}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+                {/* View mode Table | Cards + Filter - grouped on the right */}
+                <div style={{ display: 'flex', gap: isMobile ? '6px' : '8px', alignItems: 'center', marginLeft: isMobile ? '0' : 'auto' }}>
+                  {[
+                    { value: 'table', label: 'Table', icon: List },
+                    { value: 'cards', label: 'Cards', icon: LayoutGrid }
+                  ].map(({ value, label, icon: Icon }) => {
+                    const isSelected = viewMode === value
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setViewMode(value)}
+                        style={{
+                          padding: isMobile ? '5px 10px' : '6px 14px',
+                          height: isMobile ? '28px' : '32px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          whiteSpace: 'nowrap',
+                          fontSize: isMobile ? '13px' : '14px',
+                          backgroundColor: isSelected
+                            ? `rgba(${themeColorRgb}, 0.7)`
+                            : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                          border: isSelected
+                            ? `1px solid rgba(${themeColorRgb}, 0.5)`
+                            : `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                          borderRadius: '8px',
+                          fontWeight: isSelected ? 600 : 500,
+                          color: isSelected ? '#fff' : (isDarkMode ? 'var(--text-primary, #fff)' : '#333'),
+                          cursor: 'pointer',
+                          transition: 'all 0.3s ease',
+                          boxShadow: isSelected ? `0 4px 15px rgba(${themeColorRgb}, 0.3)` : 'none'
+                        }}
+                      >
+                        <Icon size={16} />
+                        {label}
+                      </button>
+                    )
+                  })}
+                  {/* Filter button with dropdown */}
+                  <div ref={filterDropdownRef} style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => setFilterDropdownOpen(prev => !prev)}
                       style={{
-                        ...(glassClass ? {} : {
-                          backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                          boxShadow: isDarkMode ? '0 1px 4px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.08)',
-                          border: cardOutline
-                        }),
-                        borderRadius: '10px',
-                        padding: '14px',
+                        padding: isMobile ? '5px 10px' : '6px 14px',
+                        height: isMobile ? '28px' : '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        whiteSpace: 'nowrap',
+                        fontSize: isMobile ? '13px' : '14px',
+                        backgroundColor: (filterReturns || filterCanceled || filterOrderTypePickup || filterOrderTypeDelivery || filterOrderTypeInPerson || dateRange != null)
+                          ? `rgba(${themeColorRgb}, 0.5)`
+                          : (isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'),
+                        border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                         cursor: 'pointer'
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '15px', color: isDarkMode ? 'var(--text-primary)' : '#333', minWidth: 0 }}>
-                          {(() => {
-                            const logo = getOrderSourceLogo(row)
-                            if (logo?.icon === 'home') {
-                              return <Home key={`home-${normalizedOrderId}`} size={18} style={{ flexShrink: 0, color: cardThemeColor, display: 'block' }} />
-                            }
-                            if (logo) {
-                              if (logo.textOnly) {
-                                return <span key={`src-${normalizedOrderId}`} style={{ flexShrink: 0, fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>{logo.alt}</span>
-                              }
-                              if (logo.src) return <img key={`logo-${normalizedOrderId}`} src={logo.src} alt={logo.alt} style={{ height: '18px', width: 'auto', maxWidth: '80px', minWidth: '20px', objectFit: 'contain', flexShrink: 0, display: 'block' }} />
-                            }
-                            if (isInhouseCard) {
-                              return <Home key={`home-${normalizedOrderId}`} size={18} style={{ flexShrink: 0, color: cardThemeColor, display: 'block' }} />
-                            }
-                            return null
-                          })()}
-                          <span style={{ flexShrink: 0 }}>{row.order_number || `#${orderId}`}</span>
-                        </span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {getUnpaidLabel(row) && (
-                            <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#888' }}>{getUnpaidLabel(row)}</span>
-                          )}
-                          <span style={{ fontSize: '14px', fontWeight: 600, color: cardThemeColor }}>{totalStr}</span>
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
-                        {formatOrderDate(row.order_date || row.orderDate || '')}
-                      </div>
-                      {(row.prepare_by) && (
-                        <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginTop: '4px' }}>
-                          Prepare by: {formatOrderDate(row.prepare_by)}
-                        </div>
-                      )}
-                      {cardSource === 'doordash' && (row.dasher_status || row.dasher_info) && (
-                        <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginTop: '4px' }}>
-                          {row.dasher_status && <span>Dasher: {getDasherStatusLabel(row.dasher_status)}</span>}
-                          {row.dasher_status && row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name || (row.dasher_info.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model))) && ' · '}
-                          {row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name) && (
-                            <span>{[row.dasher_info.first_name, row.dasher_info.last_name].filter(Boolean).join(' ')}</span>
-                          )}
-                          {row.dasher_info?.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model) && (
-                            <span> · {[row.dasher_info.vehicle.make, row.dasher_info.vehicle.model].filter(Boolean).join(' ')}</span>
-                          )}
-                        </div>
-                      )}
-                      {/* DoorDash actions are in the three-dots dropdown; Mark ready inline when expanded + in progress */}
-                      {/* Product info + actions ellipsis inline (bottom right when collapsed) */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '8px', marginTop: '10px', paddingTop: '10px', borderTop: `1px solid ${cardThemeColor}` }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {(() => {
-                            const cardItems = orderDetails[normalizedOrderId]?.items ?? orderItemsMap[normalizedOrderId] ?? []
-                            if (cardItems.length === 0) return null
-                            return (
-                              <>
-                                <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '6px', textTransform: 'uppercase' }}>Items</div>
-                                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555', lineHeight: 1.5 }}>
-                                  {cardItems.slice(0, 5).map((item, i) => (
-                                    <li key={i}>
-                                      {item.product_name || item.productName || 'Item'} ×{item.quantity || 0}
-                                    </li>
-                                  ))}
-                                  {cardItems.length > 5 && (
-                                    <li style={{ color: isDarkMode ? '#999' : '#888', fontSize: '12px' }}>+{cardItems.length - 5} more</li>
-                                  )}
-                                </ul>
-                              </>
-                            )
-                          })()}
-                        </div>
-                        <div
-                            ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null}
-                            style={{ position: 'relative', flexShrink: 0 }}
-                          >
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setActionsDropdownOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId)
-                              }}
-                              style={{
-                                padding: '6px',
-                                border: 'none',
-                                background: 'none',
-                                color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}
-                            >
-                              <MoreVertical size={20} />
-                            </button>
-                            {actionsDropdownOrderId === normalizedOrderId && !actionsDropdownRect && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  bottom: '100%',
-                                  right: 0,
-                                  left: 'auto',
-                                  marginBottom: '4px',
-                                  minWidth: '160px',
-                                  backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : '#fff',
-                                  border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
-                                  borderRadius: '8px',
-                                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                                  zIndex: 50,
-                                  overflow: 'hidden'
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); fetchOrderById(normalizedOrderId) }}
-                                  style={{
-                                    width: '100%',
-                                    padding: '10px 14px',
-                                    textAlign: 'left',
-                                    border: 'none',
-                                    background: 'none',
-                                    fontSize: '14px',
-                                    color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  Return
-                                </button>
-                                {isUnpaidOrder(row, details) && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); handleVoidOrder(normalizedOrderId) }}
-                                    style={{
-                                      width: '100%',
-                                      padding: '10px 14px',
-                                      textAlign: 'left',
-                                      border: 'none',
-                                      borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                                      background: 'none',
-                                      fontSize: '14px',
-                                      color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                      cursor: 'pointer'
-                                    }}
-                                  >
-                                    Void
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); handleReprintReceipt(normalizedOrderId) }}
-                                  style={{
-                                    width: '100%',
-                                    padding: '10px 14px',
-                                    textAlign: 'left',
-                                    border: 'none',
-                                    borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                                    background: 'none',
-                                    fontSize: '14px',
-                                    color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  Reprint receipt
-                                </button>
-                                {cardSource === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
-                                  <>
-                                    <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Mark ready</button>
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails('') }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-              {expandedCardModal && createPortal(
-                <div
-                  style={{
-                    ...modalOverlayStyle(isDarkMode),
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '24px'
-                  }}
-                  onClick={() => { setExpandedCardModal(null); setActionsDropdownOrderId(null); setActionsDropdownRect(null) }}
-                >
-                  {(() => {
-                    const { row, idx } = expandedCardModal
-                    const orderId = row.order_id || row.orderId
-                    const normalizedOrderId = parseInt(orderId)
-                    const details = orderDetails[normalizedOrderId]
-                    const isLoading = loadingDetails[normalizedOrderId]
-                    const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount) || 0) - (parseFloat(row.discount) || 0)
-                    const tipAmt = parseFloat(row.tip) || 0
-                    const storedTotal = parseFloat(row.total) || 0
-                    const totalVal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0))
-                    const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
-                    const cardSource = String(row?.order_source ?? row?.orderSource ?? '').toLowerCase().trim()
-                    const cardThemeColor = cardSource === 'doordash' ? '#FF3008' : cardSource === 'shopify' ? '#5A863E' : cardSource === 'uber_eats' ? '#1a1a1a' : themeColor
-                    const isIntegrationCard = cardSource === 'doordash' || cardSource === 'shopify' || cardSource === 'uber_eats'
-                    const isInhouseCard = !isIntegrationCard
-                    const glassClass = isIntegrationCard
-                      ? `integration-card-glass${cardSource === 'shopify' ? ' integration-card-shopify-bg' : ''}${cardSource === 'doordash' ? ' integration-card-doordash-bg' : ''}${cardSource === 'uber_eats' ? ' integration-card-ubereats-bg' : ''}`
-                      : isInhouseCard ? 'integration-card-glass integration-card-inhouse-bg' : ''
-                    return (
+                      Filter
+                    </button>
+                    {filterDropdownOpen && (
                       <div
-                        className={glassClass || undefined}
                         style={{
-                          ...(glassClass ? {
-                            backdropFilter: 'blur(64px) saturate(1.5)',
-                            WebkitBackdropFilter: 'blur(64px) saturate(1.5)',
-                            backgroundColor: isDarkMode ? 'rgba(30, 30, 30, 0.9)' : 'rgba(255, 255, 255, 0.95)'
-                          } : {
-                            backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                            boxShadow: isDarkMode ? '0 1px 4px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.08)',
-                            border: cardSource === 'doordash' ? '2px solid #FF3008' : cardSource === 'shopify' ? '2px solid #5A863E' : cardSource === 'uber_eats' ? '2px solid #1a1a1a' : (isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee')
-                          }),
-                          borderRadius: '12px',
-                          padding: '20px',
-                          maxWidth: isMobile ? '95%' : '420px',
-                          width: '100%',
-                          maxHeight: '90vh',
-                          overflowY: 'auto',
-                          cursor: 'default'
+                          position: 'absolute',
+                          top: '100%',
+                          right: 0,
+                          marginTop: '6px',
+                          minWidth: '220px',
+                          padding: '12px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '8px',
+                          boxShadow: isDarkMode ? '0 4px 12px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.1)',
+                          zIndex: 1000
                         }}
-                        onClick={(e) => e.stopPropagation()}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '16px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
-                            {(() => {
-                              const logo = getOrderSourceLogo(row)
-                              if (logo?.icon === 'home') return <Home size={18} style={{ flexShrink: 0, color: cardThemeColor }} />
-                              if (logo) {
-                                if (logo.textOnly) return <span style={{ flexShrink: 0 }}>{logo.alt}</span>
-                                if (logo.src) return <img src={logo.src} alt={logo.alt} style={{ height: '18px', width: 'auto', maxWidth: '80px', objectFit: 'contain', flexShrink: 0 }} />
-                              }
-                              if (isInhouseCard) return <Home size={18} style={{ flexShrink: 0, color: cardThemeColor }} />
-                              return null
-                            })()}
-                            <span>{row.order_number || `#${orderId}`}</span>
-                          </span>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            {getUnpaidLabel(row) && <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#888' }}>{getUnpaidLabel(row)}</span>}
-                            <span style={{ fontSize: '16px', fontWeight: 600, color: cardThemeColor }}>{totalStr}</span>
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>{formatOrderDate(row.order_date || row.orderDate || '')}</div>
-                        {isLoading ? (
-                          <div style={{ textAlign: 'center', padding: '24px', color: isDarkMode ? '#999' : '#999', fontSize: '14px' }}>Loading...</div>
-                        ) : details ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '14px' }}>
-                            {details.prepare_by && <div style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Prepare by: {formatOrderDate(details.prepare_by)}</div>}
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Subtotal</span>
-                              <span>${(parseFloat(details.subtotal) || 0).toFixed(2)}</span>
+                        <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginBottom: '8px', textTransform: 'uppercase' }}>Date range</div>
+                        {[
+                          { value: null, label: 'All' },
+                          { value: 'today', label: 'Today' },
+                          { value: 'week', label: 'Week' },
+                          { value: 'month', label: 'Month' }
+                        ].map(({ value, label }) => (
+                          <label key={value ?? 'all'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                            <input type="radio" name="dateRange" checked={dateRange === value} onChange={() => setDateRange(value)} />
+                            {label}
+                          </label>
+                        ))}
+                        <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginTop: '12px', marginBottom: '8px', textTransform: 'uppercase' }}>Status</div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                          <input type="checkbox" checked={filterReturns} onChange={() => setFilterReturns(v => !v)} />
+                          Returns
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                          <input type="checkbox" checked={filterCanceled} onChange={() => setFilterCanceled(v => !v)} />
+                          Canceled
+                        </label>
+                        <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #aaa)' : '#666', marginTop: '12px', marginBottom: '8px', textTransform: 'uppercase' }}>Order type</div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                          <input type="checkbox" checked={filterOrderTypePickup} onChange={() => setFilterOrderTypePickup(v => !v)} />
+                          Pickup
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                          <input type="checkbox" checked={filterOrderTypeDelivery} onChange={() => setFilterOrderTypeDelivery(v => !v)} />
+                          Delivery
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', cursor: 'pointer', fontSize: '14px' }}>
+                          <input type="checkbox" checked={filterOrderTypeInPerson} onChange={() => setFilterOrderTypeInPerson(v => !v)} />
+                          In-person
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+
+        {/* Barcode Scanner - inline below filters on mobile only, smooth expand/collapse */}
+        {(showBarcodeScanner || scannerExpanded) && isMobile && (
+          <div
+            style={{
+              maxHeight: scannerExpanded ? '420px' : '0',
+              overflow: 'hidden',
+              transition: 'max-height 0.35s ease-out',
+              marginBottom: scannerExpanded ? '16px' : '0',
+              transitionProperty: 'max-height, margin-bottom'
+            }}
+            onTransitionEnd={() => {
+              if (!scannerExpanded) setShowBarcodeScanner(false)
+            }}
+          >
+            {showBarcodeScanner && (
+              <BarcodeScanner
+                onScan={handleBarcodeScan}
+                onClose={() => { setScannerExpanded(false); focusSearchInput() }}
+                themeColor={themeColor}
+                inline
+              />
+            )}
+          </div>
+        )}
+
+        {/* Barcode Scanner - modal overlay on desktop */}
+        {showBarcodeScanner && !isMobile && (
+          <BarcodeScanner
+            onScan={handleBarcodeScan}
+            onClose={() => { setShowBarcodeScanner(false); focusSearchInput() }}
+            themeColor={themeColor}
+          />
+        )}
+
+        <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          {error && <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#e57373' : '#c62828' }}>{error}</div>}
+          {!error && (
+            loading ? (
+              /* Desktop: table with headers + loading row. Mobile: loading message. */
+              isMobile ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontSize: '14px' }}>Loading…</div>
+              ) : (
+                <div style={{
+                  backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#fff',
+                  borderRadius: '4px',
+                  overflowX: 'auto',
+                  boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
+                  width: '100%'
+                }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa' }}>
+                        {columnsWithActions.map(col => (
+                          <th
+                            key={col}
+                            style={{
+                              position: 'sticky',
+                              top: 0,
+                              zIndex: 1,
+                              padding: '12px',
+                              textAlign: 'left',
+                              fontWeight: 600,
+                              borderBottom: '2px solid #dee2e6',
+                              color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
+                              fontSize: '13px',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
+                              boxShadow: '0 1px 0 0 #dee2e6'
+                            }}
+                          >
+                            {getColumnHeaderLabel(col)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td colSpan={columnsWithActions.length} style={{ textAlign: 'center', padding: '40px 20px', color: isDarkMode ? 'var(--text-tertiary, #999)' : '#999', fontSize: '14px' }}>
+                          Loading…
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )
+            ) : data.data && data.data.length > 0 ? (
+              <>
+                {viewMode === 'cards' ? (
+                  <>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))',
+                      gap: isMobile ? '10px' : '16px',
+                      alignContent: 'start'
+                    }}>
+                      {filteredData.map((row, idx) => {
+                        const orderId = row.order_id || row.orderId
+                        const normalizedOrderId = parseInt(orderId)
+                        const details = orderDetails[normalizedOrderId]
+                        const isLoading = loadingDetails[normalizedOrderId]
+                        // Order total should include tip (updated by process_payment). Fallback: add tip for legacy orders where total wasn't updated
+                        const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount) || 0) - (parseFloat(row.discount) || 0)
+                        const tipAmt = parseFloat(row.tip) || 0
+                        const storedTotal = parseFloat(row.total) || 0
+                        const totalVal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0))
+                        const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
+                        const cardSource = String(row?.order_source ?? row?.orderSource ?? '').toLowerCase().trim()
+                        const cardOutline = cardSource === 'doordash' ? '2px solid #FF3008' : cardSource === 'shopify' ? '2px solid #5A863E' : cardSource === 'uber_eats' ? '2px solid #1a1a1a' : (isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee')
+                        const cardThemeColor = cardSource === 'doordash' ? '#FF3008' : cardSource === 'shopify' ? '#5A863E' : cardSource === 'uber_eats' ? '#1a1a1a' : themeColor
+                        const isIntegrationCard = cardSource === 'doordash' || cardSource === 'shopify' || cardSource === 'uber_eats'
+                        const isInhouseCard = !isIntegrationCard
+                        const glassClass = isIntegrationCard
+                          ? `integration-card-glass${cardSource === 'shopify' ? ' integration-card-shopify-bg' : ''}${cardSource === 'doordash' ? ' integration-card-doordash-bg' : ''}${cardSource === 'uber_eats' ? ' integration-card-ubereats-bg' : ''}`
+                          : isInhouseCard
+                            ? 'integration-card-glass integration-card-inhouse-bg'
+                            : ''
+                        return (
+                          <div
+                            key={`order-${normalizedOrderId ?? 'n/a'}-${idx}`}
+                            onClick={() => handleCardClick(row, idx)}
+                            className={glassClass || undefined}
+                            style={{
+                              ...(glassClass ? {} : {
+                                backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                boxShadow: isDarkMode ? '0 1px 4px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.08)',
+                                border: cardOutline
+                              }),
+                              borderRadius: '10px',
+                              padding: '14px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '15px', color: isDarkMode ? 'var(--text-primary)' : '#333', minWidth: 0 }}>
+                                {(() => {
+                                  const logo = getOrderSourceLogo(row)
+                                  if (logo?.icon === 'home') {
+                                    return <Home key={`home-${normalizedOrderId}`} size={18} style={{ flexShrink: 0, color: cardThemeColor, display: 'block' }} />
+                                  }
+                                  if (logo) {
+                                    if (logo.textOnly) {
+                                      return <span key={`src-${normalizedOrderId}`} style={{ flexShrink: 0, fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>{logo.alt}</span>
+                                    }
+                                    if (logo.src) return <img key={`logo-${normalizedOrderId}`} src={logo.src} alt={logo.alt} style={{ height: '18px', width: 'auto', maxWidth: '80px', minWidth: '20px', objectFit: 'contain', flexShrink: 0, display: 'block' }} />
+                                  }
+                                  if (isInhouseCard) {
+                                    return <Home key={`home-${normalizedOrderId}`} size={18} style={{ flexShrink: 0, color: cardThemeColor, display: 'block' }} />
+                                  }
+                                  return null
+                                })()}
+                                <span style={{ flexShrink: 0 }}>{row.order_number || `#${orderId}`}</span>
+                              </span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {getUnpaidLabel(row) && (
+                                  <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#888' }}>{getUnpaidLabel(row)}</span>
+                                )}
+                                <span style={{ fontSize: '14px', fontWeight: 600, color: cardThemeColor }}>{totalStr}</span>
+                              </span>
                             </div>
-                            {details.items && details.items.length > 0 && (
-                              <div style={{ marginTop: '4px' }}>
-                                <div style={{ fontWeight: 600, marginBottom: '8px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Items</div>
-                                {details.items.map((item, i) => (
-                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                                    <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>{item.product_name || 'Item'}</span>
-                                    <span>×{item.quantity || 0}</span>
-                                  </div>
-                                ))}
+                            <div style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
+                              {formatOrderDate(row.order_date || row.orderDate || '')}
+                            </div>
+                            {(row.prepare_by) && (
+                              <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginTop: '4px' }}>
+                                Prepare by: {formatOrderDate(row.prepare_by)}
                               </div>
                             )}
-                            {cardSource === 'doordash' && ((details?.dasher_status || details?.dasher_info) || (row?.dasher_status || row?.dasher_info)) && (
-                              <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(255, 48, 8, 0.08)' : 'rgba(255, 48, 8, 0.06)', border: '1px solid rgba(255, 48, 8, 0.25)' }}>
-                                <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '6px' }}>Dasher</div>
-                                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>
-                                  {(details?.dasher_status ?? row?.dasher_status) && <span>{getDasherStatusLabel(details?.dasher_status ?? row?.dasher_status)}</span>}
-                                  {((details?.dasher_status ?? row?.dasher_status) && ((details?.dasher_info ?? row?.dasher_info)?.first_name || (details?.dasher_info ?? row?.dasher_info)?.last_name || ((details?.dasher_info ?? row?.dasher_info)?.vehicle?.make || (details?.dasher_info ?? row?.dasher_info)?.vehicle?.model))) && ' · '}
-                                  {((details?.dasher_info ?? row?.dasher_info)?.first_name || (details?.dasher_info ?? row?.dasher_info)?.last_name) && (
-                                    <span>{[(details?.dasher_info ?? row?.dasher_info).first_name, (details?.dasher_info ?? row?.dasher_info).last_name].filter(Boolean).join(' ')}</span>
-                                  )}
-                                  {((details?.dasher_info ?? row?.dasher_info)?.vehicle?.make || (details?.dasher_info ?? row?.dasher_info)?.vehicle?.model) && (
-                                    <span> · {[((details?.dasher_info ?? row?.dasher_info).vehicle?.make), ((details?.dasher_info ?? row?.dasher_info).vehicle?.model)].filter(Boolean).join(' ')}</span>
-                                  )}
-                                </div>
-                                {((details?.dasher_info ?? row?.dasher_info)?.phone_number) && (
-                                  <div style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', marginTop: '6px' }}>Phone: {(details?.dasher_info ?? row?.dasher_info).phone_number}</div>
+                            {cardSource === 'doordash' && (row.dasher_status || row.dasher_info) && (
+                              <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginTop: '4px' }}>
+                                {row.dasher_status && <span>Dasher: {getDasherStatusLabel(row.dasher_status)}</span>}
+                                {row.dasher_status && row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name || (row.dasher_info.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model))) && ' · '}
+                                {row.dasher_info && (row.dasher_info.first_name || row.dasher_info.last_name) && (
+                                  <span>{[row.dasher_info.first_name, row.dasher_info.last_name].filter(Boolean).join(' ')}</span>
+                                )}
+                                {row.dasher_info?.vehicle && (row.dasher_info.vehicle.make || row.dasher_info.vehicle.model) && (
+                                  <span> · {[row.dasher_info.vehicle.make, row.dasher_info.vehicle.model].filter(Boolean).join(' ')}</span>
                                 )}
                               </div>
                             )}
-                            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${cardThemeColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              {['placed', 'being_made'].includes((row.order_status || '').toLowerCase()) && (row.order_status || '').toLowerCase() !== 'voided' && (
-                                <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready'); setExpandedCardModal(null) }} disabled={!!statusUpdatingOrderId} className={`button-53 button-53--${cardSource === 'doordash' ? 'doordash' : cardSource === 'shopify' ? 'shopify' : cardSource === 'uber_eats' ? 'uber_eats' : 'inhouse'}`}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
-                              )}
-                              <div ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null} style={{ position: 'relative', marginLeft: 'auto' }}>
+                            {/* DoorDash actions are in the three-dots dropdown; Mark ready inline when expanded + in progress */}
+                            {/* Product info + actions ellipsis inline (bottom right when collapsed) */}
+                            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '8px', marginTop: '10px', paddingTop: '10px', borderTop: `1px solid ${cardThemeColor}` }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {(() => {
+                                  const cardItems = orderDetails[normalizedOrderId]?.items ?? orderItemsMap[normalizedOrderId] ?? []
+                                  if (cardItems.length === 0) return null
+                                  return (
+                                    <>
+                                      <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '6px', textTransform: 'uppercase' }}>Items</div>
+                                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555', lineHeight: 1.5 }}>
+                                        {cardItems.slice(0, 5).map((item, i) => (
+                                          <li key={i}>
+                                            {item.product_name || item.productName || 'Item'} ×{item.quantity || 0}
+                                          </li>
+                                        ))}
+                                        {cardItems.length > 5 && (
+                                          <li style={{ color: isDarkMode ? '#999' : '#888', fontSize: '12px' }}>+{cardItems.length - 5} more</li>
+                                        )}
+                                      </ul>
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                              <div
+                                ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null}
+                                style={{ position: 'relative', flexShrink: 0 }}
+                              >
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    if (actionsDropdownOrderId === normalizedOrderId) {
-                                      setActionsDropdownOrderId(null)
-                                      setActionsDropdownRect(null)
-                                    } else {
-                                      const rect = e.currentTarget.getBoundingClientRect()
-                                      setActionsDropdownRect(rect)
-                                      setActionsDropdownOrderId(normalizedOrderId)
-                                    }
+                                    setActionsDropdownOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId)
                                   }}
-                                  style={{ padding: '6px', border: 'none', background: 'none', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                ><MoreVertical size={20} /></button>
+                                  style={{
+                                    padding: '6px',
+                                    border: 'none',
+                                    background: 'none',
+                                    color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                  }}
+                                >
+                                  <MoreVertical size={20} />
+                                </button>
                                 {actionsDropdownOrderId === normalizedOrderId && !actionsDropdownRect && (
-                                  <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '160px', backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff', border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1002, overflow: 'hidden' }}>
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setExpandedCardModal(null); fetchOrderById(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Return</button>
-                                    {isUnpaidOrder(row, details) && <button type="button" onClick={(e) => { e.stopPropagation(); handleVoidOrder(normalizedOrderId); setExpandedCardModal(null) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Void</button>}
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); handleReprintReceipt(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Reprint receipt</button>
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      bottom: '100%',
+                                      right: 0,
+                                      left: 'auto',
+                                      marginBottom: '4px',
+                                      minWidth: '160px',
+                                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : '#fff',
+                                      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
+                                      borderRadius: '8px',
+                                      boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                                      zIndex: 50,
+                                      overflow: 'hidden'
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); fetchOrderById(normalizedOrderId) }}
+                                      style={{
+                                        width: '100%',
+                                        padding: '10px 14px',
+                                        textAlign: 'left',
+                                        border: 'none',
+                                        background: 'none',
+                                        fontSize: '14px',
+                                        color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      Return
+                                    </button>
+                                    {isUnpaidOrder(row, details) && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleVoidOrder(normalizedOrderId) }}
+                                        style={{
+                                          width: '100%',
+                                          padding: '10px 14px',
+                                          textAlign: 'left',
+                                          border: 'none',
+                                          borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                          background: 'none',
+                                          fontSize: '14px',
+                                          color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        Void
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); handleReprintReceipt(normalizedOrderId) }}
+                                      style={{
+                                        width: '100%',
+                                        padding: '10px 14px',
+                                        textAlign: 'left',
+                                        border: 'none',
+                                        borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                        background: 'none',
+                                        fontSize: '14px',
+                                        color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      Reprint receipt
+                                    </button>
                                     {cardSource === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
                                       <>
                                         <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
                                         <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Mark ready</button>
                                         <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
                                         <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
-                                        <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                        <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails('') }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
                                       </>
                                     )}
                                   </div>
@@ -2600,1624 +2483,1679 @@ function RecentOrders() {
                               </div>
                             </div>
                           </div>
-                        ) : !isLoading ? (
-                          <div style={{ textAlign: 'center', padding: '24px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>Could not load order details</div>
-                        ) : null}
-                      </div>
-                    )
-                  })()}
-                </div>,
-                document.body
-              )}
-              {expandedCardModal && actionsDropdownRect && actionsDropdownOrderId === parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId) && createPortal(
-                <div
-                  ref={actionsDropdownPortalRef}
-                  style={{
-                    position: 'fixed',
-                    top: actionsDropdownRect.top + actionsDropdownRect.height + 4,
-                    right: window.innerWidth - actionsDropdownRect.right,
-                    left: 'auto',
-                    display: 'inline-block',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                    zIndex: 1003,
-                    overflow: 'hidden'
-                  }}
-                >
-                  <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setExpandedCardModal(null); fetchOrderById(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>Return</button>
-                  {orderDetails[parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)] && isUnpaidOrder(expandedCardModal.row, orderDetails[parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)]) && <button type="button" onClick={(e) => { e.stopPropagation(); handleVoidOrder(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setExpandedCardModal(null) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Void</button>}
-                  <button type="button" onClick={(e) => { e.stopPropagation(); handleReprintReceipt(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Reprint receipt</button>
-                  {String(expandedCardModal.row?.order_source ?? expandedCardModal.row?.orderSource ?? '').toLowerCase() === 'doordash' && (expandedCardModal.row.order_status || '').toLowerCase() !== 'voided' && (
-                    <>
-                      <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); updateOrderStatus(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId), 'ready') }} disabled={!!statusUpdatingOrderId} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Mark ready</button>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); openDoordashOrderManager(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Order Manager</button>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setDoordashAdjustModalOrderId(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Adjust</button>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setDoordashCancelModal({ orderId: parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId) }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails('') }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer', whiteSpace: 'nowrap' }}>Cancel with DoorDash</button>
-                    </>
-                  )}
-                </div>,
-                document.body
-              )}
-              </>
-            ) : (
-            <div style={{ 
-              backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#fff', 
-              borderRadius: '4px', 
-              overflowX: 'auto',
-              overflowY: 'visible',
-              boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
-              width: '100%'
-            }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
-                <thead style={{
-                  position: 'sticky',
-                  top: 0,
-                  zIndex: 10
-                }}>
-                  <tr>
-                    {columnsWithActions.map(col => (
-                      <th
-                        key={col}
+                        )
+                      })}
+                    </div>
+                    {expandedCardModal && createPortal(
+                      <div
                         style={{
-                          padding: 0,
-                          textAlign: 'left',
-                          fontWeight: 600,
-                          borderBottom: '2px solid #dee2e6',
-                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
-                          fontSize: '13px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.5px',
-                          boxShadow: '0 1px 0 0 #dee2e6',
-                          verticalAlign: 'middle'
+                          ...modalOverlayStyle(isDarkMode),
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: '24px'
                         }}
+                        onClick={() => { setExpandedCardModal(null); setActionsDropdownOrderId(null); setActionsDropdownRect(null) }}
                       >
-                        <div
-                          style={{
-                            padding: '12px',
-                            backgroundColor: isDarkMode ? 'rgba(26, 26, 26, 0.88)' : 'rgba(248, 249, 250, 0.88)',
-                            backdropFilter: 'blur(6px) saturate(130%)',
-                            WebkitBackdropFilter: 'blur(6px) saturate(130%)',
-                            minHeight: '44px',
-                            display: 'flex',
-                            alignItems: 'center'
-                          }}
-                        >
-                          {getColumnHeaderLabel(col)}
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredData.map((row, idx) => {
-                    const orderId = row.order_id || row.orderId
-                    const normalizedOrderId = parseInt(orderId)
-                    const isExpanded = expandedRow === normalizedOrderId
-                    const details = orderDetails[normalizedOrderId]
-                    const isLoading = loadingDetails[normalizedOrderId]
-                    const rowStyle = getRowGradientAndLogo(row)
-                    const baseRowBg = idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa')
-                    return (
-                      <Fragment key={`order-${normalizedOrderId ?? 'n/a'}-${idx}`}>
-                        <tr 
-                          ref={el => {
-                            if (normalizedOrderId) {
-                              rowRefs.current[normalizedOrderId] = el
-                            }
-                          }}
-                          onClick={() => handleRowClick(row)}
-                          style={{ 
-                            background: rowStyle.gradient ? `${rowStyle.gradient}, ${baseRowBg}` : baseRowBg,
-                            cursor: 'pointer',
-                            border: 'none',
-                            transition: 'all 0.3s ease',
-                            position: 'relative',
-                            overflow: 'hidden'
-                          }}
-                        >
-                          {visibleColumns.map((col, colIdx) => {
-                            const isFirstCol = colIdx === 0
-                            const showBlurredLogo = isFirstCol && rowStyle.logoSrc
-                            if (col === 'Status') {
-                              const nextPhase = getNextPhase(row)
-                              return (
-                                <td
-                                  key={col}
-                                  style={{
-                                    padding: '8px 12px',
-                                    borderBottom: '1px solid #eee',
-                                    fontSize: '14px',
-                                    textAlign: 'left',
-                                    cursor: nextPhase ? 'pointer' : 'default',
-                                    position: 'relative',
-                                    zIndex: 1
-                                  }}
-                                  onClick={nextPhase ? (e) => openStatusPhaseModal(row, e) : undefined}
-                                  role={nextPhase ? 'button' : undefined}
-                                  title={nextPhase ? `Move to ${nextPhase.label}` : undefined}
-                                >
-                                  <span style={getStatusPillStyle(row)}>
-                                    {getStatusDisplay(row)}
-                                  </span>
-                                </td>
-                              )
-                            }
-                            const value = row[col]
-                            let formattedValue = ''
-                            if (value === null || value === undefined) {
-                              formattedValue = ''
-                            } else if (col.includes('price') || col.includes('cost') || col.includes('total') ||
-                                      col.includes('amount') || col.includes('fee')) {
-                              formattedValue = typeof value === 'number'
-                                ? `$${value.toFixed(2)}`
-                                : `$${parseFloat(value || 0).toFixed(2)}`
-                            } else if (col.includes('date') || col.includes('time')) {
-                              formattedValue = formatOrderDate(value)
-                            } else {
-                              formattedValue = String(value)
-                            }
-                            const sourceLogo = col === 'order_number' ? getOrderSourceLogo(row) : null
-                            const unpaidLabel = col === 'total' ? getUnpaidLabel(row) : null
-                            return (
-                              <td
-                                key={col}
-                                style={{
-                                  padding: '8px 12px',
-                                  borderBottom: '1px solid #eee',
-                                  fontSize: '14px',
-                                  textAlign: (col.includes('price') || col.includes('cost') || col.includes('total') ||
-                                             col.includes('amount') || col.includes('fee')) ? 'right' : 'left',
-                                  position: 'relative',
-                                  zIndex: 1
-                                }}
-                              >
-                                {showBlurredLogo && (
-                                  <div
-                                    aria-hidden
-                                    style={{
-                                      position: 'absolute',
-                                      left: 0,
-                                      top: 0,
-                                      bottom: 0,
-                                      width: '300%',
-                                      maxWidth: '1200px',
-                                      backgroundImage: `url(${rowStyle.logoSrc})`,
-                                      backgroundSize: 'contain',
-                                      backgroundPosition: 'left center',
-                                      backgroundRepeat: 'no-repeat',
-                                      filter: 'blur(14px)',
-                                      opacity: isDarkMode ? 0.2 : 0.35,
-                                      pointerEvents: 'none',
-                                      zIndex: 0
-                                    }}
-                                  />
-                                )}
-                                <span style={{ position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: (col.includes('price') || col.includes('cost') || col.includes('total') || col.includes('amount') || col.includes('fee')) ? 'flex-end' : 'flex-start' }}>
-                                  {col === 'order_number' && (
-                                    <span
-                                      style={{
-                                        width: ORDER_SOURCE_LOGO_WIDTH,
-                                        minWidth: ORDER_SOURCE_LOGO_WIDTH,
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'flex-start',
-                                        flexShrink: 0
-                                      }}
-                                      title={sourceLogo?.alt}
-                                    >
-                                      {sourceLogo?.icon === 'home' ? (
-                                        <Home size={18} style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }} />
-                                      ) : sourceLogo?.textOnly ? (
-                                        <span style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>{sourceLogo.alt}</span>
-                                      ) : sourceLogo?.src ? (
-                                        <img src={sourceLogo.src} alt={sourceLogo.alt} style={{ height: '18px', width: 'auto', maxWidth: '28px', objectFit: 'contain' }} />
-                                      ) : null}
-                                    </span>
-                                  )}
-                                  {formattedValue}
-                                  {unpaidLabel && <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#888' }}>{unpaidLabel}</span>}
-                                </span>
-                              </td>
-                            )
-                          })}
-                          <td 
-                            style={{ padding: '8px 12px', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee', position: 'relative' }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                        {(() => {
+                          const { row, idx } = expandedCardModal
+                          const orderId = row.order_id || row.orderId
+                          const normalizedOrderId = parseInt(orderId)
+                          const details = orderDetails[normalizedOrderId]
+                          const isLoading = loadingDetails[normalizedOrderId]
+                          const baseTotal = (parseFloat(row.subtotal) || 0) + (parseFloat(row.tax_amount) || 0) - (parseFloat(row.discount) || 0)
+                          const tipAmt = parseFloat(row.tip) || 0
+                          const storedTotal = parseFloat(row.total) || 0
+                          const totalVal = tipAmt > 0 && storedTotal <= baseTotal ? baseTotal + tipAmt : (row.total != null ? row.total : (row.subtotal != null ? row.subtotal : 0))
+                          const totalStr = typeof totalVal === 'number' ? `$${totalVal.toFixed(2)}` : `$${parseFloat(totalVal || 0).toFixed(2)}`
+                          const cardSource = String(row?.order_source ?? row?.orderSource ?? '').toLowerCase().trim()
+                          const cardThemeColor = cardSource === 'doordash' ? '#FF3008' : cardSource === 'shopify' ? '#5A863E' : cardSource === 'uber_eats' ? '#1a1a1a' : themeColor
+                          const isIntegrationCard = cardSource === 'doordash' || cardSource === 'shopify' || cardSource === 'uber_eats'
+                          const isInhouseCard = !isIntegrationCard
+                          const glassClass = isIntegrationCard
+                            ? `integration-card-glass${cardSource === 'shopify' ? ' integration-card-shopify-bg' : ''}${cardSource === 'doordash' ? ' integration-card-doordash-bg' : ''}${cardSource === 'uber_eats' ? ' integration-card-ubereats-bg' : ''}`
+                            : isInhouseCard ? 'integration-card-glass integration-card-inhouse-bg' : ''
+                          return (
                             <div
-                              ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null}
-                              style={{ position: 'relative', display: 'inline-block' }}
-                            >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setActionsDropdownOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId)
-                                }}
-                                style={{
-                                  padding: '6px',
-                                  border: 'none',
-                                  background: 'none',
-                                  color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center'
-                                }}
-                              >
-                                <MoreVertical size={20} />
-                              </button>
-                              {actionsDropdownOrderId === normalizedOrderId && (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    top: '100%',
-                                    right: 0,
-                                    marginTop: '4px',
-                                    minWidth: '140px',
-                                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : '#fff',
-                                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
-                                    borderRadius: '8px',
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                                    zIndex: 50,
-                                    overflow: 'hidden'
-                                  }}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); fetchOrderById(normalizedOrderId) }}
-                                    style={{
-                                      width: '100%',
-                                      padding: '8px 14px',
-                                      textAlign: 'left',
-                                      border: 'none',
-                                      background: 'none',
-                                      fontSize: '13px',
-                                      color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                      cursor: 'pointer'
-                                    }}
-                                  >
-                                    Return
-                                  </button>
-                                  {isUnpaidOrder(row, details) && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => { e.stopPropagation(); handleVoidOrder(normalizedOrderId) }}
-                                      style={{
-                                        width: '100%',
-                                        padding: '8px 14px',
-                                        textAlign: 'left',
-                                        border: 'none',
-                                        borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                                        background: 'none',
-                                        fontSize: '13px',
-                                        color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      Void
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); handleReprintReceipt(normalizedOrderId) }}
-                                    style={{
-                                      width: '100%',
-                                      padding: '8px 14px',
-                                      textAlign: 'left',
-                                      border: 'none',
-                                      borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                                      background: 'none',
-                                      fontSize: '13px',
-                                      color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                      cursor: 'pointer'
-                                    }}
-                                  >
-                                    Reprint
-                                  </button>
-                                  {((row.order_source || row.orderSource) || '').toString().toLowerCase().trim() === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
-                                    <>
-                                      <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Mark ready</button>
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                        {isExpanded && (
-                          <tr key={`${idx}-details`}>
-                            <td colSpan={columnsWithActions.length} style={{ padding: '0', borderBottom: '1px solid #eee' }}>
-                              <div style={{
+                              className={glassClass || undefined}
+                              style={{
+                                ...(glassClass ? {
+                                  backdropFilter: 'blur(64px) saturate(1.5)',
+                                  WebkitBackdropFilter: 'blur(64px) saturate(1.5)',
+                                  backgroundColor: isDarkMode ? 'rgba(30, 30, 30, 0.9)' : 'rgba(255, 255, 255, 0.95)'
+                                } : {
+                                  backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                                  boxShadow: isDarkMode ? '0 1px 4px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.08)',
+                                  border: cardSource === 'doordash' ? '2px solid #FF3008' : cardSource === 'shopify' ? '2px solid #5A863E' : cardSource === 'uber_eats' ? '2px solid #1a1a1a' : (isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee')
+                                }),
+                                borderRadius: '12px',
                                 padding: '20px',
-                                backgroundColor: '#f8f9fa',
-                                borderTop: '2px solid #dee2e6'
-                              }}>
-                                {isLoading ? (
-                                  <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-                                    Loading details...
+                                maxWidth: isMobile ? '95%' : '420px',
+                                width: '100%',
+                                maxHeight: '90vh',
+                                overflowY: 'auto',
+                                cursor: 'default'
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '16px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+                                  {(() => {
+                                    const logo = getOrderSourceLogo(row)
+                                    if (logo?.icon === 'home') return <Home size={18} style={{ flexShrink: 0, color: cardThemeColor }} />
+                                    if (logo) {
+                                      if (logo.textOnly) return <span style={{ flexShrink: 0 }}>{logo.alt}</span>
+                                      if (logo.src) return <img src={logo.src} alt={logo.alt} style={{ height: '18px', width: 'auto', maxWidth: '80px', objectFit: 'contain', flexShrink: 0 }} />
+                                    }
+                                    if (isInhouseCard) return <Home size={18} style={{ flexShrink: 0, color: cardThemeColor }} />
+                                    return null
+                                  })()}
+                                  <span>{row.order_number || `#${orderId}`}</span>
+                                </span>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  {getUnpaidLabel(row) && <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#888' }}>{getUnpaidLabel(row)}</span>}
+                                  <span style={{ fontSize: '16px', fontWeight: 600, color: cardThemeColor }}>{totalStr}</span>
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>{formatOrderDate(row.order_date || row.orderDate || '')}</div>
+                              {isLoading ? (
+                                <div style={{ textAlign: 'center', padding: '24px', color: isDarkMode ? '#999' : '#999', fontSize: '14px' }}>Loading...</div>
+                              ) : details ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '14px' }}>
+                                  {details.prepare_by && <div style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Prepare by: {formatOrderDate(details.prepare_by)}</div>}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Subtotal</span>
+                                    <span>${(parseFloat(details.subtotal) || 0).toFixed(2)}</span>
                                   </div>
-                                ) : details ? (
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-                                    <div>
-                                      <strong>Order ID:</strong> {orderId || 'N/A'}
+                                  {details.items && details.items.length > 0 && (
+                                    <div style={{ marginTop: '4px' }}>
+                                      <div style={{ fontWeight: 600, marginBottom: '8px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Items</div>
+                                      {details.items.map((item, i) => (
+                                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                                          <span style={{ color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>{item.product_name || 'Item'}</span>
+                                          <span>×{item.quantity || 0}</span>
+                                        </div>
+                                      ))}
                                     </div>
-                                    <div>
-                                      <strong>Employee ID:</strong> {details.employee_id || 'N/A'}
-                                    </div>
-                                    {details.employee_name != null && (
-                                      <div>
-                                        <strong>Employee Name:</strong> {details.employee_name}
-                                      </div>
-                                    )}
-                                    {details.establishment_id != null && (
-                                      <div>
-                                        <strong>Establishment ID:</strong> {details.establishment_id}
-                                      </div>
-                                    )}
-                                    <div>
-                                      <strong>Customer ID:</strong> {details.customer_id || 'N/A'}
-                                    </div>
-                                    {(details.customer_name || details.customerName) && (
-                                      <div>
-                                        <strong>Customer:</strong> {details.customer_name || details.customerName}
-                                      </div>
-                                    )}
-                                    {(details.customer_phone || details.customerPhone) && (
-                                      <div style={{ gridColumn: '1 / -1' }}>
-                                        <strong>Customer phone:</strong>{' '}
-                                        <a href={`tel:${(details.customer_phone || details.customerPhone).replace(/\s/g, '')}`} style={{ color: isDarkMode ? '#93c5fd' : '#2563eb', textDecoration: 'none' }}>
-                                          {details.customer_phone || details.customerPhone}
-                                        </a>
-                                        {(details.order_source || details.orderSource)?.toString().toLowerCase().trim() === 'doordash' && (
-                                          <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '6px' }}>(masked; call from store number)</span>
+                                  )}
+                                  {cardSource === 'doordash' && ((details?.dasher_status || details?.dasher_info) || (row?.dasher_status || row?.dasher_info)) && (
+                                    <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', backgroundColor: isDarkMode ? 'rgba(255, 48, 8, 0.08)' : 'rgba(255, 48, 8, 0.06)', border: '1px solid rgba(255, 48, 8, 0.25)' }}>
+                                      <div style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '6px' }}>Dasher</div>
+                                      <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>
+                                        {(details?.dasher_status ?? row?.dasher_status) && <span>{getDasherStatusLabel(details?.dasher_status ?? row?.dasher_status)}</span>}
+                                        {((details?.dasher_status ?? row?.dasher_status) && ((details?.dasher_info ?? row?.dasher_info)?.first_name || (details?.dasher_info ?? row?.dasher_info)?.last_name || ((details?.dasher_info ?? row?.dasher_info)?.vehicle?.make || (details?.dasher_info ?? row?.dasher_info)?.vehicle?.model))) && ' · '}
+                                        {((details?.dasher_info ?? row?.dasher_info)?.first_name || (details?.dasher_info ?? row?.dasher_info)?.last_name) && (
+                                          <span>{[(details?.dasher_info ?? row?.dasher_info).first_name, (details?.dasher_info ?? row?.dasher_info).last_name].filter(Boolean).join(' ')}</span>
+                                        )}
+                                        {((details?.dasher_info ?? row?.dasher_info)?.vehicle?.make || (details?.dasher_info ?? row?.dasher_info)?.vehicle?.model) && (
+                                          <span> · {[((details?.dasher_info ?? row?.dasher_info).vehicle?.make), ((details?.dasher_info ?? row?.dasher_info).vehicle?.model)].filter(Boolean).join(' ')}</span>
                                         )}
                                       </div>
-                                    )}
-                                    <div>
-                                      <strong>Subtotal:</strong> ${(parseFloat(details.subtotal) || 0).toFixed(2)}
-                                    </div>
-                                    <div>
-                                      <strong>Tax Rate:</strong> {((parseFloat(details.tax_rate) || 0) * 100).toFixed(2)}%
-                                    </div>
-                                    <div>
-                                      <strong>Tax Amount:</strong> ${(parseFloat(details.tax_amount) || 0).toFixed(2)}
-                                    </div>
-                                    <div>
-                                      <strong>Discount:</strong> ${(parseFloat(details.discount) || 0).toFixed(2)}
-                                    </div>
-                                    <div>
-                                      <strong>Discount Type:</strong> {details.discount_type ? ({ student: 'Student', employee: 'Employee', senior: 'Senior', military: 'Military', other: 'Other' }[details.discount_type] || details.discount_type) : '—'}
-                                    </div>
-                                    <div>
-                                      <strong>Transaction Fee:</strong> ${(parseFloat(details.transaction_fee) || 0).toFixed(2)}
-                                    </div>
-                                    <div>
-                                      <strong>Tip:</strong> ${(parseFloat(details.tip) || 0).toFixed(2)}
-                                    </div>
-                                    {(details.exchange_return_id != null && details.exchange_return_id !== '') && (
-                                      <div>
-                                        <strong>Exchange return ID:</strong> {String(details.exchange_return_id)}
-                                      </div>
-                                    )}
-                                    {details.prepare_by && (
-                                      <div>
-                                        <strong>Prepare by:</strong> {formatOrderDate(details.prepare_by)}
-                                      </div>
-                                    )}
-                                    {(details.external_order_id != null && details.external_order_id !== '') && (
-                                      <div>
-                                        <strong>External order ID:</strong> {String(details.external_order_id)}
-                                      </div>
-                                    )}
-                                    {(details.integration_experience != null && details.integration_experience !== '') && (
-                                      <div>
-                                        <strong>Integration experience:</strong> {String(details.integration_experience)}
-                                      </div>
-                                    )}
-                                    {(details.doordash_promo_details != null && Object.keys(details.doordash_promo_details || {}).length > 0) && (
-                                      <div style={{ gridColumn: '1 / -1' }}>
-                                        <strong>DoorDash promo details:</strong>{' '}
-                                        {typeof details.doordash_promo_details === 'object' ? JSON.stringify(details.doordash_promo_details) : String(details.doordash_promo_details)}
-                                      </div>
-                                    )}
-                                    {(details.doordash_total_merchant_funded_discount_cents != null && details.doordash_total_merchant_funded_discount_cents !== '') && (
-                                      <div>
-                                        <strong>DoorDash total merchant funded discount (¢):</strong> {Number(details.doordash_total_merchant_funded_discount_cents)}
-                                      </div>
-                                    )}
-                                    {(details.doordash_total_doordash_funded_discount_cents != null && details.doordash_total_doordash_funded_discount_cents !== '') && (
-                                      <div>
-                                        <strong>DoorDash total DoorDash funded discount (¢):</strong> {Number(details.doordash_total_doordash_funded_discount_cents)}
-                                      </div>
-                                    )}
-                                    {(details.dasher_status != null && details.dasher_status !== '') && (
-                                      <div>
-                                        <strong>Dasher status:</strong> {getDasherStatusLabel(details.dasher_status)}
-                                      </div>
-                                    )}
-                                    {details.dasher_status_at && (
-                                      <div>
-                                        <strong>Dasher status at:</strong> {formatOrderDate(details.dasher_status_at)}
-                                      </div>
-                                    )}
-                                    {(details.dasher_info != null && typeof details.dasher_info === 'object' && Object.keys(details.dasher_info || {}).length > 0) && (
-                                      <div style={{ gridColumn: '1 / -1' }}>
-                                        <strong>Dasher info:</strong>{' '}
-                                        {(details.dasher_info?.first_name || details.dasher_info?.last_name)
-                                          ? [details.dasher_info.first_name, details.dasher_info.last_name].filter(Boolean).join(' ')
-                                          : null}
-                                        {details.dasher_info?.phone_number && ` · ${details.dasher_info.phone_number}`}
-                                        {(details.dasher_info?.vehicle?.make || details.dasher_info?.vehicle?.model) && ` · ${[details.dasher_info.vehicle.make, details.dasher_info.vehicle.model].filter(Boolean).join(' ')}`}
-                                        {!(details.dasher_info?.first_name || details.dasher_info?.last_name || details.dasher_info?.phone_number || details.dasher_info?.vehicle?.make || details.dasher_info?.vehicle?.model) && JSON.stringify(details.dasher_info)}
-                                      </div>
-                                    )}
-                                    {(details.order_source || details.orderSource)?.toString().toLowerCase().trim() === 'doordash' && (details.dasher_status || details.dasher_info) && (
-                                      <div style={{ gridColumn: '1 / -1' }}>
-                                        <strong>Dasher:</strong>{' '}
-                                        {details.dasher_status && getDasherStatusLabel(details.dasher_status)}
-                                        {details.dasher_status && details.dasher_info && (details.dasher_info.first_name || details.dasher_info.last_name || (details.dasher_info.vehicle && (details.dasher_info.vehicle.make || details.dasher_info.vehicle.model))) && ' · '}
-                                        {details.dasher_info && (details.dasher_info.first_name || details.dasher_info.last_name) && (
-                                          <span>{[details.dasher_info.first_name, details.dasher_info.last_name].filter(Boolean).join(' ')}</span>
-                                        )}
-                                        {details.dasher_info?.vehicle && (details.dasher_info.vehicle.make || details.dasher_info.vehicle.model) && (
-                                          <span> · {[details.dasher_info.vehicle.make, details.dasher_info.vehicle.model].filter(Boolean).join(' ')}</span>
-                                        )}
-                                        {details.dasher_info?.phone_number && (
-                                          <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>
-                                            Phone: {details.dasher_info.phone_number} (call from store number)
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
-                                    {(details.order_type || details.orderType || '').toLowerCase() === 'delivery' && (details.customer_address || details.customerAddress) && (
-                                      <div style={{ gridColumn: '1 / -1' }}>
-                                        <strong>Delivery address:</strong> {details.customer_address || details.customerAddress}
-                                      </div>
-                                    )}
-                                    {/* Status / phase update for pickup & delivery */}
-                                    <div style={{ gridColumn: '1 / -1', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid #dee2e6' }}>
-                                      <strong>Status:</strong> {getStatusDisplay(details)}
-                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
-                                        <select
-                                          value={details.order_status || 'completed'}
-                                          onChange={(e) => {
-                                            const v = e.target.value
-                                            if (v && v !== (details.order_status || 'completed')) {
-                                              updateOrderStatus(normalizedOrderId, v)
-                                            }
-                                          }}
-                                          disabled={!!statusUpdatingOrderId}
-                                          style={{
-                                            padding: '6px 10px',
-                                            borderRadius: '6px',
-                                            border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
-                                            backgroundColor: isDarkMode ? '#2d2d2d' : '#fff',
-                                            color: isDarkMode ? '#fff' : '#333',
-                                            fontSize: '13px',
-                                            minWidth: '140px'
-                                          }}
-                                        >
-                                          <option value="placed">Placed</option>
-                                          <option value="being_made">Being made</option>
-                                          <option value="ready">{(details.order_type || '').toLowerCase() === 'pickup' ? 'Ready for pickup' : 'Ready'}</option>
-                                          {(details.order_type || '').toLowerCase() === 'delivery' && (
-                                            <>
-                                              <option value="out_for_delivery">Out for delivery</option>
-                                              <option value="delivered">Delivered</option>
-                                            </>
-                                          )}
-                                          <option value="completed">Paid / Complete</option>
-                                        </select>
-                                        {(details.order_source || details.orderSource) && (
-                                          <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
-                                            {(details.order_type || '').toLowerCase() === 'delivery' && (
-                                              <>
-                                                <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'out_for_delivery') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Out for delivery'}</button>
-                                                <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'delivered') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Shipped'}</button>
-                                              </>
-                                            )}
-                                          </span>
-                                        )}
-                                        {((details.order_type || '').toLowerCase() === 'pickup' || (details.order_type || '').toLowerCase() === 'delivery') && (details.payment_status || 'completed').toLowerCase() === 'pending' && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'completed', 'completed', 'cash') }}
-                                            disabled={!!statusUpdatingOrderId}
-                                            style={{
-                                              padding: '6px 14px',
-                                              borderRadius: '8px',
-                                              border: `1px solid rgba(${themeColorRgb}, 0.5)`,
-                                              backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                                              color: '#fff',
-                                              fontWeight: 600,
-                                              fontSize: '13px',
-                                              cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer'
-                                            }}
-                                          >
-                                            {statusUpdatingOrderId === normalizedOrderId ? 'Updating…' : 'Mark as paid (cash)'}
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                    {(details.receipt_type != null || details.receipt_email || details.receipt_phone) && (
-                                      <>
-                                        {details.receipt_type != null && (
-                                          <div>
-                                            <strong>Receipt Type:</strong> {String(details.receipt_type)}
-                                          </div>
-                                        )}
-                                        {details.receipt_email && (
-                                          <div>
-                                            <strong>Receipt Email:</strong> {details.receipt_email}
-                                          </div>
-                                        )}
-                                        {details.receipt_phone && (
-                                          <div>
-                                            <strong>Receipt Phone:</strong> {details.receipt_phone}
-                                          </div>
-                                        )}
-                                      </>
-                                    )}
-                                    {details.notes && (
-                                      <div style={{ gridColumn: '1 / -1' }}>
-                                        <strong>Notes:</strong> {details.notes}
-                                      </div>
-                                    )}
-                                    <div style={{ gridColumn: '1 / -1', marginTop: '16px' }}>
-                                      <strong>Items Purchased:</strong>
-                                      {details.items && details.items.length > 0 ? (
-                                        <table style={{ width: '100%', marginTop: '8px', borderCollapse: 'collapse' }}>
-                                          <thead>
-                                            <tr style={{ backgroundColor: '#e9ecef' }}>
-                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>Product</th>
-                                              <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>SKU</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Quantity</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Unit Price</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Discount</th>
-                                              <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Subtotal</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {details.items.map((item, itemIdx) => (
-                                              <tr key={itemIdx} style={{ backgroundColor: itemIdx % 2 === 0 ? '#fff' : '#f8f9fa' }}>
-                                                <td style={{ padding: '8px', fontSize: '13px' }}>{item.product_name || 'N/A'}</td>
-                                                <td style={{ padding: '8px', fontSize: '13px' }}>{item.sku || 'N/A'}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{item.quantity || 0}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(parseFloat(item.unit_price) || 0).toFixed(2)}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(parseFloat(item.discount) || 0).toFixed(2)}</td>
-                                                <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(parseFloat(item.subtotal) || 0).toFixed(2)}</td>
-                                              </tr>
-                                            ))}
-                                          </tbody>
-                                        </table>
-                                      ) : (
-                                        <div style={{ marginTop: '8px', color: '#999', fontSize: '13px' }}>No items found</div>
+                                      {((details?.dasher_info ?? row?.dasher_info)?.phone_number) && (
+                                        <div style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666', marginTop: '6px' }}>Phone: {(details?.dasher_info ?? row?.dasher_info).phone_number}</div>
                                       )}
                                     </div>
-                                    {((details.order_source || details.orderSource) || '').toString().toLowerCase().trim() === 'doordash' && ['placed', 'being_made'].includes((details.order_status || '').toLowerCase()) && (details.order_status || '').toLowerCase() !== 'voided' && (
-                                      <div style={{ gridColumn: '1 / -1', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #dee2e6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
+                                  )}
+                                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${cardThemeColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    {['placed', 'being_made'].includes((row.order_status || '').toLowerCase()) && (row.order_status || '').toLowerCase() !== 'voided' && (
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready'); setExpandedCardModal(null) }} disabled={!!statusUpdatingOrderId} className={`button-53 button-53--${cardSource === 'doordash' ? 'doordash' : cardSource === 'shopify' ? 'shopify' : cardSource === 'uber_eats' ? 'uber_eats' : 'inhouse'}`}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
+                                    )}
+                                    <div ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null} style={{ position: 'relative', marginLeft: 'auto' }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (actionsDropdownOrderId === normalizedOrderId) {
+                                            setActionsDropdownOrderId(null)
+                                            setActionsDropdownRect(null)
+                                          } else {
+                                            const rect = e.currentTarget.getBoundingClientRect()
+                                            setActionsDropdownRect(rect)
+                                            setActionsDropdownOrderId(normalizedOrderId)
+                                          }
+                                        }}
+                                        style={{ padding: '6px', border: 'none', background: 'none', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                      ><MoreVertical size={20} /></button>
+                                      {actionsDropdownOrderId === normalizedOrderId && !actionsDropdownRect && (
+                                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '160px', backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff', border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1002, overflow: 'hidden' }}>
+                                          <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setExpandedCardModal(null); fetchOrderById(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Return</button>
+                                          {isUnpaidOrder(row, details) && <button type="button" onClick={(e) => { e.stopPropagation(); handleVoidOrder(normalizedOrderId); setExpandedCardModal(null) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Void</button>}
+                                          <button type="button" onClick={(e) => { e.stopPropagation(); handleReprintReceipt(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Reprint receipt</button>
+                                          {cardSource === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
+                                            <>
+                                              <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Mark ready</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : !isLoading ? (
+                                <div style={{ textAlign: 'center', padding: '24px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>Could not load order details</div>
+                              ) : null}
+                            </div>
+                          )
+                        })()}
+                      </div>,
+                      document.body
+                    )}
+                    {expandedCardModal && actionsDropdownRect && actionsDropdownOrderId === parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId) && createPortal(
+                      <div
+                        ref={actionsDropdownPortalRef}
+                        style={{
+                          position: 'fixed',
+                          top: actionsDropdownRect.top + actionsDropdownRect.height + 4,
+                          right: window.innerWidth - actionsDropdownRect.right,
+                          left: 'auto',
+                          display: 'inline-block',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
+                          border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                          zIndex: 1003,
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setExpandedCardModal(null); fetchOrderById(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>Return</button>
+                        {orderDetails[parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)] && isUnpaidOrder(expandedCardModal.row, orderDetails[parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)]) && <button type="button" onClick={(e) => { e.stopPropagation(); handleVoidOrder(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setExpandedCardModal(null) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Void</button>}
+                        <button type="button" onClick={(e) => { e.stopPropagation(); handleReprintReceipt(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Reprint receipt</button>
+                        {String(expandedCardModal.row?.order_source ?? expandedCardModal.row?.orderSource ?? '').toLowerCase() === 'doordash' && (expandedCardModal.row.order_status || '').toLowerCase() !== 'voided' && (
+                          <>
+                            <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); updateOrderStatus(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId), 'ready') }} disabled={!!statusUpdatingOrderId} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Mark ready</button>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); openDoordashOrderManager(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Order Manager</button>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setDoordashAdjustModalOrderId(parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId)) }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>Adjust</button>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setActionsDropdownRect(null); setDoordashCancelModal({ orderId: parseInt(expandedCardModal.row?.order_id || expandedCardModal.row?.orderId) }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails('') }} style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: '14px', color: '#b91c1c', cursor: 'pointer', whiteSpace: 'nowrap' }}>Cancel with DoorDash</button>
+                          </>
+                        )}
+                      </div>,
+                      document.body
+                    )}
+                  </>
+                ) : (
+                  <div style={{
+                    backgroundColor: isDarkMode ? 'var(--bg-primary)' : '#fff',
+                    borderRadius: '4px',
+                    overflowX: 'auto',
+                    overflowY: 'visible',
+                    boxShadow: isDarkMode ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
+                    width: '100%'
+                  }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 'max-content' }}>
+                      <thead style={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 10
+                      }}>
+                        <tr>
+                          {columnsWithActions.map(col => (
+                            <th
+                              key={col}
+                              style={{
+                                padding: 0,
+                                textAlign: 'left',
+                                fontWeight: 600,
+                                borderBottom: '2px solid #dee2e6',
+                                color: isDarkMode ? 'var(--text-primary, #fff)' : '#495057',
+                                fontSize: '13px',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.5px',
+                                boxShadow: '0 1px 0 0 #dee2e6',
+                                verticalAlign: 'middle'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  padding: '12px',
+                                  backgroundColor: isDarkMode ? 'rgba(26, 26, 26, 0.88)' : 'rgba(248, 249, 250, 0.88)',
+                                  backdropFilter: 'blur(6px) saturate(130%)',
+                                  WebkitBackdropFilter: 'blur(6px) saturate(130%)',
+                                  minHeight: '44px',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                {getColumnHeaderLabel(col)}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredData.map((row, idx) => {
+                          const orderId = row.order_id || row.orderId
+                          const normalizedOrderId = parseInt(orderId)
+                          const isExpanded = expandedRow === normalizedOrderId
+                          const details = orderDetails[normalizedOrderId]
+                          const isLoading = loadingDetails[normalizedOrderId]
+                          const rowStyle = getRowGradientAndLogo(row)
+                          const baseRowBg = idx % 2 === 0 ? (isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff') : (isDarkMode ? 'var(--bg-tertiary, #3a3a3a)' : '#fafafa')
+                          return (
+                            <Fragment key={`order-${normalizedOrderId ?? 'n/a'}-${idx}`}>
+                              <tr
+                                ref={el => {
+                                  if (normalizedOrderId) {
+                                    rowRefs.current[normalizedOrderId] = el
+                                  }
+                                }}
+                                onClick={() => handleRowClick(row)}
+                                style={{
+                                  background: rowStyle.gradient ? `${rowStyle.gradient}, ${baseRowBg}` : baseRowBg,
+                                  cursor: 'pointer',
+                                  border: 'none',
+                                  transition: 'all 0.3s ease',
+                                  position: 'relative',
+                                  overflow: 'hidden'
+                                }}
+                              >
+                                {visibleColumns.map((col, colIdx) => {
+                                  const isFirstCol = colIdx === 0
+                                  const showBlurredLogo = isFirstCol && rowStyle.logoSrc
+                                  if (col === 'Status') {
+                                    const nextPhase = getNextPhase(row)
+                                    return (
+                                      <td
+                                        key={col}
+                                        style={{
+                                          padding: '8px 12px',
+                                          borderBottom: '1px solid #eee',
+                                          fontSize: '14px',
+                                          textAlign: 'left',
+                                          cursor: nextPhase ? 'pointer' : 'default',
+                                          position: 'relative',
+                                          zIndex: 1
+                                        }}
+                                        onClick={nextPhase ? (e) => openStatusPhaseModal(row, e) : undefined}
+                                        role={nextPhase ? 'button' : undefined}
+                                        title={nextPhase ? `Move to ${nextPhase.label}` : undefined}
+                                      >
+                                        <span style={getStatusPillStyle(row)}>
+                                          {getStatusDisplay(row)}
+                                        </span>
+                                      </td>
+                                    )
+                                  }
+                                  const value = row[col]
+                                  let formattedValue = ''
+                                  if (value === null || value === undefined) {
+                                    formattedValue = ''
+                                  } else if (col.includes('price') || col.includes('cost') || col.includes('total') ||
+                                    col.includes('amount') || col.includes('fee')) {
+                                    formattedValue = typeof value === 'number'
+                                      ? `$${value.toFixed(2)}`
+                                      : `$${parseFloat(value || 0).toFixed(2)}`
+                                  } else if (col.includes('date') || col.includes('time')) {
+                                    formattedValue = formatOrderDate(value)
+                                  } else {
+                                    formattedValue = String(value)
+                                  }
+                                  const sourceLogo = col === 'order_number' ? getOrderSourceLogo(row) : null
+                                  const unpaidLabel = col === 'total' ? getUnpaidLabel(row) : null
+                                  return (
+                                    <td
+                                      key={col}
+                                      style={{
+                                        padding: '8px 12px',
+                                        borderBottom: '1px solid #eee',
+                                        fontSize: '14px',
+                                        textAlign: (col.includes('price') || col.includes('cost') || col.includes('total') ||
+                                          col.includes('amount') || col.includes('fee')) ? 'right' : 'left',
+                                        position: 'relative',
+                                        zIndex: 1
+                                      }}
+                                    >
+                                      {showBlurredLogo && (
                                         <div
-                                          ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null}
-                                          style={{ position: 'relative', display: 'inline-block' }}
+                                          aria-hidden
+                                          style={{
+                                            position: 'absolute',
+                                            left: 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            width: '300%',
+                                            maxWidth: '1200px',
+                                            backgroundImage: `url(${rowStyle.logoSrc})`,
+                                            backgroundSize: 'contain',
+                                            backgroundPosition: 'left center',
+                                            backgroundRepeat: 'no-repeat',
+                                            filter: 'blur(14px)',
+                                            opacity: isDarkMode ? 0.2 : 0.35,
+                                            pointerEvents: 'none',
+                                            zIndex: 0
+                                          }}
+                                        />
+                                      )}
+                                      <span style={{ position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: (col.includes('price') || col.includes('cost') || col.includes('total') || col.includes('amount') || col.includes('fee')) ? 'flex-end' : 'flex-start' }}>
+                                        {col === 'order_number' && (
+                                          <span
+                                            style={{
+                                              width: ORDER_SOURCE_LOGO_WIDTH,
+                                              minWidth: ORDER_SOURCE_LOGO_WIDTH,
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'flex-start',
+                                              flexShrink: 0
+                                            }}
+                                            title={sourceLogo?.alt}
+                                          >
+                                            {sourceLogo?.icon === 'home' ? (
+                                              <Home size={18} style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }} />
+                                            ) : sourceLogo?.textOnly ? (
+                                              <span style={{ fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>{sourceLogo.alt}</span>
+                                            ) : sourceLogo?.src ? (
+                                              <img src={sourceLogo.src} alt={sourceLogo.alt} style={{ height: '18px', width: 'auto', maxWidth: '28px', objectFit: 'contain' }} />
+                                            ) : null}
+                                          </span>
+                                        )}
+                                        {formattedValue}
+                                        {unpaidLabel && <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#888' }}>{unpaidLabel}</span>}
+                                      </span>
+                                    </td>
+                                  )
+                                })}
+                                <td
+                                  style={{ padding: '8px 12px', borderBottom: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee', position: 'relative' }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div
+                                    ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null}
+                                    style={{ position: 'relative', display: 'inline-block' }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setActionsDropdownOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId)
+                                      }}
+                                      style={{
+                                        padding: '6px',
+                                        border: 'none',
+                                        background: 'none',
+                                        color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                      }}
+                                    >
+                                      <MoreVertical size={20} />
+                                    </button>
+                                    {actionsDropdownOrderId === normalizedOrderId && (
+                                      <div
+                                        style={{
+                                          position: 'absolute',
+                                          top: '100%',
+                                          right: 0,
+                                          marginTop: '4px',
+                                          minWidth: '140px',
+                                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2a2a2a)' : '#fff',
+                                          border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6',
+                                          borderRadius: '8px',
+                                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                                          zIndex: 50,
+                                          overflow: 'hidden'
+                                        }}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); fetchOrderById(normalizedOrderId) }}
+                                          style={{
+                                            width: '100%',
+                                            padding: '8px 14px',
+                                            textAlign: 'left',
+                                            border: 'none',
+                                            background: 'none',
+                                            fontSize: '13px',
+                                            color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                            cursor: 'pointer'
+                                          }}
                                         >
-                                          <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId) }} style={{ padding: '6px', border: 'none', background: 'none', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><MoreVertical size={20} /></button>
-                                          {actionsDropdownOrderId === normalizedOrderId && (
-                                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '140px', backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff', border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 50, overflow: 'hidden' }}>
-                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
-                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
-                                              <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '13px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                          Return
+                                        </button>
+                                        {isUnpaidOrder(row, details) && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleVoidOrder(normalizedOrderId) }}
+                                            style={{
+                                              width: '100%',
+                                              padding: '8px 14px',
+                                              textAlign: 'left',
+                                              border: 'none',
+                                              borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                              background: 'none',
+                                              fontSize: '13px',
+                                              color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                              cursor: 'pointer'
+                                            }}
+                                          >
+                                            Void
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); handleReprintReceipt(normalizedOrderId) }}
+                                          style={{
+                                            width: '100%',
+                                            padding: '8px 14px',
+                                            textAlign: 'left',
+                                            border: 'none',
+                                            borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
+                                            background: 'none',
+                                            fontSize: '13px',
+                                            color: isDarkMode ? 'var(--text-primary)' : '#333',
+                                            cursor: 'pointer'
+                                          }}
+                                        >
+                                          Reprint
+                                        </button>
+                                        {((row.order_source || row.orderSource) || '').toString().toLowerCase().trim() === 'doordash' && (row.order_status || '').toLowerCase() !== 'voided' && (
+                                          <>
+                                            <div style={{ borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', margin: '4px 0' }} />
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Mark ready</button>
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr key={`${idx}-details`}>
+                                  <td colSpan={columnsWithActions.length} style={{ padding: '0', borderBottom: '1px solid #eee' }}>
+                                    <div style={{
+                                      padding: '20px',
+                                      backgroundColor: '#f8f9fa',
+                                      borderTop: '2px solid #dee2e6'
+                                    }}>
+                                      {isLoading ? (
+                                        <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                                          Loading details...
+                                        </div>
+                                      ) : details ? (
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                                          <div>
+                                            <strong>Order ID:</strong> {orderId || 'N/A'}
+                                          </div>
+                                          <div>
+                                            <strong>Employee ID:</strong> {details.employee_id || 'N/A'}
+                                          </div>
+                                          {details.employee_name != null && (
+                                            <div>
+                                              <strong>Employee Name:</strong> {details.employee_name}
+                                            </div>
+                                          )}
+                                          {details.establishment_id != null && (
+                                            <div>
+                                              <strong>Establishment ID:</strong> {details.establishment_id}
+                                            </div>
+                                          )}
+                                          <div>
+                                            <strong>Customer ID:</strong> {details.customer_id || 'N/A'}
+                                          </div>
+                                          {(details.customer_name || details.customerName) && (
+                                            <div>
+                                              <strong>Customer:</strong> {details.customer_name || details.customerName}
+                                            </div>
+                                          )}
+                                          {(details.customer_phone || details.customerPhone) && (
+                                            <div style={{ gridColumn: '1 / -1' }}>
+                                              <strong>Customer phone:</strong>{' '}
+                                              <a href={`tel:${(details.customer_phone || details.customerPhone).replace(/\s/g, '')}`} style={{ color: isDarkMode ? '#93c5fd' : '#2563eb', textDecoration: 'none' }}>
+                                                {details.customer_phone || details.customerPhone}
+                                              </a>
+                                              {(details.order_source || details.orderSource)?.toString().toLowerCase().trim() === 'doordash' && (
+                                                <span style={{ fontSize: '11px', color: isDarkMode ? '#888' : '#666', marginLeft: '6px' }}>(masked; call from store number)</span>
+                                              )}
+                                            </div>
+                                          )}
+                                          <div>
+                                            <strong>Subtotal:</strong> ${(parseFloat(details.subtotal) || 0).toFixed(2)}
+                                          </div>
+                                          <div>
+                                            <strong>Tax Rate:</strong> {((parseFloat(details.tax_rate) || 0) * 100).toFixed(2)}%
+                                          </div>
+                                          <div>
+                                            <strong>Tax Amount:</strong> ${(parseFloat(details.tax_amount) || 0).toFixed(2)}
+                                          </div>
+                                          <div>
+                                            <strong>Discount:</strong> ${(parseFloat(details.discount) || 0).toFixed(2)}
+                                          </div>
+                                          <div>
+                                            <strong>Discount Type:</strong> {details.discount_type ? ({ student: 'Student', employee: 'Employee', senior: 'Senior', military: 'Military', other: 'Other' }[details.discount_type] || details.discount_type) : '—'}
+                                          </div>
+                                          <div>
+                                            <strong>Transaction Fee:</strong> ${(parseFloat(details.transaction_fee) || 0).toFixed(2)}
+                                          </div>
+                                          <div>
+                                            <strong>Tip:</strong> ${(parseFloat(details.tip) || 0).toFixed(2)}
+                                          </div>
+                                          {(details.exchange_return_id != null && details.exchange_return_id !== '') && (
+                                            <div>
+                                              <strong>Exchange return ID:</strong> {String(details.exchange_return_id)}
+                                            </div>
+                                          )}
+                                          {details.prepare_by && (
+                                            <div>
+                                              <strong>Prepare by:</strong> {formatOrderDate(details.prepare_by)}
+                                            </div>
+                                          )}
+                                          {(details.external_order_id != null && details.external_order_id !== '') && (
+                                            <div>
+                                              <strong>External order ID:</strong> {String(details.external_order_id)}
+                                            </div>
+                                          )}
+                                          {(details.integration_experience != null && details.integration_experience !== '') && (
+                                            <div>
+                                              <strong>Integration experience:</strong> {String(details.integration_experience)}
+                                            </div>
+                                          )}
+                                          {(details.doordash_promo_details != null && Object.keys(details.doordash_promo_details || {}).length > 0) && (
+                                            <div style={{ gridColumn: '1 / -1' }}>
+                                              <strong>DoorDash promo details:</strong>{' '}
+                                              {typeof details.doordash_promo_details === 'object' ? JSON.stringify(details.doordash_promo_details) : String(details.doordash_promo_details)}
+                                            </div>
+                                          )}
+                                          {(details.doordash_total_merchant_funded_discount_cents != null && details.doordash_total_merchant_funded_discount_cents !== '') && (
+                                            <div>
+                                              <strong>DoorDash total merchant funded discount (¢):</strong> {Number(details.doordash_total_merchant_funded_discount_cents)}
+                                            </div>
+                                          )}
+                                          {(details.doordash_total_doordash_funded_discount_cents != null && details.doordash_total_doordash_funded_discount_cents !== '') && (
+                                            <div>
+                                              <strong>DoorDash total DoorDash funded discount (¢):</strong> {Number(details.doordash_total_doordash_funded_discount_cents)}
+                                            </div>
+                                          )}
+                                          {(details.dasher_status != null && details.dasher_status !== '') && (
+                                            <div>
+                                              <strong>Dasher status:</strong> {getDasherStatusLabel(details.dasher_status)}
+                                            </div>
+                                          )}
+                                          {details.dasher_status_at && (
+                                            <div>
+                                              <strong>Dasher status at:</strong> {formatOrderDate(details.dasher_status_at)}
+                                            </div>
+                                          )}
+                                          {(details.dasher_info != null && typeof details.dasher_info === 'object' && Object.keys(details.dasher_info || {}).length > 0) && (
+                                            <div style={{ gridColumn: '1 / -1' }}>
+                                              <strong>Dasher info:</strong>{' '}
+                                              {(details.dasher_info?.first_name || details.dasher_info?.last_name)
+                                                ? [details.dasher_info.first_name, details.dasher_info.last_name].filter(Boolean).join(' ')
+                                                : null}
+                                              {details.dasher_info?.phone_number && ` · ${details.dasher_info.phone_number}`}
+                                              {(details.dasher_info?.vehicle?.make || details.dasher_info?.vehicle?.model) && ` · ${[details.dasher_info.vehicle.make, details.dasher_info.vehicle.model].filter(Boolean).join(' ')}`}
+                                              {!(details.dasher_info?.first_name || details.dasher_info?.last_name || details.dasher_info?.phone_number || details.dasher_info?.vehicle?.make || details.dasher_info?.vehicle?.model) && JSON.stringify(details.dasher_info)}
+                                            </div>
+                                          )}
+                                          {(details.order_source || details.orderSource)?.toString().toLowerCase().trim() === 'doordash' && (details.dasher_status || details.dasher_info) && (
+                                            <div style={{ gridColumn: '1 / -1' }}>
+                                              <strong>Dasher:</strong>{' '}
+                                              {details.dasher_status && getDasherStatusLabel(details.dasher_status)}
+                                              {details.dasher_status && details.dasher_info && (details.dasher_info.first_name || details.dasher_info.last_name || (details.dasher_info.vehicle && (details.dasher_info.vehicle.make || details.dasher_info.vehicle.model))) && ' · '}
+                                              {details.dasher_info && (details.dasher_info.first_name || details.dasher_info.last_name) && (
+                                                <span>{[details.dasher_info.first_name, details.dasher_info.last_name].filter(Boolean).join(' ')}</span>
+                                              )}
+                                              {details.dasher_info?.vehicle && (details.dasher_info.vehicle.make || details.dasher_info.vehicle.model) && (
+                                                <span> · {[details.dasher_info.vehicle.make, details.dasher_info.vehicle.model].filter(Boolean).join(' ')}</span>
+                                              )}
+                                              {details.dasher_info?.phone_number && (
+                                                <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>
+                                                  Phone: {details.dasher_info.phone_number} (call from store number)
+                                                </span>
+                                              )}
+                                            </div>
+                                          )}
+                                          {(details.order_type || details.orderType || '').toLowerCase() === 'delivery' && (details.customer_address || details.customerAddress) && (
+                                            <div style={{ gridColumn: '1 / -1' }}>
+                                              <strong>Delivery address:</strong> {details.customer_address || details.customerAddress}
+                                            </div>
+                                          )}
+                                          {/* Status / phase update for pickup & delivery */}
+                                          <div style={{ gridColumn: '1 / -1', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid #dee2e6' }}>
+                                            <strong>Status:</strong> {getStatusDisplay(details)}
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+                                              <select
+                                                value={details.order_status || 'completed'}
+                                                onChange={(e) => {
+                                                  const v = e.target.value
+                                                  if (v && v !== (details.order_status || 'completed')) {
+                                                    updateOrderStatus(normalizedOrderId, v)
+                                                  }
+                                                }}
+                                                disabled={!!statusUpdatingOrderId}
+                                                style={{
+                                                  padding: '6px 10px',
+                                                  borderRadius: '6px',
+                                                  border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
+                                                  backgroundColor: isDarkMode ? '#2d2d2d' : '#fff',
+                                                  color: isDarkMode ? '#fff' : '#333',
+                                                  fontSize: '13px',
+                                                  minWidth: '140px'
+                                                }}
+                                              >
+                                                <option value="placed">Placed</option>
+                                                <option value="being_made">Being made</option>
+                                                <option value="ready">{(details.order_type || '').toLowerCase() === 'pickup' ? 'Ready for pickup' : 'Ready'}</option>
+                                                {(details.order_type || '').toLowerCase() === 'delivery' && (
+                                                  <>
+                                                    <option value="out_for_delivery">Out for delivery</option>
+                                                    <option value="delivered">Delivered</option>
+                                                  </>
+                                                )}
+                                                <option value="completed">Paid / Complete</option>
+                                              </select>
+                                              {(details.order_source || details.orderSource) && (
+                                                <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                  {(details.order_type || '').toLowerCase() === 'delivery' && (
+                                                    <>
+                                                      <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'out_for_delivery') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Out for delivery'}</button>
+                                                      <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'delivered') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Shipped'}</button>
+                                                    </>
+                                                  )}
+                                                </span>
+                                              )}
+                                              {((details.order_type || '').toLowerCase() === 'pickup' || (details.order_type || '').toLowerCase() === 'delivery') && (details.payment_status || 'completed').toLowerCase() === 'pending' && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'completed', 'completed', 'cash') }}
+                                                  disabled={!!statusUpdatingOrderId}
+                                                  style={{
+                                                    padding: '6px 14px',
+                                                    borderRadius: '8px',
+                                                    border: `1px solid rgba(${themeColorRgb}, 0.5)`,
+                                                    backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                                                    color: '#fff',
+                                                    fontWeight: 600,
+                                                    fontSize: '13px',
+                                                    cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer'
+                                                  }}
+                                                >
+                                                  {statusUpdatingOrderId === normalizedOrderId ? 'Updating…' : 'Mark as paid (cash)'}
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                          {(details.receipt_type != null || details.receipt_email || details.receipt_phone) && (
+                                            <>
+                                              {details.receipt_type != null && (
+                                                <div>
+                                                  <strong>Receipt Type:</strong> {String(details.receipt_type)}
+                                                </div>
+                                              )}
+                                              {details.receipt_email && (
+                                                <div>
+                                                  <strong>Receipt Email:</strong> {details.receipt_email}
+                                                </div>
+                                              )}
+                                              {details.receipt_phone && (
+                                                <div>
+                                                  <strong>Receipt Phone:</strong> {details.receipt_phone}
+                                                </div>
+                                              )}
+                                            </>
+                                          )}
+                                          {details.notes && (
+                                            <div style={{ gridColumn: '1 / -1' }}>
+                                              <strong>Notes:</strong> {details.notes}
+                                            </div>
+                                          )}
+                                          <div style={{ gridColumn: '1 / -1', marginTop: '16px' }}>
+                                            <strong>Items Purchased:</strong>
+                                            {details.items && details.items.length > 0 ? (
+                                              <table style={{ width: '100%', marginTop: '8px', borderCollapse: 'collapse' }}>
+                                                <thead>
+                                                  <tr style={{ backgroundColor: '#e9ecef' }}>
+                                                    <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>Product</th>
+                                                    <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px', fontWeight: 600 }}>SKU</th>
+                                                    <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Quantity</th>
+                                                    <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Unit Price</th>
+                                                    <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Discount</th>
+                                                    <th style={{ padding: '8px', textAlign: 'right', fontSize: '12px', fontWeight: 600 }}>Subtotal</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {details.items.map((item, itemIdx) => (
+                                                    <tr key={itemIdx} style={{ backgroundColor: itemIdx % 2 === 0 ? '#fff' : '#f8f9fa' }}>
+                                                      <td style={{ padding: '8px', fontSize: '13px' }}>{item.product_name || 'N/A'}</td>
+                                                      <td style={{ padding: '8px', fontSize: '13px' }}>{item.sku || 'N/A'}</td>
+                                                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{item.quantity || 0}</td>
+                                                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(parseFloat(item.unit_price) || 0).toFixed(2)}</td>
+                                                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(parseFloat(item.discount) || 0).toFixed(2)}</td>
+                                                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>${(parseFloat(item.subtotal) || 0).toFixed(2)}</td>
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            ) : (
+                                              <div style={{ marginTop: '8px', color: '#999', fontSize: '13px' }}>No items found</div>
+                                            )}
+                                          </div>
+                                          {((details.order_source || details.orderSource) || '').toString().toLowerCase().trim() === 'doordash' && ['placed', 'being_made'].includes((details.order_status || '').toLowerCase()) && (details.order_status || '').toLowerCase() !== 'voided' && (
+                                            <div style={{ gridColumn: '1 / -1', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #dee2e6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); updateOrderStatus(normalizedOrderId, 'ready') }} disabled={!!statusUpdatingOrderId} style={{ padding: '6px 10px', borderRadius: '6px', border: `1px solid ${isDarkMode ? '#555' : '#ccc'}`, background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', fontSize: '12px', cursor: statusUpdatingOrderId ? 'not-allowed' : 'pointer' }}>{statusUpdatingOrderId === normalizedOrderId ? '…' : 'Mark ready'}</button>
+                                              <div
+                                                ref={actionsDropdownOrderId === normalizedOrderId ? actionsDropdownRef : null}
+                                                style={{ position: 'relative', display: 'inline-block' }}
+                                              >
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(prev => prev === normalizedOrderId ? null : normalizedOrderId) }} style={{ padding: '6px', border: 'none', background: 'none', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><MoreVertical size={20} /></button>
+                                                {actionsDropdownOrderId === normalizedOrderId && (
+                                                  <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '140px', backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff', border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #dee2e6', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 50, overflow: 'hidden' }}>
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); openDoordashOrderManager(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Order Manager</button>
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashAdjustModalOrderId(normalizedOrderId) }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333', cursor: 'pointer' }}>Adjust</button>
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setActionsDropdownOrderId(null); setDoordashCancelModal({ orderId: normalizedOrderId }); setDoordashCancelReason('OTHER'); setDoordashCancelDetails(''); }} style={{ width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee', background: 'none', fontSize: '13px', color: '#b91c1c', cursor: 'pointer' }}>Cancel with DoorDash</button>
+                                                  </div>
+                                                )}
+                                              </div>
                                             </div>
                                           )}
                                         </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-                                    No details available
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            )}
-            {ordersTotal > ORDERS_PAGE_SIZE && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap', padding: '0 16px 16px' }}>
-                <span style={{ fontSize: '13px', color: isDarkMode ? '#aaa' : '#666' }}>
-                  Page {ordersPage + 1} of {Math.max(1, Math.ceil(ordersTotal / ORDERS_PAGE_SIZE))} ({ordersTotal} orders)
-                </span>
-                <button
-                  type="button"
-                  disabled={ordersPage === 0 || loading}
-                  onClick={() => setOrdersPage((p) => Math.max(0, p - 1))}
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '13px',
-                    border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
-                    borderRadius: '6px',
-                    background: isDarkMode ? '#333' : '#f5f5f5',
-                    color: (ordersPage === 0 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
-                    cursor: (ordersPage === 0 || loading) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  disabled={ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading}
-                  onClick={() => setOrdersPage((p) => p + 1)}
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '13px',
-                    border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
-                    borderRadius: '6px',
-                    background: isDarkMode ? '#333' : '#f5f5f5',
-                    color: (ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
-                    cursor: (ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </>
-          ) : (
-            <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>No orders found</div>
-          )
-        )}
-      </div>
+                                      ) : (
+                                        <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+                                          No details available
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {ordersTotal > ORDERS_PAGE_SIZE && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap', padding: '0 16px 16px' }}>
+                    <span style={{ fontSize: '13px', color: isDarkMode ? '#aaa' : '#666' }}>
+                      Page {ordersPage + 1} of {Math.max(1, Math.ceil(ordersTotal / ORDERS_PAGE_SIZE))} ({ordersTotal} orders)
+                    </span>
+                    <button
+                      type="button"
+                      disabled={ordersPage === 0 || loading}
+                      onClick={() => setOrdersPage((p) => Math.max(0, p - 1))}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '13px',
+                        border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
+                        borderRadius: '6px',
+                        background: isDarkMode ? '#333' : '#f5f5f5',
+                        color: (ordersPage === 0 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
+                        cursor: (ordersPage === 0 || loading) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading}
+                      onClick={() => setOrdersPage((p) => p + 1)}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '13px',
+                        border: isDarkMode ? '1px solid #444' : '1px solid #ccc',
+                        borderRadius: '6px',
+                        background: isDarkMode ? '#333' : '#f5f5f5',
+                        color: (ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading) ? (isDarkMode ? '#666' : '#999') : (isDarkMode ? '#fff' : '#333'),
+                        cursor: (ordersPage >= Math.ceil(ordersTotal / ORDERS_PAGE_SIZE) - 1 || loading) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ padding: isMobile ? '24px' : '40px', textAlign: 'center', color: isDarkMode ? '#999' : '#999' }}>No orders found</div>
+            )
+          )}
+        </div>
 
-      {/* Status phase confirmation modal */}
-      {statusPhaseModal && (() => {
-        const { row, orderId } = statusPhaseModal
-        const next = getNextPhase(row)
-        const modalItems = orderDetails[orderId]?.items ?? orderItemsMap[orderId] ?? []
-        return (
+        {/* Status phase confirmation modal */}
+        {statusPhaseModal && (() => {
+          const { row, orderId } = statusPhaseModal
+          const next = getNextPhase(row)
+          const modalItems = orderDetails[orderId]?.items ?? orderItemsMap[orderId] ?? []
+          return (
+            <div
+              style={modalOverlayStyle(isDarkMode)}
+              onClick={closeStatusPhaseModal}
+            >
+              <div
+                style={modalContentStyle(isDarkMode, { padding: isMobile ? '16px' : '24px', maxWidth: isMobile ? '95%' : '420px' })}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 style={formTitleStyle(isDarkMode)}>Move order to next phase</h3>
+                <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>
+                  Order <strong>{row.order_number ?? row.orderNumber ?? orderId}</strong> · Current: {getStatusDisplay(row)}
+                </div>
+                {next && (
+                  <div style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '16px' }}>
+                    Next phase: <strong>{next.label}</strong>
+                  </div>
+                )}
+                <FormField>
+                  <FormLabel isDarkMode={isDarkMode}>Items in order</FormLabel>
+                  {statusPhaseModalLoadingItems ? (
+                    <div style={{ padding: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>Loading items…</div>
+                  ) : modalItems.length === 0 ? (
+                    <div style={{ padding: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>No items</div>
+                  ) : (
+                    <ul style={{ margin: '0 0 0', paddingLeft: '20px', fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#444', lineHeight: 1.6 }}>
+                      {modalItems.map((item, idx) => (
+                        <li key={item.order_item_id ?? item.orderItemId ?? idx}>
+                          {(item.quantity ?? 1) > 1 ? `${item.quantity}x ` : ''}
+                          {item.product_name ?? item.productName ?? item.name ?? 'Item'}
+                          {item.variant_name || item.variantName ? ` (${item.variant_name ?? item.variantName})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </FormField>
+                <CompactFormActions
+                  onCancel={closeStatusPhaseModal}
+                  onPrimary={confirmStatusPhaseMove}
+                  primaryLabel={next && statusUpdatingOrderId === orderId ? 'Updating…' : (next ? `Move to ${next.label}` : 'Move')}
+                  primaryDisabled={!next || statusUpdatingOrderId === orderId}
+                  primaryType="button"
+                  isDarkMode={isDarkMode}
+                  themeColorRgb={themeColorRgb}
+                />
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* DoorDash cancel order modal */}
+        {doordashCancelModal && (
           <div
             style={modalOverlayStyle(isDarkMode)}
-            onClick={closeStatusPhaseModal}
+            onClick={() => !doordashCancelLoading && setDoordashCancelModal(null)}
           >
             <div
-              style={modalContentStyle(isDarkMode, { padding: isMobile ? '16px' : '24px', maxWidth: isMobile ? '95%' : '420px' })}
+              style={modalContentStyle(isDarkMode, { padding: isMobile ? '16px' : '24px', maxWidth: isMobile ? '95%' : '400px' })}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={formTitleStyle(isDarkMode)}>Move order to next phase</h3>
-              <div style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>
-                Order <strong>{row.order_number ?? row.orderNumber ?? orderId}</strong> · Current: {getStatusDisplay(row)}
-              </div>
-              {next && (
-                <div style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '16px' }}>
-                  Next phase: <strong>{next.label}</strong>
-                </div>
-              )}
+              <h3 style={formTitleStyle(isDarkMode)}>Cancel order with DoorDash</h3>
+              <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>
+                This tells DoorDash to cancel the order. STORE_CLOSED deactivates the store 12 hrs; KITCHEN_BUSY for 15 min.
+              </p>
               <FormField>
-                <FormLabel isDarkMode={isDarkMode}>Items in order</FormLabel>
-                {statusPhaseModalLoadingItems ? (
-                  <div style={{ padding: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>Loading items…</div>
-                ) : modalItems.length === 0 ? (
-                  <div style={{ padding: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666', fontSize: '14px' }}>No items</div>
-                ) : (
-                  <ul style={{ margin: '0 0 0', paddingLeft: '20px', fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#444', lineHeight: 1.6 }}>
-                    {modalItems.map((item, idx) => (
-                      <li key={item.order_item_id ?? item.orderItemId ?? idx}>
-                        {(item.quantity ?? 1) > 1 ? `${item.quantity}x ` : ''}
-                        {item.product_name ?? item.productName ?? item.name ?? 'Item'}
-                        {item.variant_name || item.variantName ? ` (${item.variant_name ?? item.variantName})` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <FormLabel isDarkMode={isDarkMode}>Reason</FormLabel>
+                <select
+                  value={doordashCancelReason}
+                  onChange={(e) => setDoordashCancelReason(e.target.value)}
+                  disabled={doordashCancelLoading}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
+                    background: isDarkMode ? '#2d2d2d' : '#fff',
+                    color: isDarkMode ? '#fff' : '#333',
+                    fontSize: '14px'
+                  }}
+                >
+                  <option value="ITEM_OUT_OF_STOCK">Item out of stock</option>
+                  <option value="STORE_CLOSED">Store closed</option>
+                  <option value="KITCHEN_BUSY">Kitchen busy</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </FormField>
+              <FormField>
+                <FormLabel isDarkMode={isDarkMode}>Details (optional)</FormLabel>
+                <textarea
+                  value={doordashCancelDetails}
+                  onChange={(e) => setDoordashCancelDetails(e.target.value)}
+                  disabled={doordashCancelLoading}
+                  placeholder="e.g. Store closed due to low capacity"
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
+                    background: isDarkMode ? '#2d2d2d' : '#fff',
+                    color: isDarkMode ? '#fff' : '#333',
+                    fontSize: '14px',
+                    resize: 'vertical'
+                  }}
+                />
               </FormField>
               <CompactFormActions
-                onCancel={closeStatusPhaseModal}
-                onPrimary={confirmStatusPhaseMove}
-                primaryLabel={next && statusUpdatingOrderId === orderId ? 'Updating…' : (next ? `Move to ${next.label}` : 'Move')}
-                primaryDisabled={!next || statusUpdatingOrderId === orderId}
+                onCancel={() => !doordashCancelLoading && setDoordashCancelModal(null)}
+                onPrimary={() => cancelDoordashOrder(doordashCancelModal.orderId)}
+                primaryLabel={doordashCancelLoading ? 'Cancelling…' : 'Cancel with DoorDash'}
+                primaryDisabled={doordashCancelLoading}
                 primaryType="button"
                 isDarkMode={isDarkMode}
                 themeColorRgb={themeColorRgb}
               />
             </div>
           </div>
-        )
-      })()}
+        )}
 
-      {/* DoorDash cancel order modal */}
-      {doordashCancelModal && (
-        <div
-          style={modalOverlayStyle(isDarkMode)}
-          onClick={() => !doordashCancelLoading && setDoordashCancelModal(null)}
-        >
+        {/* DoorDash Adjust info modal */}
+        {doordashAdjustModalOrderId && (
+          <div role="dialog" aria-modal="true" style={modalOverlayStyle} onClick={() => setDoordashAdjustModalOrderId(null)}>
+            <div style={{ ...modalContentStyle(isDarkMode), maxWidth: '360px' }} onClick={(e) => e.stopPropagation()}>
+              <p style={{ margin: '0 0 12px', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
+                To adjust items (change quantity, remove item, or substitute), use DoorDash Order Manager.
+              </p>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setDoordashAdjustModalOrderId(null)} style={{ padding: '8px 14px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: 'transparent', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer' }}>Close</button>
+                <button type="button" onClick={() => { openDoordashOrderManager(doordashAdjustModalOrderId); setDoordashAdjustModalOrderId(null); }} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #FF3008', background: '#FF3008', color: '#fff', cursor: 'pointer' }}>Open Order Manager</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* DoorDash Live Order Manager modal (iframe) */}
+        {doordashOrderManagerModal && (
           <div
-            style={modalContentStyle(isDarkMode, { padding: isMobile ? '16px' : '24px', maxWidth: isMobile ? '95%' : '400px' })}
-            onClick={(e) => e.stopPropagation()}
+            style={modalOverlayStyle(isDarkMode)}
+            onClick={() => setDoordashOrderManagerModal(null)}
           >
-            <h3 style={formTitleStyle(isDarkMode)}>Cancel order with DoorDash</h3>
-            <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '12px' }}>
-              This tells DoorDash to cancel the order. STORE_CLOSED deactivates the store 12 hrs; KITCHEN_BUSY for 15 min.
-            </p>
-            <FormField>
-              <FormLabel isDarkMode={isDarkMode}>Reason</FormLabel>
-              <select
-                value={doordashCancelReason}
-                onChange={(e) => setDoordashCancelReason(e.target.value)}
-                disabled={doordashCancelLoading}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: '6px',
-                  border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
-                  background: isDarkMode ? '#2d2d2d' : '#fff',
-                  color: isDarkMode ? '#fff' : '#333',
-                  fontSize: '14px'
-                }}
-              >
-                <option value="ITEM_OUT_OF_STOCK">Item out of stock</option>
-                <option value="STORE_CLOSED">Store closed</option>
-                <option value="KITCHEN_BUSY">Kitchen busy</option>
-                <option value="OTHER">Other</option>
-              </select>
-            </FormField>
-            <FormField>
-              <FormLabel isDarkMode={isDarkMode}>Details (optional)</FormLabel>
-              <textarea
-                value={doordashCancelDetails}
-                onChange={(e) => setDoordashCancelDetails(e.target.value)}
-                disabled={doordashCancelLoading}
-                placeholder="e.g. Store closed due to low capacity"
-                rows={2}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: '6px',
-                  border: `1px solid ${isDarkMode ? '#444' : '#ddd'}`,
-                  background: isDarkMode ? '#2d2d2d' : '#fff',
-                  color: isDarkMode ? '#fff' : '#333',
-                  fontSize: '14px',
-                  resize: 'vertical'
-                }}
-              />
-            </FormField>
-            <CompactFormActions
-              onCancel={() => !doordashCancelLoading && setDoordashCancelModal(null)}
-              onPrimary={() => cancelDoordashOrder(doordashCancelModal.orderId)}
-              primaryLabel={doordashCancelLoading ? 'Cancelling…' : 'Cancel with DoorDash'}
-              primaryDisabled={doordashCancelLoading}
-              primaryType="button"
-              isDarkMode={isDarkMode}
-              themeColorRgb={themeColorRgb}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* DoorDash Adjust info modal */}
-      {doordashAdjustModalOrderId && (
-        <div role="dialog" aria-modal="true" style={modalOverlayStyle} onClick={() => setDoordashAdjustModalOrderId(null)}>
-          <div style={{ ...modalContentStyle(isDarkMode), maxWidth: '360px' }} onClick={(e) => e.stopPropagation()}>
-            <p style={{ margin: '0 0 12px', fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>
-              To adjust items (change quantity, remove item, or substitute), use DoorDash Order Manager.
-            </p>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setDoordashAdjustModalOrderId(null)} style={{ padding: '8px 14px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: 'transparent', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer' }}>Close</button>
-              <button type="button" onClick={() => { openDoordashOrderManager(doordashAdjustModalOrderId); setDoordashAdjustModalOrderId(null); }} style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #FF3008', background: '#FF3008', color: '#fff', cursor: 'pointer' }}>Open Order Manager</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* DoorDash Live Order Manager modal (iframe) */}
-      {doordashOrderManagerModal && (
-        <div
-          style={modalOverlayStyle(isDarkMode)}
-          onClick={() => setDoordashOrderManagerModal(null)}
-        >
-          <div
-            style={{
-              ...modalContentStyle(isDarkMode, { padding: 0, maxWidth: '96vw', width: '96vw', height: '90vh', display: 'flex', flexDirection: 'column' }),
-              overflow: 'hidden'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
-              <span style={{ fontWeight: 600, fontSize: '16px' }}>DoorDash Order Manager</span>
-              <button type="button" onClick={() => setDoordashOrderManagerModal(null)} style={{ padding: '6px 12px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: '14px' }}>Close</button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-              {doordashOrderManagerModal.loading && <p style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Loading Order Manager…</p>}
-              {doordashOrderManagerModal.error && (
-                <div style={{ textAlign: 'center' }}>
-                  <p style={{ color: isDarkMode ? '#fca5a5' : '#b91c1c', marginBottom: '12px' }}>{doordashOrderManagerModal.error}</p>
-                  <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>Order Manager is unavailable at this time. Please reach out to support to update this order.</p>
-                </div>
-              )}
-              {doordashOrderManagerModal.url && !doordashOrderManagerModal.loading && (
-                <iframe
-                  title="DoorDash Order Manager"
-                  src={doordashOrderManagerModal.url}
-                  style={{ width: '100%', height: '100%', minHeight: '500px', border: 'none', borderRadius: '8px' }}
-                  allowFullScreen
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Return Form Modal */}
-      {order && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
-            borderRadius: '8px',
-            padding: isMobile ? '16px' : '30px',
-            maxWidth: isMobile ? '95%' : '960px',
-            width: isMobile ? '95%' : '90%',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.3)'
-          }}>
-            <div style={{ marginBottom: 0, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', fontSize: '14px' }}>
-              <span style={{ marginRight: '16px' }}>Date: {new Date(order.order_date).toLocaleDateString()}</span>
-              <span style={{ marginRight: '16px' }}>Total: ${(() => {
-                const base = (parseFloat(order.subtotal) || 0) + (parseFloat(order.tax_amount || order.tax) || 0) - (parseFloat(order.discount) || 0)
-                const tip = parseFloat(order.tip) || 0
-                const stored = parseFloat(order.total) || 0
-                const val = tip > 0 && stored <= base ? base + tip : (order.total != null ? order.total : order.subtotal ?? 0)
-                return parseFloat(val || 0).toFixed(2)
-              })()}</span>
-              <span style={{ marginRight: '16px' }}>Payment: {order.payment_method ? (order.payment_method === 'cash' ? 'Cash' : 'Card') : 'N/A'}</span>
-              <span style={{ color: isDarkMode ? 'var(--text-tertiary, #666)' : '#999', fontWeight: 400 }}>Order: {order.order_number}</span>
-            </div>
-
-            {orderItems.length > 0 && (
-            <div style={{
-              display: 'flex',
-              flexDirection: isMobile ? 'column' : 'row',
-              gap: '24px',
-              alignItems: 'flex-start'
-            }}>
-              {/* Left column: return type, reason, summary, actions */}
-              <div style={{
-                flex: isMobile ? 'none' : '0 0 280px',
-                width: isMobile ? '100%' : '280px',
-                minWidth: 0
-              }}>
-            {/* Return Type Selection */}
-            <div style={{ marginTop: '13px', marginBottom: '12px' }}>
-              <FormField>
-                <FormLabel isDarkMode={isDarkMode}>Return Type:</FormLabel>
-                <div ref={returnTypeDropdownRef} style={{ position: 'relative', width: '100%' }}>
-                  <button
-                    type="button"
-                    onClick={() => setReturnTypeDropdownOpen(!returnTypeDropdownOpen)}
-                    style={{
-                      ...inputBaseStyle(isDarkMode, themeColorRgb, returnTypeDropdownOpen),
-                      width: '100%',
-                      padding: '5px 14px',
-                      fontSize: '14px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      textAlign: 'left'
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
-                      e.target.style.boxShadow = `0 0 0 3px rgba(${themeColorRgb}, 0.1)`
-                    }}
-                    onBlur={(e) => {
-                      setTimeout(() => {
-                        if (!returnTypeDropdownOpen) {
-                          e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
-                          e.target.style.boxShadow = 'none'
-                        }
-                      }, 200)
-                    }}
-                  >
-                    <span style={{ color: returnType ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333') : (isDarkMode ? 'var(--text-secondary, #999)' : '#999') }}>
-                      {returnType === 'exchange' ? 'Exchange' : returnType === 'store_credit' ? 'Return Store Credit' : returnType === 'refund' ? 'Refund' : 'Select return type...'}
-                    </span>
-                    <ChevronDown 
-                      size={18} 
-                      style={{ 
-                        color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
-                        transform: returnTypeDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                        transition: 'transform 0.2s ease'
-                      }} 
-                    />
-                  </button>
-                  {returnTypeDropdownOpen && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '100%',
-                      left: 0,
-                      right: 0,
-                      marginTop: '4px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                      border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
-                      borderRadius: '8px',
-                      boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
-                      zIndex: 1000,
-                      overflow: 'hidden'
-                    }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReturnType('exchange')
-                          setExchangeTiming('now')
-                          setReturnTypeDropdownOpen(false)
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          border: 'none',
-                          background: returnType === 'exchange' ? `rgba(${themeColorRgb}, 0.1)` : 'none',
-                          textAlign: 'left',
-                          fontSize: '14px',
-                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                          cursor: 'pointer',
-                          transition: 'background-color 0.2s ease',
-                          fontWeight: returnType === 'exchange' ? 600 : 400
-                        }}
-                        onMouseEnter={(e) => {
-                          e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.target.style.backgroundColor = returnType === 'exchange' ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
-                        }}
-                      >
-                        Exchange
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReturnType('store_credit')
-                          setExchangeTiming('later')
-                          setReturnTypeDropdownOpen(false)
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          border: 'none',
-                          background: returnType === 'store_credit' ? `rgba(${themeColorRgb}, 0.1)` : 'none',
-                          textAlign: 'left',
-                          fontSize: '14px',
-                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                          cursor: 'pointer',
-                          transition: 'background-color 0.2s ease',
-                          fontWeight: returnType === 'store_credit' ? 600 : 400
-                        }}
-                        onMouseEnter={(e) => {
-                          e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.target.style.backgroundColor = returnType === 'store_credit' ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
-                        }}
-                      >
-                        Return Store Credit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReturnType('refund')
-                          setExchangeTiming(null)
-                          setReturnTypeDropdownOpen(false)
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          border: 'none',
-                          background: returnType === 'refund' ? `rgba(${themeColorRgb}, 0.1)` : 'none',
-                          textAlign: 'left',
-                          fontSize: '14px',
-                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                          cursor: 'pointer',
-                          transition: 'background-color 0.2s ease',
-                          fontWeight: returnType === 'refund' ? 600 : 400
-                        }}
-                        onMouseEnter={(e) => {
-                          e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.target.style.backgroundColor = returnType === 'refund' ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
-                        }}
-                      >
-                        Refund
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </FormField>
-            </div>
-
-                <FormField>
-                  <FormLabel isDarkMode={isDarkMode}>Reason:</FormLabel>
-                  <input
-                    type="text"
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    placeholder="Reason for return"
-                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+            <div
+              style={{
+                ...modalContentStyle(isDarkMode, { padding: 0, maxWidth: '96vw', width: '96vw', height: '90vh', display: 'flex', flexDirection: 'column' }),
+                overflow: 'hidden'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
+                <span style={{ fontWeight: 600, fontSize: '16px' }}>DoorDash Order Manager</span>
+                <button type="button" onClick={() => setDoordashOrderManagerModal(null)} style={{ padding: '6px 12px', borderRadius: '6px', border: isDarkMode ? '1px solid #555' : '1px solid #ccc', background: isDarkMode ? '#333' : '#f0f0f0', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: '14px' }}>Close</button>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+                {doordashOrderManagerModal.loading && <p style={{ color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Loading Order Manager…</p>}
+                {doordashOrderManagerModal.error && (
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ color: isDarkMode ? '#fca5a5' : '#b91c1c', marginBottom: '12px' }}>{doordashOrderManagerModal.error}</p>
+                    <p style={{ fontSize: '12px', color: isDarkMode ? '#888' : '#666' }}>Order Manager is unavailable at this time. Please reach out to support to update this order.</p>
+                  </div>
+                )}
+                {doordashOrderManagerModal.url && !doordashOrderManagerModal.loading && (
+                  <iframe
+                    title="DoorDash Order Manager"
+                    src={doordashOrderManagerModal.url}
+                    style={{ width: '100%', height: '100%', minHeight: '500px', border: 'none', borderRadius: '8px' }}
+                    allowFullScreen
                   />
-                </FormField>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
-                {/* Return Amount Summary - discount and tip aware */}
-                {(() => {
-                  let returnSubtotal = 0
-                  let returnTax = 0
-                  let returnProcessingFee = 0
-                  Object.entries(selectedItems).forEach(([itemId, data]) => {
-                    const item = orderItems.find(i => i.order_item_id === parseInt(itemId))
-                    if (item) {
-                      const itemSubtotal = parseFloat(item.unit_price || 0) * data.quantity
-                      const itemDiscount = parseFloat(item.discount || 0) * (data.quantity / item.quantity)
-                      const itemSubtotalAfterDiscount = itemSubtotal - itemDiscount
-                      const itemTaxRate = parseFloat(item.tax_rate || order.tax_rate || 0.08)
-                      const itemTax = itemSubtotalAfterDiscount * itemTaxRate
-                      returnSubtotal += itemSubtotalAfterDiscount
-                      returnTax += itemTax
-                    }
-                  })
-                  const orderSubtotal = parseFloat(order.subtotal) || 0
-                  const orderDiscount = parseFloat(order.discount) || 0
-                  const orderTip = parseFloat(order.tip) || 0
-                  const returnOrderDiscountDeduction = orderSubtotal > 0 && orderDiscount > 0
-                    ? orderDiscount * (returnSubtotal / orderSubtotal)
-                    : 0
-                  const returnSubtotalAfterOrderDiscount = returnSubtotal - returnOrderDiscountDeduction
-                  const returnTipDeduction = orderSubtotal > 0 && orderTip > 0
-                    ? orderTip * (returnSubtotal / orderSubtotal)
-                    : 0
-                  const totalOrderQtySummary = orderItems.reduce((s, i) => s + (i.quantity || 0), 0)
-                  const totalReturnQtySummary = Object.values(selectedItems).reduce((s, d) => s + (d.quantity || 0), 0)
-                  const isFullReturnSummary = totalOrderQtySummary > 0 && totalReturnQtySummary >= totalOrderQtySummary
-                  if (isFullReturnSummary && order.transaction_fee && order.subtotal) {
-                    const feeRate = parseFloat(order.transaction_fee) / parseFloat(order.subtotal)
-                    returnProcessingFee = returnSubtotalAfterOrderDiscount * feeRate
-                  }
-                  const effectiveFee = posReturnSettings.return_transaction_fee_take_loss ? 0 : (isFullReturnSummary ? returnProcessingFee : 0)
-                  const effectiveTip = posReturnSettings.return_tip_refund ? 0 : returnTipDeduction
-                  const returnTotal = returnSubtotalAfterOrderDiscount + returnTax - effectiveFee - effectiveTip
-                  return (
-                    <div style={{
-                      marginTop: '16px',
-                      marginBottom: '16px',
-                      padding: '16px',
-                      backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
-                      borderRadius: '8px'
-                    }}>
-                      <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr auto',
-                        gap: '8px',
-                        fontSize: '14px',
-                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
-                      }}>
-                        <span>Return Subtotal:</span>
-                        <span style={{ fontWeight: 500 }}>${returnSubtotal.toFixed(2)}</span>
-                        <span>Discount (proportional):</span>
-                        <span style={{ fontWeight: 500, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>${returnOrderDiscountDeduction.toFixed(2)}</span>
-                        <span>Return Tax:</span>
-                        <span style={{ fontWeight: 500 }}>${returnTax.toFixed(2)}</span>
-                        <span>{posReturnSettings.return_transaction_fee_take_loss ? 'Transaction fee:' : 'Transaction fee (non-refundable):'}</span>
-                        <span style={{ fontWeight: 500, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>
-                          ${posReturnSettings.return_transaction_fee_take_loss ? returnProcessingFee.toFixed(2) : effectiveFee.toFixed(2)}
-                        </span>
-                        <span>{posReturnSettings.return_tip_refund ? 'Tip:' : 'Tip (non-refundable):'}</span>
-                        <span style={{ fontWeight: 500, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>
-                          ${posReturnSettings.return_tip_refund ? returnTipDeduction.toFixed(2) : effectiveTip.toFixed(2)}
-                        </span>
-                        <div style={{
-                          gridColumn: '1 / -1',
-                          borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                          marginTop: '8px',
-                          paddingTop: '8px',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center'
-                        }}>
-                          <span style={{ fontWeight: 600, fontSize: '16px' }}>Refund Amount:</span>
-                          <span style={{ fontWeight: 700, fontSize: '18px', color: `rgb(${themeColorRgb})` }}>${returnTotal.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })()}
+        {/* Return Form Modal */}
+        {order && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}>
+            <div style={{
+              backgroundColor: isDarkMode ? 'var(--bg-primary, #1a1a1a)' : '#fff',
+              borderRadius: '8px',
+              padding: isMobile ? '16px' : '30px',
+              maxWidth: isMobile ? '95%' : '960px',
+              width: isMobile ? '95%' : '90%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.3)'
+            }}>
+              <div style={{ marginBottom: 0, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', fontSize: '14px' }}>
+                <span style={{ marginRight: '16px' }}>Date: {new Date(order.order_date).toLocaleDateString()}</span>
+                <span style={{ marginRight: '16px' }}>Total: ${(() => {
+                  const base = (parseFloat(order.subtotal) || 0) + (parseFloat(order.tax_amount || order.tax) || 0) - (parseFloat(order.discount) || 0)
+                  const tip = parseFloat(order.tip) || 0
+                  const stored = parseFloat(order.total) || 0
+                  const val = tip > 0 && stored <= base ? base + tip : (order.total != null ? order.total : order.subtotal ?? 0)
+                  return parseFloat(val || 0).toFixed(2)
+                })()}</span>
+                <span style={{ marginRight: '16px' }}>Payment: {order.payment_method ? (order.payment_method === 'cash' ? 'Cash' : 'Card') : 'N/A'}</span>
+                <span style={{ color: isDarkMode ? 'var(--text-tertiary, #666)' : '#999', fontWeight: 400 }}>Order: {order.order_number}</span>
               </div>
 
-              {/* Right column: product list */}
-              <div style={{ flex: 1, minWidth: 0, paddingTop: 0 }}>
-                <div style={{ overflowX: 'auto', marginTop: 0, paddingTop: '6px' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 0 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `2px solid ${isDarkMode ? 'var(--border-light, #333)' : '#dee2e6'}` }}>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Product</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Qty</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Condition</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Reason</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Note</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Price</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Select</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orderItems.map((item) => {
-                        const isSelected = !!selectedItems[item.order_item_id]
-                        const selectedData = selectedItems[item.order_item_id] || { quantity: 1, condition: 'new', maxQuantity: item.quantity, reason: '', note: '' }
-                        
-                        const reasonOptions = [
-                          { value: '', label: 'Select' },
-                          { value: 'defective', label: 'Defective' },
-                          { value: 'wrong_item', label: 'Wrong item' },
-                          { value: 'changed_mind', label: 'Changed mind' },
-                          { value: 'damaged', label: 'Damaged' },
-                          { value: 'other', label: 'Other' }
-                        ]
-                        const conditionOptions = [
-                          { value: 'new', label: 'New' },
-                          { value: 'opened', label: 'Opened' },
-                          { value: 'damaged', label: 'Damaged' },
-                          { value: 'defective', label: 'Defective' }
-                        ]
-                        const currentCondition = isSelected ? selectedData.condition : 'new'
-                        const conditionLabel = conditionOptions.find(opt => opt.value === currentCondition)?.label || 'New'
-                        const isConditionDropdownOpen = openConditionDropdowns[item.order_item_id] || false
-                        const currentReason = selectedData.reason || ''
-                        const reasonLabel = reasonOptions.find(opt => opt.value === currentReason)?.label || 'Select'
-                        const isReasonDropdownOpen = openReasonDropdowns[item.order_item_id] || false
-                        const isNoteExpanded = expandedNoteItemId === item.order_item_id
-                        
-                        if (!conditionDropdownRefs.current[item.order_item_id]) {
-                          conditionDropdownRefs.current[item.order_item_id] = { current: null }
-                        }
-                        if (!reasonDropdownRefs.current[item.order_item_id]) {
-                          reasonDropdownRefs.current[item.order_item_id] = { current: null }
-                        }
-                        
-                        return (
-                          <Fragment key={item.order_item_id}>
-                          <tr>
-                            <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}`, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', fontSize: '14px' }}>
-                              {item.product_name || item.sku}
-                            </td>
-                            <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}`, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                              <input
-                                type="number"
-                                min="1"
-                                max={item.quantity}
-                                value={isSelected ? selectedData.quantity : 1}
-                                onChange={(e) => {
-                                  const qty = parseInt(e.target.value) || 1
-                                  if (isSelected) {
-                                    updateItemQuantity(item.order_item_id, qty, item.quantity)
-                                  } else {
-                                    toggleItem(item.order_item_id, item.quantity)
-                                    setTimeout(() => updateItemQuantity(item.order_item_id, qty, item.quantity), 0)
-                                  }
-                                }}
-                                disabled={!isSelected || item.quantity === 1}
-                                style={{
-                                  ...inputBaseStyle(isDarkMode, themeColorRgb),
-                                  width: '60px',
-                                  padding: '4px 8px',
-                                  fontSize: '14px',
-                                  opacity: isSelected && item.quantity > 1 ? 1 : 0.5
-                                }}
-                                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                              />
-                            </td>
-                            <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
-                              <div ref={el => conditionDropdownRefs.current[item.order_item_id].current = el} style={{ position: 'relative', width: '100px' }}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!isSelected) {
-                                      toggleItem(item.order_item_id, item.quantity)
-                                    }
-                                    const opening = !openConditionDropdowns[item.order_item_id]
-                                    setOpenConditionDropdowns(prev => ({ ...prev, [item.order_item_id]: !prev[item.order_item_id] }))
-                                    if (opening) {
-                                      requestAnimationFrame(() => {
-                                        const el = conditionDropdownRefs.current[item.order_item_id]?.current
-                                        if (el) {
-                                          const r = el.getBoundingClientRect()
-                                          setConditionDropdownRect({ itemId: item.order_item_id, top: r.top, left: r.left, width: r.width, height: r.height })
-                                        }
-                                      })
-                                    } else {
-                                      setConditionDropdownRect(null)
-                                    }
-                                  }}
-                                  disabled={!isSelected}
-                                  style={{
-                                    ...inputBaseStyle(isDarkMode, themeColorRgb, isConditionDropdownOpen),
-                                    width: '100px',
-                                    padding: '4px 8px',
-                                    fontSize: '14px',
-                                    cursor: isSelected ? 'pointer' : 'not-allowed',
-                                    opacity: isSelected ? 1 : 0.5,
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    textAlign: 'left'
-                                  }}
-                                  onFocus={(e) => {
-                                    if (isSelected) {
-                                      e.target.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
-                                      e.target.style.boxShadow = `0 0 0 3px rgba(${themeColorRgb}, 0.1)`
-                                    }
-                                  }}
-                                  onBlur={(e) => {
-                                    setTimeout(() => {
-                                      if (!isConditionDropdownOpen && isSelected) {
-                                        e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
-                                        e.target.style.boxShadow = 'none'
-                                      }
-                                    }, 200)
-                                  }}
-                                >
-                                  <span style={{ fontSize: '14px' }}>{conditionLabel}</span>
-                                  <ChevronDown 
-                                    size={14} 
-                                    style={{ 
-                                      color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
-                                      transform: isConditionDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                                      transition: 'transform 0.2s ease'
-                                    }} 
-                                  />
-                                </button>
-                              </div>
-                            </td>
-                            <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
-                              <div ref={el => { reasonDropdownRefs.current[item.order_item_id].current = el }} style={{ position: 'relative', width: 'fit-content', minWidth: '72px' }}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!isSelected) toggleItem(item.order_item_id, item.quantity)
-                                    const opening = !openReasonDropdowns[item.order_item_id]
-                                    setOpenReasonDropdowns(prev => ({ ...prev, [item.order_item_id]: !prev[item.order_item_id] }))
-                                    if (opening) {
-                                      requestAnimationFrame(() => {
-                                        const el = reasonDropdownRefs.current[item.order_item_id]?.current
-                                        if (el) {
-                                          const r = el.getBoundingClientRect()
-                                          setReasonDropdownRect({ itemId: item.order_item_id, top: r.top, left: r.left, width: r.width, height: r.height })
-                                        }
-                                      })
-                                    } else {
-                                      setReasonDropdownRect(null)
-                                    }
-                                  }}
-                                  disabled={!isSelected}
-                                  style={{
-                                    ...inputBaseStyle(isDarkMode, themeColorRgb, isReasonDropdownOpen),
-                                    width: 'fit-content',
-                                    minWidth: '72px',
-                                    padding: '4px 8px',
-                                    fontSize: '13px',
-                                    cursor: isSelected ? 'pointer' : 'not-allowed',
-                                    opacity: isSelected ? 1 : 0.5,
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    textAlign: 'left'
-                                  }}
-                                >
-                                  <span style={{ fontSize: '13px' }}>{reasonLabel}</span>
-                                  <ChevronDown size={14} style={{ color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', transform: isReasonDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }} />
-                                </button>
-                              </div>
-                            </td>
-                            <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
+              {orderItems.length > 0 && (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: '24px',
+                  alignItems: 'flex-start'
+                }}>
+                  {/* Left column: return type, reason, summary, actions */}
+                  <div style={{
+                    flex: isMobile ? 'none' : '0 0 280px',
+                    width: isMobile ? '100%' : '280px',
+                    minWidth: 0
+                  }}>
+                    {/* Return Type Selection */}
+                    <div style={{ marginTop: '13px', marginBottom: '12px' }}>
+                      <FormField>
+                        <FormLabel isDarkMode={isDarkMode}>Return Type:</FormLabel>
+                        <div ref={returnTypeDropdownRef} style={{ position: 'relative', width: '100%' }}>
+                          <button
+                            type="button"
+                            onClick={() => setReturnTypeDropdownOpen(!returnTypeDropdownOpen)}
+                            style={{
+                              ...inputBaseStyle(isDarkMode, themeColorRgb, returnTypeDropdownOpen),
+                              width: '100%',
+                              padding: '5px 14px',
+                              fontSize: '14px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              textAlign: 'left'
+                            }}
+                            onFocus={(e) => {
+                              e.target.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
+                              e.target.style.boxShadow = `0 0 0 3px rgba(${themeColorRgb}, 0.1)`
+                            }}
+                            onBlur={(e) => {
+                              setTimeout(() => {
+                                if (!returnTypeDropdownOpen) {
+                                  e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
+                                  e.target.style.boxShadow = 'none'
+                                }
+                              }, 200)
+                            }}
+                          >
+                            <span style={{ color: returnType ? (isDarkMode ? 'var(--text-primary, #fff)' : '#333') : (isDarkMode ? 'var(--text-secondary, #999)' : '#999') }}>
+                              {returnType === 'exchange' ? 'Exchange' : returnType === 'store_credit' ? 'Return Store Credit' : returnType === 'refund' ? 'Refund' : 'Select return type...'}
+                            </span>
+                            <ChevronDown
+                              size={18}
+                              style={{
+                                color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                                transform: returnTypeDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                transition: 'transform 0.2s ease'
+                              }}
+                            />
+                          </button>
+                          {returnTypeDropdownOpen && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '100%',
+                              left: 0,
+                              right: 0,
+                              marginTop: '4px',
+                              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                              border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+                              borderRadius: '8px',
+                              boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
+                              zIndex: 1000,
+                              overflow: 'hidden'
+                            }}>
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (!isSelected) toggleItem(item.order_item_id, item.quantity)
-                                  setExpandedNoteItemId(prev => prev === item.order_item_id ? null : item.order_item_id)
+                                  setReturnType('exchange')
+                                  setExchangeTiming('now')
+                                  setReturnTypeDropdownOpen(false)
                                 }}
-                                disabled={!isSelected}
                                 style={{
-                                  padding: '6px',
+                                  width: '100%',
+                                  padding: '10px 14px',
                                   border: 'none',
-                                  borderRadius: '6px',
-                                  background: isNoteExpanded ? `rgba(${themeColorRgb}, 0.2)` : (isDarkMode ? 'var(--bg-tertiary, #2d2d2d)' : '#f0f0f0'),
-                                  color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
-                                  cursor: isSelected ? 'pointer' : 'not-allowed',
-                                  opacity: isSelected ? 1 : 0.5
+                                  background: returnType === 'exchange' ? `rgba(${themeColorRgb}, 0.1)` : 'none',
+                                  textAlign: 'left',
+                                  fontSize: '14px',
+                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                  cursor: 'pointer',
+                                  transition: 'background-color 0.2s ease',
+                                  fontWeight: returnType === 'exchange' ? 600 : 400
                                 }}
-                                title="Add note"
+                                onMouseEnter={(e) => {
+                                  e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.backgroundColor = returnType === 'exchange' ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
+                                }}
                               >
-                                <Pencil size={14} />
+                                Exchange
                               </button>
-                            </td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}`, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', fontSize: '14px' }}>
-                              ${parseFloat(item.unit_price || 0).toFixed(2)}
-                            </td>
-                            <td style={{ padding: '8px 12px', textAlign: 'center', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleItem(item.order_item_id, item.quantity)}
-                                style={{ cursor: 'pointer' }}
-                              />
-                            </td>
-                          </tr>
-                          {isNoteExpanded && (
-                            <tr>
-                              <td colSpan={7} style={{ padding: '0', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
-                                <div style={{ padding: '8px 12px', backgroundColor: isDarkMode ? 'var(--bg-secondary, #252525)' : '#f8f9fa' }}>
-                                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>Note for this item</label>
-                                  <textarea
-                                    value={selectedData.note || ''}
-                                    onChange={(e) => updateItemNote(item.order_item_id, e.target.value)}
-                                    placeholder="Write a note..."
-                                    rows={2}
-                                    style={{
-                                      ...inputBaseStyle(isDarkMode, themeColorRgb),
-                                      width: '100%',
-                                      minHeight: '56px',
-                                      resize: 'vertical',
-                                      fontSize: '14px'
-                                    }}
-                                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                                  />
-                                </div>
-                              </td>
-                            </tr>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReturnType('store_credit')
+                                  setExchangeTiming('later')
+                                  setReturnTypeDropdownOpen(false)
+                                }}
+                                style={{
+                                  width: '100%',
+                                  padding: '10px 14px',
+                                  border: 'none',
+                                  background: returnType === 'store_credit' ? `rgba(${themeColorRgb}, 0.1)` : 'none',
+                                  textAlign: 'left',
+                                  fontSize: '14px',
+                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                  cursor: 'pointer',
+                                  transition: 'background-color 0.2s ease',
+                                  fontWeight: returnType === 'store_credit' ? 600 : 400
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.backgroundColor = returnType === 'store_credit' ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
+                                }}
+                              >
+                                Return Store Credit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReturnType('refund')
+                                  setExchangeTiming(null)
+                                  setReturnTypeDropdownOpen(false)
+                                }}
+                                style={{
+                                  width: '100%',
+                                  padding: '10px 14px',
+                                  border: 'none',
+                                  background: returnType === 'refund' ? `rgba(${themeColorRgb}, 0.1)` : 'none',
+                                  textAlign: 'left',
+                                  fontSize: '14px',
+                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                  cursor: 'pointer',
+                                  transition: 'background-color 0.2s ease',
+                                  fontWeight: returnType === 'refund' ? 600 : 400
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.backgroundColor = returnType === 'refund' ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
+                                }}
+                              >
+                                Refund
+                              </button>
+                            </div>
                           )}
-                          </Fragment>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-            )}
+                        </div>
+                      </FormField>
+                    </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '16px', borderTop: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}>
-              {returnProcessedResult ? (
-                <>
-                  {posReturnSettings.require_signature_for_return ? (
-                    <>
-                      <button
-                        onClick={() => {
-                          setOrder(null)
-                          setOrderItems([])
-                          setSelectedItems({})
-                          setReason('')
-                          setNotes('')
-                          setReturnType(null)
-                          setExchangeTiming(null)
-                          setReturnProcessedResult(null)
-                          setReturnReceiptChoice(null)
-                        }}
-                        style={{
-                          padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
-                          backgroundColor: 'var(--bg-tertiary)', border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px',
-                          fontSize: '14px', fontWeight: 500, color: 'var(--text-secondary)', cursor: 'pointer'
-                        }}
-                      >
-                        Done
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const res = await fetch('/api/customer-display/settings')
-                            const data = await res.json()
-                            if (data.success && data.data) {
-                              setReturnCheckoutUi(data.data.checkout_ui ?? null)
-                            }
-                          } catch (e) {
-                            console.error('Failed to load checkout UI for return receipt', e)
-                          }
-                          setShowReturnReceiptOptionsModal(true)
-                        }}
-                        style={{
-                          padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
-                          backgroundColor: `rgba(${themeColorRgb}, 0.7)`, border: `1px solid rgba(${themeColorRgb}, 0.5)`, borderRadius: '8px',
-                          fontSize: '14px', fontWeight: 600, color: '#fff', cursor: 'pointer'
-                        }}
-                      >
-                        Show receipt options
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => {
-                          if (returnProcessedResult.return_receipt_url) window.open(returnProcessedResult.return_receipt_url, '_blank')
-                          setOrder(null)
-                          setOrderItems([])
-                          setSelectedItems({})
-                          setReason('')
-                          setNotes('')
-                          setReturnType(null)
-                          setExchangeTiming(null)
-                          setReturnProcessedResult(null)
-                          setReturnReceiptChoice(null)
-                        }}
-                        style={{
-                          padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
-                          backgroundColor: 'var(--bg-tertiary)', border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px',
-                          fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', cursor: 'pointer'
-                        }}
-                      >
-                        Print
-                      </button>
-                      <button
-                        onClick={() => {
-                          setOrder(null)
-                          setOrderItems([])
-                          setSelectedItems({})
-                          setReason('')
-                          setNotes('')
-                          setReturnType(null)
-                          setExchangeTiming(null)
-                          setReturnProcessedResult(null)
-                          setReturnReceiptChoice(null)
-                        }}
-                        style={{
-                          padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
-                          backgroundColor: 'var(--bg-tertiary)', border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px',
-                          fontSize: '14px', fontWeight: 500, color: 'var(--text-secondary)', cursor: 'pointer'
-                        }}
-                      >
-                        No receipt
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (returnProcessedResult.return_receipt_url) window.open(returnProcessedResult.return_receipt_url, '_blank')
-                          setOrder(null)
-                          setOrderItems([])
-                          setSelectedItems({})
-                          setReason('')
-                          setNotes('')
-                          setReturnType(null)
-                          setExchangeTiming(null)
-                          setReturnProcessedResult(null)
-                          setReturnReceiptChoice(null)
-                        }}
-                        style={{
-                          padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
-                          backgroundColor: `rgba(${themeColorRgb}, 0.7)`, border: `1px solid rgba(${themeColorRgb}, 0.5)`, borderRadius: '8px',
-                          fontSize: '14px', fontWeight: 600, color: '#fff', cursor: 'pointer'
-                        }}
-                      >
-                        Email
-                      </button>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => {
-                      setOrder(null)
-                      setOrderItems([])
-                      setSelectedItems({})
-                      setReason('')
-                      setNotes('')
-                      setReturnType(null)
-                      setExchangeTiming(null)
-                      setReturnProcessedResult(null)
-                      setReturnSignatureStep(false)
-                    }}
-                    disabled={returnLoading}
-                    style={{
-                      padding: '4px 16px',
-                      height: '28px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      whiteSpace: 'nowrap',
-                      backgroundColor: 'var(--bg-tertiary)',
-                      border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 500,
-                      color: 'var(--text-secondary)',
-                      cursor: returnLoading ? 'not-allowed' : 'pointer',
-                      transition: 'all 0.3s ease',
-                      boxShadow: 'none'
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => createReturn(null)}
-                    disabled={returnLoading || Object.keys(selectedItems).length === 0 || !returnType || (returnType === 'exchange' && !exchangeTiming)}
-                    style={{
-                      padding: '4px 16px',
-                      height: '28px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      whiteSpace: 'nowrap',
-                      backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                      border: `1px solid rgba(${themeColorRgb}, 0.5)`,
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      color: '#fff',
-                      cursor: 'pointer',
-                      transition: 'all 0.3s ease',
-                      boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3)`
-                    }}
-                  >
-                    {returnLoading ? 'Processing...' : 'Process Return'}
-                  </button>
-                </>
-              )}
-            </div>
-            {/* Checkout UI (same as POS): sign + print/email/none when "Require signature for return" is on */}
-            {showReturnReceiptOptionsModal && returnProcessedResult && (
-              <div style={{
-                position: 'fixed',
-                inset: 0,
-                zIndex: 10003,
-                display: 'flex',
-                flexDirection: 'column',
-                background: 'transparent'
-              }}>
-                <CustomerDisplayPopup
-                  cart={[]}
-                  subtotal={0}
-                  tax={0}
-                  discount={0}
-                  transactionFee={0}
-                  total={0}
-                  tip={0}
-                  paymentMethod={null}
-                  amountPaid={null}
-                  showSummary={true}
-                  paymentCompleted={true}
-                  returnId={returnProcessedResult.return_id}
-                  initialCheckoutUi={returnCheckoutUi}
-                  onReturnReceiptSelect={async (receiptAction, signatureData) => {
-                    setReturnReceiptOptionsLoading(true)
-                    try {
-                      const res = await fetch('/api/return_receipt_options', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          return_id: returnProcessedResult.return_id,
-                          signature: signatureData || null,
-                          receipt_action: receiptAction
-                        })
+                    <FormField>
+                      <FormLabel isDarkMode={isDarkMode}>Reason:</FormLabel>
+                      <input
+                        type="text"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        placeholder="Reason for return"
+                        style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                        {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                      />
+                    </FormField>
+
+                    {/* Return Amount Summary - discount and tip aware */}
+                    {(() => {
+                      let returnSubtotal = 0
+                      let returnTax = 0
+                      let returnProcessingFee = 0
+                      Object.entries(selectedItems).forEach(([itemId, data]) => {
+                        const item = orderItems.find(i => i.order_item_id === parseInt(itemId))
+                        if (item) {
+                          const itemSubtotal = parseFloat(item.unit_price || 0) * data.quantity
+                          const itemDiscount = parseFloat(item.discount || 0) * (data.quantity / item.quantity)
+                          const itemSubtotalAfterDiscount = itemSubtotal - itemDiscount
+                          const itemTaxRate = parseFloat(item.tax_rate || order.tax_rate || 0.08)
+                          const itemTax = itemSubtotalAfterDiscount * itemTaxRate
+                          returnSubtotal += itemSubtotalAfterDiscount
+                          returnTax += itemTax
+                        }
                       })
-                      const data = await res.json()
-                      if (data.success) {
-                        if (data.return_receipt_url) window.open(data.return_receipt_url, '_blank')
-                        setShowReturnReceiptOptionsModal(false)
+                      const orderSubtotal = parseFloat(order.subtotal) || 0
+                      const orderDiscount = parseFloat(order.discount) || 0
+                      const orderTip = parseFloat(order.tip) || 0
+                      const returnOrderDiscountDeduction = orderSubtotal > 0 && orderDiscount > 0
+                        ? orderDiscount * (returnSubtotal / orderSubtotal)
+                        : 0
+                      const returnSubtotalAfterOrderDiscount = returnSubtotal - returnOrderDiscountDeduction
+                      const returnTipDeduction = orderSubtotal > 0 && orderTip > 0
+                        ? orderTip * (returnSubtotal / orderSubtotal)
+                        : 0
+                      const totalOrderQtySummary = orderItems.reduce((s, i) => s + (i.quantity || 0), 0)
+                      const totalReturnQtySummary = Object.values(selectedItems).reduce((s, d) => s + (d.quantity || 0), 0)
+                      const isFullReturnSummary = totalOrderQtySummary > 0 && totalReturnQtySummary >= totalOrderQtySummary
+                      if (isFullReturnSummary && order.transaction_fee && order.subtotal) {
+                        const feeRate = parseFloat(order.transaction_fee) / parseFloat(order.subtotal)
+                        returnProcessingFee = returnSubtotalAfterOrderDiscount * feeRate
+                      }
+                      const effectiveFee = posReturnSettings.return_transaction_fee_take_loss ? 0 : (isFullReturnSummary ? returnProcessingFee : 0)
+                      const effectiveTip = posReturnSettings.return_tip_refund ? 0 : returnTipDeduction
+                      const returnTotal = returnSubtotalAfterOrderDiscount + returnTax - effectiveFee - effectiveTip
+                      return (
+                        <div style={{
+                          marginTop: '16px',
+                          marginBottom: '16px',
+                          padding: '16px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#f8f9fa',
+                          borderRadius: '8px'
+                        }}>
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr auto',
+                            gap: '8px',
+                            fontSize: '14px',
+                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333'
+                          }}>
+                            <span>Return Subtotal:</span>
+                            <span style={{ fontWeight: 500 }}>${returnSubtotal.toFixed(2)}</span>
+                            <span>Discount (proportional):</span>
+                            <span style={{ fontWeight: 500, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>${returnOrderDiscountDeduction.toFixed(2)}</span>
+                            <span>Return Tax:</span>
+                            <span style={{ fontWeight: 500 }}>${returnTax.toFixed(2)}</span>
+                            <span>{posReturnSettings.return_transaction_fee_take_loss ? 'Transaction fee:' : 'Transaction fee (non-refundable):'}</span>
+                            <span style={{ fontWeight: 500, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>
+                              ${posReturnSettings.return_transaction_fee_take_loss ? returnProcessingFee.toFixed(2) : effectiveFee.toFixed(2)}
+                            </span>
+                            <span>{posReturnSettings.return_tip_refund ? 'Tip:' : 'Tip (non-refundable):'}</span>
+                            <span style={{ fontWeight: 500, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>
+                              ${posReturnSettings.return_tip_refund ? returnTipDeduction.toFixed(2) : effectiveTip.toFixed(2)}
+                            </span>
+                            <div style={{
+                              gridColumn: '1 / -1',
+                              borderTop: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                              marginTop: '8px',
+                              paddingTop: '8px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}>
+                              <span style={{ fontWeight: 600, fontSize: '16px' }}>Refund Amount:</span>
+                              <span style={{ fontWeight: 700, fontSize: '18px', color: `rgb(${themeColorRgb})` }}>${returnTotal.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+
+                  {/* Right column: product list */}
+                  <div style={{ flex: 1, minWidth: 0, paddingTop: 0 }}>
+                    <div style={{ overflowX: 'auto', marginTop: 0, paddingTop: '6px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 0 }}>
+                        <thead>
+                          <tr style={{ borderBottom: `2px solid ${isDarkMode ? 'var(--border-light, #333)' : '#dee2e6'}` }}>
+                            <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Product</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Qty</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Condition</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Reason</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Note</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Price</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', textTransform: 'uppercase' }}>Select</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orderItems.map((item) => {
+                            const isSelected = !!selectedItems[item.order_item_id]
+                            const selectedData = selectedItems[item.order_item_id] || { quantity: 1, condition: 'new', maxQuantity: item.quantity, reason: '', note: '' }
+
+                            const reasonOptions = [
+                              { value: '', label: 'Select' },
+                              { value: 'defective', label: 'Defective' },
+                              { value: 'wrong_item', label: 'Wrong item' },
+                              { value: 'changed_mind', label: 'Changed mind' },
+                              { value: 'damaged', label: 'Damaged' },
+                              { value: 'other', label: 'Other' }
+                            ]
+                            const conditionOptions = [
+                              { value: 'new', label: 'New' },
+                              { value: 'opened', label: 'Opened' },
+                              { value: 'damaged', label: 'Damaged' },
+                              { value: 'defective', label: 'Defective' }
+                            ]
+                            const currentCondition = isSelected ? selectedData.condition : 'new'
+                            const conditionLabel = conditionOptions.find(opt => opt.value === currentCondition)?.label || 'New'
+                            const isConditionDropdownOpen = openConditionDropdowns[item.order_item_id] || false
+                            const currentReason = selectedData.reason || ''
+                            const reasonLabel = reasonOptions.find(opt => opt.value === currentReason)?.label || 'Select'
+                            const isReasonDropdownOpen = openReasonDropdowns[item.order_item_id] || false
+                            const isNoteExpanded = expandedNoteItemId === item.order_item_id
+
+                            if (!conditionDropdownRefs.current[item.order_item_id]) {
+                              conditionDropdownRefs.current[item.order_item_id] = { current: null }
+                            }
+                            if (!reasonDropdownRefs.current[item.order_item_id]) {
+                              reasonDropdownRefs.current[item.order_item_id] = { current: null }
+                            }
+
+                            return (
+                              <Fragment key={item.order_item_id}>
+                                <tr>
+                                  <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}`, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', fontSize: '14px' }}>
+                                    {item.product_name || item.sku}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}`, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max={item.quantity}
+                                      value={isSelected ? selectedData.quantity : 1}
+                                      onChange={(e) => {
+                                        const qty = parseInt(e.target.value) || 1
+                                        if (isSelected) {
+                                          updateItemQuantity(item.order_item_id, qty, item.quantity)
+                                        } else {
+                                          toggleItem(item.order_item_id, item.quantity)
+                                          setTimeout(() => updateItemQuantity(item.order_item_id, qty, item.quantity), 0)
+                                        }
+                                      }}
+                                      disabled={!isSelected || item.quantity === 1}
+                                      style={{
+                                        ...inputBaseStyle(isDarkMode, themeColorRgb),
+                                        width: '60px',
+                                        padding: '4px 8px',
+                                        fontSize: '14px',
+                                        opacity: isSelected && item.quantity > 1 ? 1 : 0.5
+                                      }}
+                                      {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
+                                    <div ref={el => conditionDropdownRefs.current[item.order_item_id].current = el} style={{ position: 'relative', width: '100px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!isSelected) {
+                                            toggleItem(item.order_item_id, item.quantity)
+                                          }
+                                          const opening = !openConditionDropdowns[item.order_item_id]
+                                          setOpenConditionDropdowns(prev => ({ ...prev, [item.order_item_id]: !prev[item.order_item_id] }))
+                                          if (opening) {
+                                            requestAnimationFrame(() => {
+                                              const el = conditionDropdownRefs.current[item.order_item_id]?.current
+                                              if (el) {
+                                                const r = el.getBoundingClientRect()
+                                                setConditionDropdownRect({ itemId: item.order_item_id, top: r.top, left: r.left, width: r.width, height: r.height })
+                                              }
+                                            })
+                                          } else {
+                                            setConditionDropdownRect(null)
+                                          }
+                                        }}
+                                        disabled={!isSelected}
+                                        style={{
+                                          ...inputBaseStyle(isDarkMode, themeColorRgb, isConditionDropdownOpen),
+                                          width: '100px',
+                                          padding: '4px 8px',
+                                          fontSize: '14px',
+                                          cursor: isSelected ? 'pointer' : 'not-allowed',
+                                          opacity: isSelected ? 1 : 0.5,
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center',
+                                          textAlign: 'left'
+                                        }}
+                                        onFocus={(e) => {
+                                          if (isSelected) {
+                                            e.target.style.borderColor = `rgba(${themeColorRgb}, 0.5)`
+                                            e.target.style.boxShadow = `0 0 0 3px rgba(${themeColorRgb}, 0.1)`
+                                          }
+                                        }}
+                                        onBlur={(e) => {
+                                          setTimeout(() => {
+                                            if (!isConditionDropdownOpen && isSelected) {
+                                              e.target.style.borderColor = isDarkMode ? 'var(--border-color, #404040)' : '#ddd'
+                                              e.target.style.boxShadow = 'none'
+                                            }
+                                          }, 200)
+                                        }}
+                                      >
+                                        <span style={{ fontSize: '14px' }}>{conditionLabel}</span>
+                                        <ChevronDown
+                                          size={14}
+                                          style={{
+                                            color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                                            transform: isConditionDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                            transition: 'transform 0.2s ease'
+                                          }}
+                                        />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
+                                    <div ref={el => { reasonDropdownRefs.current[item.order_item_id].current = el }} style={{ position: 'relative', width: 'fit-content', minWidth: '72px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!isSelected) toggleItem(item.order_item_id, item.quantity)
+                                          const opening = !openReasonDropdowns[item.order_item_id]
+                                          setOpenReasonDropdowns(prev => ({ ...prev, [item.order_item_id]: !prev[item.order_item_id] }))
+                                          if (opening) {
+                                            requestAnimationFrame(() => {
+                                              const el = reasonDropdownRefs.current[item.order_item_id]?.current
+                                              if (el) {
+                                                const r = el.getBoundingClientRect()
+                                                setReasonDropdownRect({ itemId: item.order_item_id, top: r.top, left: r.left, width: r.width, height: r.height })
+                                              }
+                                            })
+                                          } else {
+                                            setReasonDropdownRect(null)
+                                          }
+                                        }}
+                                        disabled={!isSelected}
+                                        style={{
+                                          ...inputBaseStyle(isDarkMode, themeColorRgb, isReasonDropdownOpen),
+                                          width: 'fit-content',
+                                          minWidth: '72px',
+                                          padding: '4px 8px',
+                                          fontSize: '13px',
+                                          cursor: isSelected ? 'pointer' : 'not-allowed',
+                                          opacity: isSelected ? 1 : 0.5,
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center',
+                                          textAlign: 'left'
+                                        }}
+                                      >
+                                        <span style={{ fontSize: '13px' }}>{reasonLabel}</span>
+                                        <ChevronDown size={14} style={{ color: isDarkMode ? 'var(--text-secondary, #999)' : '#666', transform: isReasonDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!isSelected) toggleItem(item.order_item_id, item.quantity)
+                                        setExpandedNoteItemId(prev => prev === item.order_item_id ? null : item.order_item_id)
+                                      }}
+                                      disabled={!isSelected}
+                                      style={{
+                                        padding: '6px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        background: isNoteExpanded ? `rgba(${themeColorRgb}, 0.2)` : (isDarkMode ? 'var(--bg-tertiary, #2d2d2d)' : '#f0f0f0'),
+                                        color: isDarkMode ? 'var(--text-secondary, #999)' : '#666',
+                                        cursor: isSelected ? 'pointer' : 'not-allowed',
+                                        opacity: isSelected ? 1 : 0.5
+                                      }}
+                                      title="Add note"
+                                    >
+                                      <Pencil size={14} />
+                                    </button>
+                                  </td>
+                                  <td style={{ padding: '8px 12px', textAlign: 'right', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}`, color: isDarkMode ? 'var(--text-primary, #fff)' : '#333', fontSize: '14px' }}>
+                                    ${parseFloat(item.unit_price || 0).toFixed(2)}
+                                  </td>
+                                  <td style={{ padding: '8px 12px', textAlign: 'center', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleItem(item.order_item_id, item.quantity)}
+                                      style={{ cursor: 'pointer' }}
+                                    />
+                                  </td>
+                                </tr>
+                                {isNoteExpanded && (
+                                  <tr>
+                                    <td colSpan={7} style={{ padding: '0', borderBottom: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#f0f0f0'}` }}>
+                                      <div style={{ padding: '8px 12px', backgroundColor: isDarkMode ? 'var(--bg-secondary, #252525)' : '#f8f9fa' }}>
+                                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: isDarkMode ? 'var(--text-secondary, #999)' : '#666' }}>Note for this item</label>
+                                        <textarea
+                                          value={selectedData.note || ''}
+                                          onChange={(e) => updateItemNote(item.order_item_id, e.target.value)}
+                                          placeholder="Write a note..."
+                                          rows={2}
+                                          style={{
+                                            ...inputBaseStyle(isDarkMode, themeColorRgb),
+                                            width: '100%',
+                                            minHeight: '56px',
+                                            resize: 'vertical',
+                                            fontSize: '14px'
+                                          }}
+                                          {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                        />
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '16px', borderTop: isDarkMode ? '1px solid var(--border-light, #333)' : '1px solid #eee' }}>
+                {returnProcessedResult ? (
+                  <>
+                    {posReturnSettings.require_signature_for_return ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setOrder(null)
+                            setOrderItems([])
+                            setSelectedItems({})
+                            setReason('')
+                            setNotes('')
+                            setReturnType(null)
+                            setExchangeTiming(null)
+                            setReturnProcessedResult(null)
+                            setReturnReceiptChoice(null)
+                          }}
+                          style={{
+                            padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
+                            backgroundColor: 'var(--bg-tertiary)', border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px',
+                            fontSize: '14px', fontWeight: 500, color: 'var(--text-secondary)', cursor: 'pointer'
+                          }}
+                        >
+                          Done
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/customer-display/settings')
+                              const data = await res.json()
+                              if (data.success && data.data) {
+                                setReturnCheckoutUi(data.data.checkout_ui ?? null)
+                              }
+                            } catch (e) {
+                              console.error('Failed to load checkout UI for return receipt', e)
+                            }
+                            setShowReturnReceiptOptionsModal(true)
+                          }}
+                          style={{
+                            padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
+                            backgroundColor: `rgba(${themeColorRgb}, 0.7)`, border: `1px solid rgba(${themeColorRgb}, 0.5)`, borderRadius: '8px',
+                            fontSize: '14px', fontWeight: 600, color: '#fff', cursor: 'pointer'
+                          }}
+                        >
+                          Show receipt options
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            if (returnProcessedResult.return_receipt_url) window.open(returnProcessedResult.return_receipt_url, '_blank')
+                            setOrder(null)
+                            setOrderItems([])
+                            setSelectedItems({})
+                            setReason('')
+                            setNotes('')
+                            setReturnType(null)
+                            setExchangeTiming(null)
+                            setReturnProcessedResult(null)
+                            setReturnReceiptChoice(null)
+                          }}
+                          style={{
+                            padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
+                            backgroundColor: 'var(--bg-tertiary)', border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px',
+                            fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', cursor: 'pointer'
+                          }}
+                        >
+                          Print
+                        </button>
+                        <button
+                          onClick={() => {
+                            setOrder(null)
+                            setOrderItems([])
+                            setSelectedItems({})
+                            setReason('')
+                            setNotes('')
+                            setReturnType(null)
+                            setExchangeTiming(null)
+                            setReturnProcessedResult(null)
+                            setReturnReceiptChoice(null)
+                          }}
+                          style={{
+                            padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
+                            backgroundColor: 'var(--bg-tertiary)', border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`, borderRadius: '8px',
+                            fontSize: '14px', fontWeight: 500, color: 'var(--text-secondary)', cursor: 'pointer'
+                          }}
+                        >
+                          No receipt
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (returnProcessedResult.return_receipt_url) window.open(returnProcessedResult.return_receipt_url, '_blank')
+                            setOrder(null)
+                            setOrderItems([])
+                            setSelectedItems({})
+                            setReason('')
+                            setNotes('')
+                            setReturnType(null)
+                            setExchangeTiming(null)
+                            setReturnProcessedResult(null)
+                            setReturnReceiptChoice(null)
+                          }}
+                          style={{
+                            padding: '4px 16px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap',
+                            backgroundColor: `rgba(${themeColorRgb}, 0.7)`, border: `1px solid rgba(${themeColorRgb}, 0.5)`, borderRadius: '8px',
+                            fontSize: '14px', fontWeight: 600, color: '#fff', cursor: 'pointer'
+                          }}
+                        >
+                          Email
+                        </button>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
                         setOrder(null)
                         setOrderItems([])
                         setSelectedItems({})
@@ -4226,184 +4164,281 @@ function RecentOrders() {
                         setReturnType(null)
                         setExchangeTiming(null)
                         setReturnProcessedResult(null)
-                        setExpandedRow(null)
-                        setToast({ message: receiptAction === 'none' ? 'Done.' : 'Return receipt options saved.', type: 'success' })
-                      } else {
-                        setToast({ message: data.message || 'Failed to save', type: 'error' })
-                      }
-                    } catch (e) {
-                      setToast({ message: 'Error saving receipt options', type: 'error' })
-                    } finally {
-                      setReturnReceiptOptionsLoading(false)
-                    }
-                  }}
-                  onClose={() => {
-                    setShowReturnReceiptOptionsModal(false)
-                  }}
-                />
+                        setReturnSignatureStep(false)
+                      }}
+                      disabled={returnLoading}
+                      style={{
+                        padding: '4px 16px',
+                        height: '28px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: 'var(--bg-tertiary)',
+                        border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        color: 'var(--text-secondary)',
+                        cursor: returnLoading ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.3s ease',
+                        boxShadow: 'none'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => createReturn(null)}
+                      disabled={returnLoading || Object.keys(selectedItems).length === 0 || !returnType || (returnType === 'exchange' && !exchangeTiming)}
+                      style={{
+                        padding: '4px 16px',
+                        height: '28px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                        border: `1px solid rgba(${themeColorRgb}, 0.5)`,
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        color: '#fff',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                        boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3)`
+                      }}
+                    >
+                      {returnLoading ? 'Processing...' : 'Process Return'}
+                    </button>
+                  </>
+                )}
               </div>
-            )}
+              {/* Checkout UI (same as POS): sign + print/email/none when "Require signature for return" is on */}
+              {showReturnReceiptOptionsModal && returnProcessedResult && (
+                <div style={{
+                  position: 'fixed',
+                  inset: 0,
+                  zIndex: 10003,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  background: 'transparent'
+                }}>
+                  <CustomerDisplayPopup
+                    cart={[]}
+                    subtotal={0}
+                    tax={0}
+                    discount={0}
+                    transactionFee={0}
+                    total={0}
+                    tip={0}
+                    paymentMethod={null}
+                    amountPaid={null}
+                    showSummary={true}
+                    paymentCompleted={true}
+                    returnId={returnProcessedResult.return_id}
+                    initialCheckoutUi={returnCheckoutUi}
+                    onReturnReceiptSelect={async (receiptAction, signatureData) => {
+                      setReturnReceiptOptionsLoading(true)
+                      try {
+                        const res = await fetch('/api/return_receipt_options', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            return_id: returnProcessedResult.return_id,
+                            signature: signatureData || null,
+                            receipt_action: receiptAction
+                          })
+                        })
+                        const data = await res.json()
+                        if (data.success) {
+                          if (data.return_receipt_url) window.open(data.return_receipt_url, '_blank')
+                          setShowReturnReceiptOptionsModal(false)
+                          setOrder(null)
+                          setOrderItems([])
+                          setSelectedItems({})
+                          setReason('')
+                          setNotes('')
+                          setReturnType(null)
+                          setExchangeTiming(null)
+                          setReturnProcessedResult(null)
+                          setExpandedRow(null)
+                          setToast({ message: receiptAction === 'none' ? 'Done.' : 'Return receipt options saved.', type: 'success' })
+                        } else {
+                          setToast({ message: data.message || 'Failed to save', type: 'error' })
+                        }
+                      } catch (e) {
+                        setToast({ message: 'Error saving receipt options', type: 'error' })
+                      } finally {
+                        setReturnReceiptOptionsLoading(false)
+                      }
+                    }}
+                    onClose={() => {
+                      setShowReturnReceiptOptionsModal(false)
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+            {conditionDropdownRect && openConditionDropdowns[conditionDropdownRect.itemId] && (() => {
+              const itemId = conditionDropdownRect.itemId
+              const currentCondition = selectedItems[itemId]?.condition || 'new'
+              const conditionOptions = [
+                { value: 'new', label: 'New' },
+                { value: 'opened', label: 'Opened' },
+                { value: 'damaged', label: 'Damaged' },
+                { value: 'defective', label: 'Defective' }
+              ]
+              return createPortal(
+                <div
+                  ref={conditionDropdownPortalRef}
+                  style={{
+                    position: 'fixed',
+                    top: conditionDropdownRect.top + conditionDropdownRect.height + 4,
+                    left: conditionDropdownRect.left,
+                    minWidth: conditionDropdownRect.width,
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                    border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+                    borderRadius: '8px',
+                    boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
+                    zIndex: 10002,
+                    overflow: 'hidden'
+                  }}
+                >
+                  {conditionOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        updateItemCondition(itemId, option.value)
+                        setOpenConditionDropdowns(prev => ({ ...prev, [itemId]: false }))
+                        setConditionDropdownRect(null)
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: currentCondition === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'none',
+                        textAlign: 'left',
+                        fontSize: '14px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s ease',
+                        fontWeight: currentCondition === option.value ? 600 : 400
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = currentCondition === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>,
+                document.body
+              )
+            })()}
+            {reasonDropdownRect && openReasonDropdowns[reasonDropdownRect.itemId] && (() => {
+              const itemId = reasonDropdownRect.itemId
+              const currentReason = selectedItems[itemId]?.reason || ''
+              const reasonOptions = [
+                { value: '', label: 'Select' },
+                { value: 'defective', label: 'Defective' },
+                { value: 'wrong_item', label: 'Wrong item' },
+                { value: 'changed_mind', label: 'Changed mind' },
+                { value: 'damaged', label: 'Damaged' },
+                { value: 'other', label: 'Other' }
+              ]
+              return createPortal(
+                <div
+                  ref={reasonDropdownPortalRef}
+                  style={{
+                    position: 'fixed',
+                    top: reasonDropdownRect.top + reasonDropdownRect.height + 4,
+                    left: reasonDropdownRect.left,
+                    width: 'max-content',
+                    minWidth: '100px',
+                    maxWidth: '180px',
+                    backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                    border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+                    borderRadius: '8px',
+                    boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
+                    zIndex: 10002,
+                    overflow: 'hidden'
+                  }}
+                >
+                  {reasonOptions.map((option) => (
+                    <button
+                      key={option.value || 'none'}
+                      type="button"
+                      onClick={() => {
+                        updateItemReason(itemId, option.value)
+                        setOpenReasonDropdowns(prev => ({ ...prev, [itemId]: false }))
+                        setReasonDropdownRect(null)
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: 'none',
+                        background: currentReason === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'none',
+                        textAlign: 'left',
+                        fontSize: '14px',
+                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s ease',
+                        fontWeight: currentReason === option.value ? 600 : 400
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = currentReason === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>,
+                document.body
+              )
+            })()}
           </div>
-        {conditionDropdownRect && openConditionDropdowns[conditionDropdownRect.itemId] && (() => {
-          const itemId = conditionDropdownRect.itemId
-          const currentCondition = selectedItems[itemId]?.condition || 'new'
-          const conditionOptions = [
-            { value: 'new', label: 'New' },
-            { value: 'opened', label: 'Opened' },
-            { value: 'damaged', label: 'Damaged' },
-            { value: 'defective', label: 'Defective' }
-          ]
-          return createPortal(
-            <div
-              ref={conditionDropdownPortalRef}
-              style={{
-                position: 'fixed',
-                top: conditionDropdownRect.top + conditionDropdownRect.height + 4,
-                left: conditionDropdownRect.left,
-                minWidth: conditionDropdownRect.width,
-                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
-                borderRadius: '8px',
-                boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
-                zIndex: 10002,
-                overflow: 'hidden'
-              }}
-            >
-              {conditionOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    updateItemCondition(itemId, option.value)
-                    setOpenConditionDropdowns(prev => ({ ...prev, [itemId]: false }))
-                    setConditionDropdownRect(null)
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    border: 'none',
-                    background: currentCondition === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'none',
-                    textAlign: 'left',
-                    fontSize: '14px',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    cursor: 'pointer',
-                    transition: 'background-color 0.2s ease',
-                    fontWeight: currentCondition === option.value ? 600 : 400
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = currentCondition === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
-                  }}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>,
-            document.body
-          )
-        })()}
-        {reasonDropdownRect && openReasonDropdowns[reasonDropdownRect.itemId] && (() => {
-          const itemId = reasonDropdownRect.itemId
-          const currentReason = selectedItems[itemId]?.reason || ''
-          const reasonOptions = [
-            { value: '', label: 'Select' },
-            { value: 'defective', label: 'Defective' },
-            { value: 'wrong_item', label: 'Wrong item' },
-            { value: 'changed_mind', label: 'Changed mind' },
-            { value: 'damaged', label: 'Damaged' },
-            { value: 'other', label: 'Other' }
-          ]
-          return createPortal(
-            <div
-              ref={reasonDropdownPortalRef}
-              style={{
-                position: 'fixed',
-                top: reasonDropdownRect.top + reasonDropdownRect.height + 4,
-                left: reasonDropdownRect.left,
-                width: 'max-content',
-                minWidth: '100px',
-                maxWidth: '180px',
-                backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
-                borderRadius: '8px',
-                boxShadow: isDarkMode ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
-                zIndex: 10002,
-                overflow: 'hidden'
-              }}
-            >
-              {reasonOptions.map((option) => (
-                <button
-                  key={option.value || 'none'}
-                  type="button"
-                  onClick={() => {
-                    updateItemReason(itemId, option.value)
-                    setOpenReasonDropdowns(prev => ({ ...prev, [itemId]: false }))
-                    setReasonDropdownRect(null)
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    border: 'none',
-                    background: currentReason === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'none',
-                    textAlign: 'left',
-                    fontSize: '14px',
-                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                    cursor: 'pointer',
-                    transition: 'background-color 0.2s ease',
-                    fontWeight: currentReason === option.value ? 600 : 400
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = isDarkMode ? 'var(--bg-tertiary, #1a1a1a)' : '#f5f5f5'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = currentReason === option.value ? `rgba(${themeColorRgb}, 0.1)` : 'transparent'
-                  }}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>,
-            document.body
-          )
-        })()}
-        </div>
-      )}
+        )}
 
-      {/* Toast notification */}
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            position: 'fixed',
-            bottom: '24px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            padding: '12px 20px',
-            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-            border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
-            borderRadius: '12px',
-            boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.4)' : '0 4px 20px rgba(0,0,0,0.15)',
-            zIndex: 10001,
-            fontSize: '14px',
-            fontWeight: 500,
-            maxWidth: '90vw'
-          }}
-        >
-          {toast.type === 'error' ? (
-            <XCircle size={20} style={{ flexShrink: 0, color: '#d32f2f' }} />
-          ) : (
-            <CheckCircle size={20} style={{ flexShrink: 0, color: `rgb(${themeColorRgb})` }} />
-          )}
-          <span>{toast.message}</span>
-        </div>
-      )}
+        {/* Toast notification */}
+        {toast && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: 'fixed',
+              bottom: '24px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 20px',
+              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+              color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+              border: `1px solid ${isDarkMode ? 'var(--border-color, #404040)' : '#ddd'}`,
+              borderRadius: '12px',
+              boxShadow: isDarkMode ? '0 4px 20px rgba(0,0,0,0.4)' : '0 4px 20px rgba(0,0,0,0.15)',
+              zIndex: 10001,
+              fontSize: '14px',
+              fontWeight: 500,
+              maxWidth: '90vw'
+            }}
+          >
+            {toast.type === 'error' ? (
+              <XCircle size={20} style={{ flexShrink: 0, color: '#d32f2f' }} />
+            ) : (
+              <CheckCircle size={20} style={{ flexShrink: 0, color: `rgb(${themeColorRgb})` }} />
+            )}
+            <span>{toast.message}</span>
+          </div>
+        )}
       </div>
     </>
   )
