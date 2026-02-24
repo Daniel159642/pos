@@ -13,7 +13,7 @@ import BlurText from './components/BlurText';
 import LogoLoop from './components/LogoLoop';
 import { ArrowUpRight, Settings, User, LogOut, Bell, Camera, CreditCard, Search, Check, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
-import ThreeLogo from './components/ThreeLogo';
+import ThreeLogo, { StaticLogo } from "./components/ThreeLogo";
 import GradualBlur from './components/GradualBlur';
 
 import Grainient from './components/Grainient';
@@ -1289,11 +1289,7 @@ export default function Home() {
             </h2>
             {/* Static logo for mobile, 3D logo docks to nav on desktop */}
             <div className="w-16 h-16 md:w-[220px] flex items-center justify-center">
-              <img
-                src="/Swftly.svg"
-                alt="Swftly Logo"
-                className="w-14 h-14 md:hidden object-contain"
-              />
+              <StaticLogo className="w-24 h-24 md:hidden" />
             </div>
             <h2
               ref={finalSwftlyRef}

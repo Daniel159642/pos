@@ -299,3 +299,31 @@ export default function ThreeLogo({ forceDock = false }: { forceDock?: boolean }
     );
 }
 
+// A static version that can be placed inline (used for mobile final CTA)
+export function StaticLogo({ className }: { className?: string }) {
+    return (
+        <div className={`relative pointer-events-none ${className}`}>
+            <Canvas
+                shadows
+                dpr={typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 2) : 1}
+                camera={{ position: [0, 0, 150], fov: 45 }}
+                gl={{
+                    antialias: true,
+                    alpha: true,
+                    powerPreference: "high-performance",
+                }}
+                style={{ background: 'transparent' }}
+            >
+                <ambientLight intensity={0.5} />
+                <pointLight position={[100, 100, 100]} intensity={1} />
+                <spotLight position={[-100, 100, 100]} angle={0.15} penumbra={1} intensity={1} />
+
+                <React.Suspense fallback={null}>
+                    <ExtrudedLogo url="/Swftly.svg" onScrollProgress={() => { }} forceDock={true} />
+                    <Environment preset="city" />
+                </React.Suspense>
+            </Canvas>
+        </div>
+    );
+}
+
