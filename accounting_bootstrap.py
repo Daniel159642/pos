@@ -135,7 +135,8 @@ def ensure_accounting_schema() -> bool:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_by INTEGER,
-                updated_by INTEGER
+                updated_by INTEGER,
+                qbo_id VARCHAR(255)
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_acc_account_type ON accounting.accounts(account_type)")
@@ -160,7 +161,8 @@ def ensure_accounting_schema() -> bool:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_by INTEGER,
-                updated_by INTEGER
+                updated_by INTEGER,
+                qbo_id VARCHAR(255)
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_acc_txn_date ON accounting.transactions(transaction_date)")

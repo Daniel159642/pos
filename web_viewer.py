@@ -10664,7 +10664,8 @@ def get_subscription_urls():
         employee_id = session_data['employee_id']
         
         from calendar_integration import CalendarIntegrationSystem
-        calendar_system = CalendarIntegrationSystem(base_url=request.url_root.rstrip('/'))
+        base_url = os.environ.get('CALENDAR_FEED_BASE_URL') or request.host_url.rstrip('/')
+        calendar_system = CalendarIntegrationSystem(base_url=base_url)
         
         urls = calendar_system.get_employee_calendar_url(employee_id)
         
@@ -10675,8 +10676,230 @@ def get_subscription_urls():
             subscription = calendar_system.create_subscription(employee_id)
             return jsonify({'success': True, 'data': subscription})
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[get_subscription_urls] Error: {e}")
+        print(error_trace)
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get subscription URLs: {str(e)}',
+            'error_type': type(e).__name__
+        }), 500
+
+
+def _ensure_google_calendar_tokens_table():
+    try:
+        conn = None
+        try:
+            from database import get_connection
+            conn = get_connection()
+            if not conn:
+                return
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS google_calendar_tokens (
+                    id SERIAL PRIMARY KEY,
+                    employee_id INTEGER NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    token_expiry TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(employee_id)
+                )
+            """)
+            cur.execute("""
+                ALTER TABLE master_calendar ADD COLUMN IF NOT EXISTS google_event_id TEXT
+            """)
+            conn.commit()
+        finally:
+            if conn:
+                conn.close()
+    except Exception:
+        pass
+
+
+@app.route('/api/integrations/google-calendar/connect-url', methods=['GET'])
+def api_google_calendar_connect_url():
+    """Return Google OAuth URL for calendar.events scope. Frontend opens this in browser."""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        session_data = verify_session(session_token)
+        if not session_data.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        employee_id = session_data['employee_id']
+        from google_calendar_sync import get_oauth_url
+        url = get_oauth_url(state=str(employee_id))
+        return jsonify({'success': True, 'url': url})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+    except Exception as e:
+        import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/integrations/google-calendar/callback', methods=['GET'])
+def api_google_calendar_callback():
+    """OAuth callback: exchange code for tokens and store by employee_id (state)."""
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        if not code:
+            return redirect('/calendar?google=error&msg=missing_code')
+        employee_id = int(state) if state and state.isdigit() else None
+        if not employee_id:
+            return redirect('/calendar?google=error&msg=invalid_state')
+        _ensure_google_calendar_tokens_table()
+        from google_calendar_sync import exchange_code_for_tokens, save_tokens
+        redirect_uri = os.environ.get('GOOGLE_CALENDAR_REDIRECT_URI') or (request.host_url.rstrip('/') + '/api/integrations/google-calendar/callback')
+        tokens = exchange_code_for_tokens(code, redirect_uri=redirect_uri)
+        save_tokens(employee_id, tokens['access_token'], tokens.get('refresh_token'), tokens.get('token_expiry'))
+        return redirect('/calendar?google=connected')
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return redirect('/calendar?google=error&msg=' + str(e)[:50])
+
+
+@app.route('/api/integrations/google-calendar/status', methods=['GET'])
+def api_google_calendar_status():
+    """Return whether the current user has connected Google Calendar."""
+    try:
+        _ensure_google_calendar_tokens_table()
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': True, 'connected': False})
+        session_data = verify_session(session_token)
+        if not session_data.get('valid'):
+            return jsonify({'success': True, 'connected': False})
+        from google_calendar_sync import get_stored_tokens
+        tokens = get_stored_tokens(session_data['employee_id'])
+        return jsonify({'success': True, 'connected': bool(tokens and tokens.get('access_token'))})
+    except Exception as e:
+        return jsonify({'success': False, 'connected': False, 'message': str(e)}), 500
+
+@app.route('/api/integrations/quickbooks/connect-url', methods=['GET'])
+def api_quickbooks_connect_url():
+    """Return QuickBooks OAuth URL. Frontend opens this in browser."""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        session_data = verify_session(session_token)
+        if not session_data.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        
+        from quickbooks_sync import get_oauth_url
+        url = get_oauth_url()
+        return jsonify({'success': True, 'url': url})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/integrations/quickbooks/callback', methods=['GET'])
+def api_quickbooks_callback():
+    """QuickBooks OAuth callback."""
+    try:
+        code = request.args.get('code')
+        realm_id = request.args.get('realmId')
+        state = request.args.get('state')
+        
+        if not code:
+            return redirect('/accounting?qbo=error&msg=missing_code')
+            
+        from quickbooks_sync import exchange_code_for_tokens
+        exchange_code_for_tokens(code, realm_id)
+        
+        return redirect('/accounting?qbo=connected')
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return redirect('/accounting?qbo=error&msg=' + str(e)[:50])
+
+@app.route('/api/integrations/quickbooks/status', methods=['GET'])
+def api_quickbooks_status():
+    """Return whether the platform is connected to QuickBooks."""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '') or request.args.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+            
+        from quickbooks_sync import get_stored_tokens
+        tokens = get_stored_tokens()
+        return jsonify({'success': True, 'connected': tokens is not None})
+    except Exception as e:
+        return jsonify({'success': False, 'connected': False, 'message': str(e)}), 500
+
+@app.route('/api/integrations/quickbooks/sync/accounts', methods=['POST'])
+def api_quickbooks_sync_accounts():
+    """Trigger a sync of Chart of Accounts from QuickBooks to local DB."""
+    try:
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '') or request.json.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        session_data = verify_session(session_token)
+        if not session_data.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+            
+        from quickbooks_sync import sync_qbo_accounts_to_db
+        result = sync_qbo_accounts_to_db()
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+@app.route('/api/integrations/google-calendar/sync', methods=['POST'])
+def api_google_calendar_sync():
+    """Sync one master_calendar event to Google Calendar. Body: { calendar_id }."""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'JSON body required'}), 400
+        session_token = request.headers.get('Authorization', '').replace('Bearer ', '') or request.json.get('session_token')
+        if not session_token:
+            return jsonify({'success': False, 'message': 'Authentication required'}), 401
+        session_data = verify_session(session_token)
+        if not session_data.get('valid'):
+            return jsonify({'success': False, 'message': 'Invalid session'}), 401
+        employee_id = session_data['employee_id']
+        calendar_id = request.json.get('calendar_id')
+        if not calendar_id:
+            return jsonify({'success': False, 'message': 'calendar_id required'}), 400
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT calendar_id, event_date, start_time, end_time, title, description, google_event_id
+            FROM master_calendar WHERE calendar_id = %s
+        """, (calendar_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return jsonify({'success': False, 'message': 'Event not found'}), 404
+        event = dict(row)
+        from google_calendar_sync import sync_event_to_google, update_master_calendar_google_event_id
+        result = sync_event_to_google(
+            employee_id,
+            event,
+            google_event_id=event.get('google_event_id'),
+        )
+        if result['success'] and result.get('google_event_id'):
+            update_master_calendar_google_event_id(calendar_id, result['google_event_id'])
+        if not result['success']:
+            return jsonify({'success': False, 'message': result.get('error', 'Sync failed')}), 400
+        return jsonify({'success': True, 'google_event_id': result['google_event_id']})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 
 @app.route('/api/calendar/events/<int:event_id>/export', methods=['GET'])
 def export_event(event_id):

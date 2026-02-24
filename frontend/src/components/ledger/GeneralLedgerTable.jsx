@@ -111,6 +111,15 @@ function GeneralLedgerTable({ entries, loading = false, showRunningBalance = fal
     borderTop: `2px solid ${borderColor}`
   }
 
+  const finalTotalRowStyle = {
+    ...totalRowStyle,
+    borderTop: `1px solid ${borderColor}`,
+    borderBottomStyle: 'double',
+    borderBottomWidth: '4px',
+    borderBottomColor: textColor,
+    padding: '12px'
+  }
+
   const tableStyle = {
     width: '100%',
     borderCollapse: 'collapse',
@@ -305,10 +314,10 @@ function GeneralLedgerTable({ entries, loading = false, showRunningBalance = fal
             </colgroup>
             <tfoot>
               <tr>
-                <td colSpan={4} style={{ ...totalRowStyle, textAlign: 'right' }}>Totals:</td>
-                <td style={{ ...totalRowStyle, textAlign: 'right' }}>${totalDebits.toFixed(2)}</td>
-                <td style={{ ...totalRowStyle, textAlign: 'right' }}>${totalCredits.toFixed(2)}</td>
-                {showRunningBalance && <td style={{ ...totalRowStyle }}></td>}
+                <td colSpan={4} style={{ ...finalTotalRowStyle, textAlign: 'right' }}>Totals:</td>
+                <td style={{ ...finalTotalRowStyle, textAlign: 'right' }}>${totalDebits.toFixed(2)}</td>
+                <td style={{ ...finalTotalRowStyle, textAlign: 'right' }}>${totalCredits.toFixed(2)}</td>
+                {showRunningBalance && <td style={{ ...finalTotalRowStyle }}></td>}
               </tr>
             </tfoot>
           </table>
@@ -393,10 +402,10 @@ function GeneralLedgerTable({ entries, loading = false, showRunningBalance = fal
           })}
           <tfoot>
             <tr>
-              <td colSpan={4} style={{ ...totalRowStyle, textAlign: 'right' }}>Totals:</td>
-              <td style={{ ...totalRowStyle, textAlign: 'right' }}>${totalDebits.toFixed(2)}</td>
-              <td style={{ ...totalRowStyle, textAlign: 'right' }}>${totalCredits.toFixed(2)}</td>
-              {showRunningBalance && <td style={{ ...totalRowStyle }}></td>}
+              <td colSpan={4} style={{ ...finalTotalRowStyle, textAlign: 'right' }}>Totals:</td>
+              <td style={{ ...finalTotalRowStyle, textAlign: 'right' }}>${totalDebits.toFixed(2)}</td>
+              <td style={{ ...finalTotalRowStyle, textAlign: 'right' }}>${totalCredits.toFixed(2)}</td>
+              {showRunningBalance && <td style={{ ...finalTotalRowStyle }}></td>}
             </tr>
           </tfoot>
         </table>

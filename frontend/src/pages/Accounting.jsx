@@ -128,21 +128,46 @@ function exportReportToPdf(rows, filename, rowTypes) {
   const orientation = maxCols > 3 ? 'landscape' : 'portrait'
   const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' })
   const useRowTypes = Array.isArray(rowTypes) && rowTypes.length === body.length
+
+  const headerText = filename.replace('.pdf', '').replace(/-/g, ' ')
+
   autoTable(doc, {
     body,
-    startY: 14,
-    margin: { left: 14, right: 14 },
+    startY: 20,
+    margin: { top: 20, left: 14, right: 14 },
     styles: { fontSize: 9 },
     alternateRowStyles: useRowTypes ? undefined : { fillColor: [248, 248, 248] },
+    didDrawPage: (data) => {
+      doc.setFontSize(11)
+      doc.setTextColor(100)
+      doc.text(headerText, data.settings.margin.left, 14)
+    },
     didParseCell: useRowTypes
       ? (data) => {
-          const rowType = rowTypes[data.row.index] || 'data'
-          const s = PDF_ROW_STYLES[rowType] || PDF_ROW_STYLES.data
-          if (s.fillColor) data.cell.styles.fillColor = s.fillColor
-          if (s.textColor) data.cell.styles.textColor = s.textColor
-          if (s.fontStyle) data.cell.styles.fontStyle = s.fontStyle
-          if (s.fontSize) data.cell.styles.fontSize = s.fontSize
+        const rowType = rowTypes[data.row.index] || 'data'
+        const s = PDF_ROW_STYLES[rowType] || PDF_ROW_STYLES.data
+        if (s.fillColor) data.cell.styles.fillColor = s.fillColor
+        if (s.textColor) data.cell.styles.textColor = s.textColor
+        if (s.fontStyle) data.cell.styles.fontStyle = s.fontStyle
+        if (s.fontSize) data.cell.styles.fontSize = s.fontSize
+      }
+      : undefined,
+    didDrawCell: useRowTypes
+      ? (data) => {
+        const rowType = rowTypes[data.row.index]
+        if (rowType === 'finalTotal') {
+          const y = data.cell.y + data.cell.height
+          doc.setLineWidth(0.4)
+          doc.setDrawColor(51, 51, 51)
+          doc.line(data.cell.x, y - 1.5, data.cell.x + data.cell.width, y - 1.5)
+          doc.line(data.cell.x, y - 0.5, data.cell.x + data.cell.width, y - 0.5)
+        } else if (rowType === 'subtotal') {
+          const y = data.cell.y
+          doc.setLineWidth(0.3)
+          doc.setDrawColor(150, 150, 150)
+          doc.line(data.cell.x, y, data.cell.x + data.cell.width, y)
         }
+      }
       : undefined
   })
   doc.save(filename)
@@ -373,17 +398,17 @@ function Accounting() {
         {activeTab === 'settings' && <SettingsTab formatCurrency={formatCurrency} getAuthHeaders={getAuthHeaders} themeColorRgb={themeColorRgb} isDarkMode={isDarkMode} />}
         {activeTab === 'chart-of-accounts' && (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <ChartOfAccountsTab
-            formatCurrency={formatCurrency}
-            getAuthHeaders={getAuthHeaders}
-            themeColorRgb={themeColorRgb}
-            isDarkMode={isDarkMode}
-            setActiveTab={setActiveTab}
-            onViewLedgerInLedgerTab={(account) => {
-              setAccountIdForLedgerModal(account.id)
-              setActiveTab('general-ledger')
-            }}
-          />
+            <ChartOfAccountsTab
+              formatCurrency={formatCurrency}
+              getAuthHeaders={getAuthHeaders}
+              themeColorRgb={themeColorRgb}
+              isDarkMode={isDarkMode}
+              setActiveTab={setActiveTab}
+              onViewLedgerInLedgerTab={(account) => {
+                setAccountIdForLedgerModal(account.id)
+                setActiveTab('general-ledger')
+              }}
+            />
           </div>
         )}
         {activeTab === 'transactions' && (
@@ -393,15 +418,15 @@ function Accounting() {
         )}
         {activeTab === 'general-ledger' && (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <GeneralLedgerTab
-            dateRange={dateRange}
-            formatCurrency={formatCurrency}
-            getAuthHeaders={getAuthHeaders}
-            themeColorRgb={themeColorRgb}
-            isDarkMode={isDarkMode}
-            accountIdForLedgerModal={accountIdForLedgerModal}
-            onCloseAccountLedgerModal={() => setAccountIdForLedgerModal(null)}
-          />
+            <GeneralLedgerTab
+              dateRange={dateRange}
+              formatCurrency={formatCurrency}
+              getAuthHeaders={getAuthHeaders}
+              themeColorRgb={themeColorRgb}
+              isDarkMode={isDarkMode}
+              accountIdForLedgerModal={accountIdForLedgerModal}
+              onCloseAccountLedgerModal={() => setAccountIdForLedgerModal(null)}
+            />
           </div>
         )}
         {activeTab === 'account-ledger' && (
@@ -461,6 +486,9 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
   const [saving, setSaving] = useState(false)
   const [edit, setEdit] = useState(initialAccounting)
   const [employees, setEmployees] = useState([])
+  const [qboConnected, setQboConnected] = useState(false)
+  const [qboConnecting, setQboConnecting] = useState(false)
+  const [qboSyncing, setQboSyncing] = useState(false)
   const [laborThisWeek, setLaborThisWeek] = useState({ entries: [] })
   const [employeeRateSaving, setEmployeeRateSaving] = useState(null)
   const [employeeRateEdits, setEmployeeRateEdits] = useState({})
@@ -484,8 +512,9 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
       loadSettings(),
       loadEmployeesAndLabor(),
       loadPosSettings(),
-      loadDisplaySettings()
-    ]).catch(() => {})
+      loadDisplaySettings(),
+      loadQboStatus()
+    ]).catch(() => { })
   }, [])
 
   // Always persist accounting settings to localStorage on any change (user edit or API load)
@@ -553,6 +582,58 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
       console.warn('Error loading POS settings:', err)
     } finally {
       setPosSettingsLoading(false)
+    }
+  }
+
+  const loadQboStatus = async () => {
+    try {
+      const authHeaders = getAuthHeaders && getAuthHeaders()
+      const res = await fetch('/api/integrations/quickbooks/status', { headers: authHeaders || {} })
+      const json = await res.json()
+      if (json.success) {
+        setQboConnected(json.connected)
+      }
+    } catch (err) {
+      console.warn('Error loading QBO status:', err)
+    }
+  }
+
+  const handleConnectQbo = async () => {
+    setQboConnecting(true)
+    try {
+      const authHeaders = getAuthHeaders && getAuthHeaders()
+      const res = await fetch('/api/integrations/quickbooks/connect-url', { headers: authHeaders || {} })
+      const json = await res.json()
+      if (json.success && json.url) {
+        window.location.href = json.url
+      } else {
+        showToast(json.message || 'Failed to get QBO connect URL', 'error')
+        setQboConnecting(false)
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to connect QBO', 'error')
+      setQboConnecting(false)
+    }
+  }
+
+  const handleQboSyncAccounts = async () => {
+    setQboSyncing(true)
+    try {
+      const authHeaders = getAuthHeaders && getAuthHeaders()
+      const res = await fetch('/api/integrations/quickbooks/sync/accounts', {
+        method: 'POST',
+        headers: authHeaders || {}
+      })
+      const json = await res.json()
+      if (json.success) {
+        showToast(`Synced ${json.mapped_count} accounts from QuickBooks!`, 'success')
+      } else {
+        showToast(json.message || 'Failed to sync accounts', 'error')
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to sync accounts', 'error')
+    } finally {
+      setQboSyncing(false)
     }
   }
 
@@ -804,49 +885,49 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
             <div style={{ padding: '8px 0', color: textColor, opacity: 0.6, fontSize: '13px' }}>Loading…</div>
           ) : null}
           {Object.entries(safeEdit.sales_tax_by_state || {}).map(([stateCode, pct]) => (
-          <div key={stateCode} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <input
-              type="text"
-              value={stateCode}
-              readOnly
-              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '64px', padding: '6px 8px', textTransform: 'uppercase' }}
-            />
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step={0.01}
-              value={pct}
-              onChange={e => setEdit(prev => {
-                const p = prev ?? defaultEdit
-                return { ...p, sales_tax_by_state: { ...(p.sales_tax_by_state || {}), [stateCode]: parseFloat(e.target.value) || 0 } }
-              })}
-              style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '80px', padding: '6px 8px' }}
-            />
-            <span style={{ fontSize: '13px', color: textColor, opacity: 0.8 }}>%</span>
-            <button
-              type="button"
-              onClick={() => setEdit(prev => {
-                const p = prev ?? defaultEdit
-                const next = { ...(p.sales_tax_by_state || {}) }; delete next[stateCode]; return { ...p, sales_tax_by_state: next }
-              })}
-              style={{ padding: '6px 10px', border: 'none', borderRadius: '6px', background: isDarkMode ? '#444' : '#e0e0e0', color: textColor, cursor: 'pointer', fontSize: '12px' }}
-            >
-              Remove
-            </button>
-          </div>
-        ))}
+            <div key={stateCode} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <input
+                type="text"
+                value={stateCode}
+                readOnly
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '64px', padding: '6px 8px', textTransform: 'uppercase' }}
+              />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={0.01}
+                value={pct}
+                onChange={e => setEdit(prev => {
+                  const p = prev ?? defaultEdit
+                  return { ...p, sales_tax_by_state: { ...(p.sales_tax_by_state || {}), [stateCode]: parseFloat(e.target.value) || 0 } }
+                })}
+                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '80px', padding: '6px 8px' }}
+              />
+              <span style={{ fontSize: '13px', color: textColor, opacity: 0.8 }}>%</span>
+              <button
+                type="button"
+                onClick={() => setEdit(prev => {
+                  const p = prev ?? defaultEdit
+                  const next = { ...(p.sales_tax_by_state || {}) }; delete next[stateCode]; return { ...p, sales_tax_by_state: next }
+                })}
+                style={{ padding: '6px 10px', border: 'none', borderRadius: '6px', background: isDarkMode ? '#444' : '#e0e0e0', color: textColor, cursor: 'pointer', fontSize: '12px' }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
             <button
               type="button"
               disabled={settingsLoading}
               onClick={() => {
                 const code = prompt('State code (2 letters, e.g. CA)')
-              if (code && code.trim().length === 2) {
-                const upper = code.trim().toUpperCase()
-                setEdit(prev => { const p = prev ?? defaultEdit; return { ...p, sales_tax_by_state: { ...(p.sales_tax_by_state || {}), [upper]: 0 } } })
-              }
-            }}
+                if (code && code.trim().length === 2) {
+                  const upper = code.trim().toUpperCase()
+                  setEdit(prev => { const p = prev ?? defaultEdit; return { ...p, sales_tax_by_state: { ...(p.sales_tax_by_state || {}), [upper]: 0 } } })
+                }
+              }}
               style={{ padding: '8px 14px', marginRight: 'auto', border: `1px solid ${borderColor}`, borderRadius: '8px', background: 'transparent', color: textColor, cursor: settingsLoading ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 500, opacity: settingsLoading ? 0.6 : 1 }}
             >
               + Add state
@@ -958,23 +1039,23 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
           {settingsLoading ? (
             <div style={{ padding: '12px 0', color: textColor, opacity: 0.6, fontSize: '13px' }}>Loading…</div>
           ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-            {feeMethods.map(method => (
-              <div key={method} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ ...formLabelStyle(isDarkMode), marginBottom: 0, minWidth: '110px', fontSize: '13px' }}>{method.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</label>
-                <input
-                  type="number"
-                min={0}
-                max={1}
-                step={0.001}
-                  value={rates[method] ?? 0}
-                  onChange={e => setFeeRate(method, e.target.value)}
-                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '80px' }}
-                />
-              </div>
-            ))}
-          </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+              {feeMethods.map(method => (
+                <div key={method} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <label style={{ ...formLabelStyle(isDarkMode), marginBottom: 0, minWidth: '110px', fontSize: '13px' }}>{method.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.001}
+                    value={rates[method] ?? 0}
+                    onChange={e => setFeeRate(method, e.target.value)}
+                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                    style={{ ...inputBaseStyle(isDarkMode, themeColorRgb, false), width: '80px' }}
+                  />
+                </div>
+              ))}
+            </div>
           )}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
@@ -991,7 +1072,7 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
             {saving ? 'Saving...' : 'Save'}
           </Button>
         </div>
-        </div>
+      </div>
 
       {/* Tips settings */}
       <div style={cardStyle}>
@@ -1180,6 +1261,54 @@ function SettingsTab({ formatCurrency, getAuthHeaders, themeColorRgb = '132, 0, 
           </div>
         )}
       </div>
+
+      {/* QuickBooks Integration */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+          <FolderOpen size={18} style={{ flexShrink: 0 }} />
+          <span style={{ fontWeight: 600, fontSize: '15px', color: textColor }}>QuickBooks Online Integration</span>
+        </div>
+        <p style={{ fontSize: '13px', color: textColor, opacity: 0.8, marginBottom: '16px' }}>
+          Connect your QuickBooks Online account to automatically sync your chart of accounts, customers, vendors, and transactions.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: isDarkMode ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)', borderRadius: '8px', border: `1px solid ${borderColor}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#2ca01c', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>
+              QB
+            </div>
+            <div>
+              <div style={{ fontWeight: 500, color: textColor, fontSize: '14px' }}>QuickBooks Online</div>
+              <div style={{ fontSize: '12px', color: qboConnected ? '#2ca01c' : (isDarkMode ? '#888' : '#666'), fontWeight: qboConnected ? 600 : 400 }}>
+                {qboConnected ? 'Connected' : 'Not connected'}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {qboConnected && (
+              <Button
+                variant="primary"
+                disabled={qboSyncing}
+                onClick={handleQboSyncAccounts}
+                themeColorRgb={themeColorRgb}
+                isDarkMode={isDarkMode}
+              >
+                {qboSyncing ? 'Syncing...' : 'Sync Chart of Accounts'}
+              </Button>
+            )}
+            {!qboConnected && (
+              <Button
+                variant="primary"
+                disabled={qboConnecting}
+                onClick={handleConnectQbo}
+                themeColorRgb={themeColorRgb}
+                isDarkMode={isDarkMode}
+              >
+                {qboConnecting ? 'Connecting...' : 'Connect to QuickBooks'}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1193,20 +1322,20 @@ function MetricCard({ title, value, color, cardBackgroundColor, borderColor, tex
       borderRadius: '8px',
       borderLeft: `4px solid ${color}`
     }}>
-      <div style={{ 
-        fontSize: '12px', 
-        color: textColor, 
-        opacity: 0.7, 
+      <div style={{
+        fontSize: '12px',
+        color: textColor,
+        opacity: 0.7,
         marginBottom: '8px',
         textTransform: 'uppercase',
         letterSpacing: '0.5px'
       }}>
         {title}
       </div>
-      <div style={{ 
-        fontSize: '24px', 
-        fontWeight: 600, 
-        color: textColor 
+      <div style={{
+        fontSize: '24px',
+        fontWeight: 600,
+        color: textColor
       }}>
         {value}
       </div>
@@ -1221,11 +1350,11 @@ function ChartOfAccountsTab({ formatCurrency, getAuthHeaders, themeColorRgb, isD
   const [filteredAccounts, setFilteredAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [filters, setFilters] = useState({})
-  
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [selectedAccount, setSelectedAccount] = useState(null)
-  
+
   const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
   const textColor = _isDark ? '#ffffff' : '#1a1a1a'
   const borderColor = _isDark ? '#3a3a3a' : '#e0e0e0'
@@ -1290,7 +1419,7 @@ function ChartOfAccountsTab({ formatCurrency, getAuthHeaders, themeColorRgb, isD
 
   const handleUpdateAccount = async (data) => {
     if (!selectedAccount) return
-    
+
     try {
       await accountService.updateAccount(selectedAccount.id, data)
       showToast('Account updated successfully', 'success')
@@ -1384,7 +1513,7 @@ function ChartOfAccountsTab({ formatCurrency, getAuthHeaders, themeColorRgb, isD
               cursor: 'pointer',
               boxShadow: `0 4px 15px rgba(${themeColorRgb || '59, 130, 246'}, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2)`,
               transition: 'all 0.3s ease',
-        display: 'flex', 
+              display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
@@ -1504,19 +1633,19 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
   const [transactions, setTransactions] = useState([])
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ 
-    page: 1, 
+  const [filters, setFilters] = useState({
+    page: 1,
     limit: 50,
     start_date: dateRange.start_date,
     end_date: dateRange.end_date
   })
   const [pagination, setPagination] = useState({ total: 0, page: 1, totalPages: 1 })
-  
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState(null)
-  
+
   const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
   const textColor = _isDark ? '#ffffff' : '#1a1a1a'
   const borderColor = _isDark ? '#3a3a3a' : '#e0e0e0'
@@ -1565,14 +1694,14 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
   const handleCreateTransaction = async (data, postImmediately) => {
     try {
       const transaction = await transactionService.createTransaction(data)
-      
+
       if (postImmediately) {
         await transactionService.postTransaction(transaction.transaction.id)
         showToast('Transaction created and posted successfully', 'success')
       } else {
         showToast('Transaction created successfully', 'success')
       }
-      
+
       setIsCreateModalOpen(false)
       loadTransactions()
     } catch (error) {
@@ -1583,7 +1712,7 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
 
   const handleUpdateTransaction = async (data) => {
     if (!selectedTransaction) return
-    
+
     try {
       await transactionService.updateTransaction(selectedTransaction.transaction.id, data)
       showToast('Transaction updated successfully', 'success')
@@ -1637,8 +1766,8 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
   }
 
   const handleClearFilters = () => {
-    setFilters({ 
-      page: 1, 
+    setFilters({
+      page: 1,
       limit: 50,
       start_date: dateRange.start_date,
       end_date: dateRange.end_date
@@ -1654,7 +1783,7 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
       <div style={{ marginBottom: '24px', flexShrink: 0 }}>
         <h1 style={{ fontSize: '16px', fontWeight: 500, color: _isDark ? '#9ca3af' : '#6b7280', margin: 0 }}>Transactions</h1>
         <p style={{ fontSize: '14px', color: _isDark ? '#9ca3af' : '#6b7280', marginTop: '4px' }}>Record and manage journal entries</p>
-        </div>
+      </div>
 
       <div style={{ marginBottom: '20px', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -1736,7 +1865,7 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
           display: 'flex',
           flexDirection: 'column',
           backgroundColor: _isDark ? '#2a2a2a' : 'white',
-          borderRadius: '8px', 
+          borderRadius: '8px',
           boxShadow: _isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.08)',
           border: _isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)',
           overflow: 'hidden'
@@ -1744,10 +1873,10 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
       >
         <div
           style={{
-            padding: '16px 24px', 
+            padding: '16px 24px',
             borderBottom: '1px solid ' + (_isDark ? '#3a3a3a' : '#e5e7eb'),
-            display: 'flex', 
-            justifyContent: 'space-between', 
+            display: 'flex',
+            justifyContent: 'space-between',
             alignItems: 'center',
             flexWrap: 'wrap',
             gap: '16px',
@@ -1783,24 +1912,24 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
             </Button>
           </div>
         </div>
-        
+
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto' }}>
-        <TransactionTable
-          transactions={transactions}
-          loading={loading}
-          onView={(transaction) => {
-            setSelectedTransaction(transaction)
-            setIsViewModalOpen(true)
-          }}
-          onEdit={(transaction) => {
-            setSelectedTransaction(transaction)
-            setIsEditModalOpen(true)
-          }}
-          onDelete={handleDeleteTransaction}
-          onPost={handlePostTransaction}
-          onUnpost={handleUnpostTransaction}
-          onVoid={handleVoidTransaction}
-        />
+          <TransactionTable
+            transactions={transactions}
+            loading={loading}
+            onView={(transaction) => {
+              setSelectedTransaction(transaction)
+              setIsViewModalOpen(true)
+            }}
+            onEdit={(transaction) => {
+              setSelectedTransaction(transaction)
+              setIsEditModalOpen(true)
+            }}
+            onDelete={handleDeleteTransaction}
+            onPost={handlePostTransaction}
+            onUnpost={handleUnpostTransaction}
+            onVoid={handleVoidTransaction}
+          />
         </div>
       </div>
 
@@ -1872,11 +2001,11 @@ function TransactionsTab({ dateRange, formatCurrency, getAuthHeaders, themeColor
                 <p style={{ fontSize: '12px', color: textColor, opacity: 0.7, marginBottom: '4px' }}>Status</p>
                 <p style={{ fontWeight: '600', color: textColor }}>
                   {selectedTransaction.transaction.is_void ? 'Voided' :
-                   selectedTransaction.transaction.is_posted ? 'Posted' : 'Draft'}
+                    selectedTransaction.transaction.is_posted ? 'Posted' : 'Draft'}
                 </p>
               </div>
             </div>
-            
+
             <div>
               <p style={{ fontSize: '12px', color: textColor, opacity: 0.7, marginBottom: '4px' }}>Description</p>
               <p style={{ fontWeight: '600', color: textColor }}>{selectedTransaction.transaction.description}</p>
@@ -1937,12 +2066,12 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders, themeColo
     start_date: dateRange.start_date,
     end_date: dateRange.end_date
   })
-  
+
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState(null)
   const [accountLedgerModalData, setAccountLedgerModalData] = useState(null)
   const [accountLedgerModalLoading, setAccountLedgerModalLoading] = useState(false)
-  
+
   const { show: showToast } = useToast()
   const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
   const textColor = _isDark ? '#ffffff' : '#1a1a1a'
@@ -2087,20 +2216,32 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders, themeColo
       const head = [stringify(allRows[0])]
       const body = allRows.slice(1).map(stringify)
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-      doc.setFontSize(16)
-      doc.text('General Ledger', 14, 15)
-      doc.setFontSize(10)
-      if (filters.start_date && filters.end_date) {
-        doc.text(`Period: ${filters.start_date} to ${filters.end_date}`, 14, 22)
-      }
       autoTable(doc, {
         head,
         body,
         startY: 28,
-        margin: { left: 14 },
+        margin: { top: 28, left: 14, right: 14 },
         styles: { fontSize: 9 },
         headStyles: { fillColor: [45, 90, 107], textColor: [255, 255, 255] },
-        alternateRowStyles: { fillColor: [245, 245, 245] }
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        didDrawPage: (data) => {
+          doc.setFontSize(16)
+          doc.setTextColor(40)
+          doc.text('General Ledger', data.settings.margin.left, 15)
+          doc.setFontSize(10)
+          if (filters.start_date && filters.end_date) {
+            doc.text(`Period: ${filters.start_date} to ${filters.end_date}`, data.settings.margin.left, 22)
+          }
+        },
+        didDrawCell: (data) => {
+          if (data.section === 'body' && data.row.index === body.length - 1) {
+            const y = data.cell.y + data.cell.height
+            doc.setLineWidth(0.4)
+            doc.setDrawColor(51, 51, 51)
+            doc.line(data.cell.x, y - 1.5, data.cell.x + data.cell.width, y - 1.5)
+            doc.line(data.cell.x, y - 0.5, data.cell.x + data.cell.width, y - 0.5)
+          }
+        }
       })
       doc.save(exportFilename('General-Ledger', filters.start_date || new Date().toISOString().split('T')[0], filters.end_date, 'pdf'))
       showToast('Ledger exported to PDF', 'success')
@@ -2228,18 +2369,18 @@ function GeneralLedgerTab({ dateRange, formatCurrency, getAuthHeaders, themeColo
                   fontSize: '12px',
                   fontWeight: '600',
                   borderRadius: '12px',
-                  backgroundColor: selectedTransaction.transaction.is_posted 
-                    ? '#d1fae5' 
+                  backgroundColor: selectedTransaction.transaction.is_posted
+                    ? '#d1fae5'
                     : '#fef3c7',
-                  color: selectedTransaction.transaction.is_posted 
-                    ? '#065f46' 
+                  color: selectedTransaction.transaction.is_posted
+                    ? '#065f46'
                     : '#92400e'
                 }}>
                   {selectedTransaction.transaction.is_posted ? 'Posted' : 'Draft'}
                 </span>
               </div>
             </div>
-            
+
             <div>
               <p style={{ fontSize: '12px', color: textColor, opacity: 0.7, marginBottom: '4px' }}>Description</p>
               <p style={{ fontWeight: '600', color: textColor }}>{selectedTransaction.transaction.description}</p>
@@ -2348,10 +2489,10 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
     start_date: dateRange.start_date,
     end_date: dateRange.end_date
   })
-  
+
   const [isViewModalOpen, setIsViewModalOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState(null)
-  
+
   const { show: showToast } = useToast()
   const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
   const textColor = _isDark ? '#ffffff' : '#1a1a1a'
@@ -2377,13 +2518,13 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
 
   const loadAccountLedger = async () => {
     if (!accountId) return
-    
+
     setLoading(true)
     setLedgerData(null)
     try {
       const data = await transactionService.getAccountLedger(accountId, filters)
       if (data && data.account && Array.isArray(data.entries)) {
-      setLedgerData(data)
+        setLedgerData(data)
       } else {
         showToast('Invalid account ledger response', 'error')
       }
@@ -2494,9 +2635,9 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
   return (
     <div>
       <div style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <Button 
-          variant="secondary" 
-          size="sm" 
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => {
             sessionStorage.removeItem('selectedAccountId')
             setActiveTab('chart-of-accounts')
@@ -2554,36 +2695,36 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '4px', visibility: 'hidden', lineHeight: 1.2 }} aria-hidden>Actions</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-            <Button
-              type="button"
+              <Button
+                type="button"
                 variant="primary"
-              onClick={handleClearFilters}
-              style={{ flex: 1 }}
+                onClick={handleClearFilters}
+                style={{ flex: 1 }}
                 themeColorRgb={themeColorRgb}
                 isDarkMode={isDarkMode}
-            >
-              Clear Filters
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={handleExport}
-              style={{ flex: 1 }}
-              themeColorRgb={themeColorRgb}
-              isDarkMode={isDarkMode}
-            >
-              📊 Export to CSV
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={handleExportExcel}
-              style={{ flex: 1 }}
-              themeColorRgb={themeColorRgb}
-              isDarkMode={isDarkMode}
-            >
-              📗 Export to Excel
-            </Button>
+              >
+                Clear Filters
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleExport}
+                style={{ flex: 1 }}
+                themeColorRgb={themeColorRgb}
+                isDarkMode={isDarkMode}
+              >
+                📊 Export to CSV
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleExportExcel}
+                style={{ flex: 1 }}
+                themeColorRgb={themeColorRgb}
+                isDarkMode={isDarkMode}
+              >
+                📗 Export to Excel
+              </Button>
             </div>
           </div>
         </div>
@@ -2625,7 +2766,7 @@ function AccountLedgerTab({ dateRange, formatCurrency, getAuthHeaders, setActive
                 </p>
               </div>
             </div>
-            
+
             <div>
               <p style={{ fontSize: '12px', color: textColor, opacity: 0.7, marginBottom: '4px' }}>Description</p>
               <p style={{ fontWeight: '600', color: textColor }}>{selectedTransaction.transaction.description}</p>
@@ -3128,7 +3269,7 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     end_date: dateRange.end_date,
     comparison_type: 'none',
   })
-  
+
   const _isDark = isDarkMode ?? document.documentElement.classList.contains('dark-theme')
   const textColor = _isDark ? '#ffffff' : '#1a1a1a'
   const borderColor = _isDark ? '#3a3a3a' : '#e0e0e0'
@@ -3201,12 +3342,12 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
     add(['Account', 'Amount', '% of Revenue'], 'columnHeader')
     add([], 'empty')
     add(['Revenue'], 'section')
-    ;(reportData.revenue || []).forEach(account => {
-      add([`  ${account.account_number || ''} ${account.account_name}`.trim(), exportFormatCurrency(account.balance), (account.percentage_of_revenue != null ? num(account.percentage_of_revenue).toFixed(1) + '%' : pct(account.balance))], 'data')
-    })
-    ;(reportData.contra_revenue || []).forEach(account => {
-      add([`  Less: ${account.account_name}`, exportFormatCurrency(account.balance), pct(account.balance)], 'data')
-    })
+      ; (reportData.revenue || []).forEach(account => {
+        add([`  ${account.account_number || ''} ${account.account_name}`.trim(), exportFormatCurrency(account.balance), (account.percentage_of_revenue != null ? num(account.percentage_of_revenue).toFixed(1) + '%' : pct(account.balance))], 'data')
+      })
+      ; (reportData.contra_revenue || []).forEach(account => {
+        add([`  Less: ${account.account_name}`, exportFormatCurrency(account.balance), pct(account.balance)], 'data')
+      })
     add(['Net Sales', exportFormatCurrency(reportData.net_sales ?? reportData.total_revenue, true), revBase > 0 ? '100.0%' : ''], 'subtotal')
     if ((reportData.cost_of_goods_sold || []).length > 0) {
       add(['Cost of Goods Sold'], 'section')
@@ -3217,16 +3358,16 @@ const ProfitLossTab = forwardRef(function ProfitLossTab(
       add(['Gross Profit', exportFormatCurrency(reportData.gross_profit, true), pct(reportData.gross_profit)], 'subtotal')
     }
     add(['Operating Expenses'], 'section')
-    ;(reportData.expenses || []).forEach(account => {
-      add([`  ${account.account_number || ''} ${account.account_name}`.trim(), exportFormatCurrency(account.balance), pct(account.balance)], 'data')
-    })
+      ; (reportData.expenses || []).forEach(account => {
+        add([`  ${account.account_number || ''} ${account.account_name}`.trim(), exportFormatCurrency(account.balance), pct(account.balance)], 'data')
+      })
     const opProfit = reportData.operating_profit ?? (num(reportData.gross_profit) - num(reportData.total_expenses))
     add(['Total Operating Expenses', exportFormatCurrency(reportData.total_expenses, true), pct(reportData.total_expenses)], 'subtotal')
     add(['Operating Profit (Loss)', exportFormatCurrency(opProfit, true), pct(opProfit)], 'subtotal')
     add(['Add Other Income'], 'data')
-    ;(reportData.other_income || []).forEach(account => {
-      add([`  ${account.account_number || ''} ${account.account_name}`.trim(), exportFormatCurrency(account.balance), pct(account.balance)], 'data')
-    })
+      ; (reportData.other_income || []).forEach(account => {
+        add([`  ${account.account_number || ''} ${account.account_name}`.trim(), exportFormatCurrency(account.balance), pct(account.balance)], 'data')
+      })
     const profitBeforeTax = reportData.profit_before_taxes ?? reportData.net_income
     add(['Profit (Loss) Before Taxes', exportFormatCurrency(profitBeforeTax, true), pct(profitBeforeTax)], 'subtotal')
     add(['Less: Tax Expense', exportFormatCurrency(reportData.tax_expense ?? 0), pct(reportData.tax_expense ?? 0)], 'data')
@@ -3939,9 +4080,9 @@ function VendorsTab({ formatCurrency, getAuthHeaders }) {
       <div style={{ marginBottom: '24px', flexShrink: 0 }}>
         <h1 style={{ fontSize: '16px', fontWeight: 500, color: isDarkMode ? '#9ca3af' : '#6b7280', margin: 0 }}>Vendors</h1>
         <p style={{ fontSize: '14px', color: isDarkMode ? '#9ca3af' : '#6b7280', marginTop: '4px' }}>Suppliers you purchase from. Track contact info and balances. Bills are linked to vendors.</p>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${borderColor}`, borderRadius: '8px', overflow: 'hidden' }}>
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto' }}>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${borderColor}`, borderRadius: '8px', overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: isDarkMode ? '#1f1f1f' : '#f9f9f9', boxShadow: isDarkMode ? '0 1px 0 #3a3a3a' : '0 1px 0 #e0e0e0' }}>
               <tr>
@@ -3952,32 +4093,32 @@ function VendorsTab({ formatCurrency, getAuthHeaders }) {
               </tr>
             </thead>
             <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: textColor, opacity: 0.8 }}>
-                  Loading…
-                </td>
-              </tr>
-            ) : vendors.length === 0 ? (
-              <tr>
-                <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: textColor, opacity: 0.8 }}>
-                  No vendors found.
-                </td>
-              </tr>
-            ) : (
-              vendors.map(vendor => (
-                <tr key={vendor.id} style={{ borderBottom: `1px solid ${borderColor}` }}>
-                  <td style={{ padding: '12px', color: textColor }}>{vendor.vendor_number}</td>
-                  <td style={{ padding: '12px', color: textColor }}>{vendor.vendor_name}</td>
-                  <td style={{ padding: '12px', color: textColor }}>{vendor.email || '-'}</td>
-                  <td style={{ padding: '12px', textAlign: 'right', color: textColor }}>{formatCurrency(vendor.account_balance || 0)}</td>
+              {loading ? (
+                <tr>
+                  <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: textColor, opacity: 0.8 }}>
+                    Loading…
+                  </td>
                 </tr>
-              ))
-            )}
+              ) : vendors.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: textColor, opacity: 0.8 }}>
+                    No vendors found.
+                  </td>
+                </tr>
+              ) : (
+                vendors.map(vendor => (
+                  <tr key={vendor.id} style={{ borderBottom: `1px solid ${borderColor}` }}>
+                    <td style={{ padding: '12px', color: textColor }}>{vendor.vendor_number}</td>
+                    <td style={{ padding: '12px', color: textColor }}>{vendor.vendor_name}</td>
+                    <td style={{ padding: '12px', color: textColor }}>{vendor.email || '-'}</td>
+                    <td style={{ padding: '12px', textAlign: 'right', color: textColor }}>{formatCurrency(vendor.account_balance || 0)}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
-          </div>
         </div>
+      </div>
     </div>
   )
 }
@@ -4112,8 +4253,8 @@ function ReportsTabContent({ selectedReport, reportData, formatCurrency, textCol
     const periodLabel = payload.start_date && payload.end_date
       ? `${new Date(payload.start_date).toLocaleDateString()} – ${new Date(payload.end_date).toLocaleDateString()}`
       : ''
-  return (
-    <div>
+    return (
+      <div>
         {periodLabel && (
           <p style={{ color: textColor, opacity: 0.85, marginBottom: '16px', fontSize: '14px' }}>Period: {periodLabel}</p>
         )}
@@ -4172,7 +4313,7 @@ function ReportsTabContent({ selectedReport, reportData, formatCurrency, textCol
               </tr>
             </tbody>
           </table>
-      </div>
+        </div>
       </div>
     )
   }
@@ -4235,7 +4376,7 @@ function ReportsTabContent({ selectedReport, reportData, formatCurrency, textCol
             </tbody>
           </table>
         </div>
-        </div>
+      </div>
     )
   }
 
@@ -4268,7 +4409,7 @@ function ReportsTabContent({ selectedReport, reportData, formatCurrency, textCol
             ))}
           </tbody>
         </table>
-    </div>
+      </div>
     )
   }
 

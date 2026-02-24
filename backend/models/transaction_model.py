@@ -38,6 +38,7 @@ class Transaction:
         self.updated_at = row.get('updated_at')
         self.created_by = row.get('created_by')
         self.updated_by = row.get('updated_by')
+        self.qbo_id = row.get('qbo_id')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert transaction to dictionary"""
@@ -59,7 +60,8 @@ class Transaction:
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'created_by': self.created_by,
-            'updated_by': self.updated_by
+            'updated_by': self.updated_by,
+            'qbo_id': self.qbo_id
         }
 
 
@@ -321,8 +323,8 @@ class TransactionRepository:
                 INSERT INTO accounting.transactions (
                     transaction_number, transaction_date, transaction_type,
                     reference_number, description, source_document_id, source_document_type,
-                    is_posted, created_by, updated_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, false, %s, %s)
+                    is_posted, created_by, updated_by, qbo_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s)
                 RETURNING *
             """, (
                 transaction_number,
@@ -333,7 +335,8 @@ class TransactionRepository:
                 data.get('source_document_id'),
                 data.get('source_document_type'),
                 user_id,
-                user_id
+                user_id,
+                data.get('qbo_id')
             ))
             
             txn_row = cursor.fetchone()
@@ -396,7 +399,7 @@ class TransactionRepository:
             update_fields = []
             update_values = []
             
-            allowed_fields = ['transaction_date', 'transaction_type', 'reference_number', 'description']
+            allowed_fields = ['transaction_date', 'transaction_type', 'reference_number', 'description', 'qbo_id']
             for field in allowed_fields:
                 if field in data:
                     update_fields.append(f"{field} = %s")

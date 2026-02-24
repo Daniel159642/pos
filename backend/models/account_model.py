@@ -36,6 +36,7 @@ class Account:
         self.updated_at = row.get('updated_at')
         self.created_by = row.get('created_by')
         self.updated_by = row.get('updated_by')
+        self.qbo_id = row.get('qbo_id')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert account to dictionary"""
@@ -56,7 +57,8 @@ class Account:
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'created_by': self.created_by,
-            'updated_by': self.updated_by
+            'updated_by': self.updated_by,
+            'qbo_id': self.qbo_id
         }
 
 
@@ -138,8 +140,8 @@ class AccountRepository:
                     INSERT INTO accounting.accounts (
                         account_number, account_name, account_type, sub_type,
                         parent_account_id, balance_type, description, opening_balance,
-                        opening_balance_date, created_by, updated_by
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        opening_balance_date, created_by, updated_by, qbo_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                 """, (
                     data.get('account_number'),
@@ -152,7 +154,8 @@ class AccountRepository:
                     data.get('opening_balance', 0),
                     ob_date,
                     user_id,
-                    user_id
+                    user_id,
+                    data.get('qbo_id')
                 ))
                 row = cursor.fetchone()
                 conn.commit()
@@ -179,7 +182,7 @@ class AccountRepository:
                 allowed_fields = [
                     'account_number', 'account_name', 'account_type', 'sub_type',
                     'parent_account_id', 'balance_type', 'description', 'is_active',
-                    'opening_balance', 'opening_balance_date'
+                    'opening_balance', 'opening_balance_date', 'qbo_id'
                 ]
                 
                 for field in allowed_fields:

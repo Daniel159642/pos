@@ -33,6 +33,10 @@ opencv-python>=4.5.0 # Image processing for barcode detection
 # Calendar integration dependencies:
 icalendar>=5.0.0    # iCal/Google Calendar support
 pytz>=2023.3        # Timezone support
+# Google Calendar API (OAuth + sync):
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.0.0
 
 # Metadata extraction dependencies (FREE - no paid APIs):
 spacy>=3.4.0        # Natural language processing (runs locally)

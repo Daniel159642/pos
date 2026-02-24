@@ -62,7 +62,10 @@ function BalanceSheetTable({ data, onAccountClick, dateLabel }) {
 
   const totalRowFinalStyle = {
     ...totalRowStyle,
-    borderTop: `3px solid ${borderColor}`,
+    borderTop: `1px solid ${borderColor}`,
+    borderBottomStyle: 'double',
+    borderBottomWidth: '4px',
+    borderBottomColor: textColor,
     padding: '12px'
   }
 

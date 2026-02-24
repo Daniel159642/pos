@@ -7,6 +7,7 @@ import interactionPlugin from '@fullcalendar/interaction'
 import { useTheme } from '../contexts/ThemeContext'
 import { usePermissions } from '../contexts/PermissionContext'
 import { useToast } from '../contexts/ToastContext'
+import { apiFetch } from '../utils/apiFetch'
 import { Calendar as CalendarIcon, Download, User, ChevronLeft, ChevronRight, ChevronDown, Plus, CalendarClock, X, FileText, Pencil, CheckCircle, AlertCircle, Link2 } from 'lucide-react'
 import { FormLabel, FormField, FormTitle, inputBaseStyle, getInputFocusHandlers } from './FormStyles'
 
@@ -131,7 +132,7 @@ function Calendar({ employee }) {
     maintenance: true
   })
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
-  
+
   // Event creation state
   const [showEventModal, setShowEventModal] = useState(false)
   const [newEventDate, setNewEventDate] = useState(null)
@@ -150,6 +151,10 @@ function Calendar({ employee }) {
   const [showFilterDropdown, setShowFilterDropdown] = useState(false)
   const [showScheduleDropdown, setShowScheduleDropdown] = useState(false)
   const [showLinkDropdown, setShowLinkDropdown] = useState(false)
+  const [subscriptionUrls, setSubscriptionUrls] = useState(null)
+  const [loadingSubscriptionUrls, setLoadingSubscriptionUrls] = useState(false)
+  const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false)
+  const [googleSyncLoading, setGoogleSyncLoading] = useState(null)
   const [showScheduleBuilder, setShowScheduleBuilder] = useState(false)
   const [showDraftsList, setShowDraftsList] = useState(false)
   const [draftList, setDraftList] = useState([])
@@ -211,7 +216,7 @@ function Calendar({ employee }) {
   const { isAdmin } = usePermissions()
   const { show: showToast } = useToast()
   const NO_PERMISSION_MSG = "You don't have permission"
-  
+
   // Fetch employees when event modal or schedule builder opens
   useEffect(() => {
     if ((showEventModal || showScheduleBuilder) && isAdmin) {
@@ -327,7 +332,7 @@ function Calendar({ employee }) {
       setLoadingEmployees(false)
     }
   }
-  
+
   useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768)
@@ -354,33 +359,215 @@ function Calendar({ employee }) {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showFilterDropdown, showScheduleDropdown, showLinkDropdown])
-  
+
+  // Fetch calendar subscription URLs when link dropdown is opened
+  useEffect(() => {
+    if (!showLinkDropdown) return
+    const token = localStorage.getItem('sessionToken')
+    if (!token) {
+      setSubscriptionUrls(null)
+      return
+    }
+    setLoadingSubscriptionUrls(true)
+    apiFetch('/api/calendar/subscription/urls', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => {
+        const contentType = r.headers.get('content-type') || ''
+        let data
+        if (contentType.includes('application/json')) {
+          data = await r.json()
+        } else {
+          const text = await r.text()
+          console.error('[Calendar] Non-JSON response:', text.substring(0, 200))
+          data = { success: false, message: 'Invalid response format' }
+        }
+        console.log('[Calendar] Subscription URLs response:', { ok: r.ok, status: r.status, data })
+        return { ok: r.ok, status: r.status, data }
+      })
+      .then(({ ok, status, data }) => {
+        if (ok && data && data.success) {
+          const d = data.data
+          if (d && (d.ical_url || d.google_url)) {
+            const urls = {
+              ical_url: d.ical_url,
+              webcal_url: d.webcal_url || (d.ical_url ? d.ical_url.replace(/^https?:/, 'webcal:') : null),
+              google_url: d.google_url
+            }
+            console.log('[Calendar] Setting subscription URLs:', urls)
+            setSubscriptionUrls(urls)
+          } else {
+            console.warn('[Calendar] Response missing URL fields:', d)
+            setSubscriptionUrls(null)
+            showToast('Subscription created but URLs are missing', 'error')
+          }
+        } else {
+          console.warn('[Calendar] Invalid subscription response:', { ok, status, data })
+          setSubscriptionUrls(null)
+          if (status === 401) {
+            showToast('Please log in to sync your calendar', 'error')
+          } else if (data?.message) {
+            showToast(data.message, 'error')
+          } else {
+            showToast('Failed to load subscription link', 'error')
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('[Calendar] Error fetching subscription URLs:', err)
+        setSubscriptionUrls(null)
+        showToast('Failed to load calendar subscription link', 'error')
+      })
+      .finally(() => setLoadingSubscriptionUrls(false))
+  }, [showLinkDropdown, showToast])
+
+  useEffect(() => {
+    const token = localStorage.getItem('sessionToken')
+    if (!token) return
+    apiFetch('/api/integrations/google-calendar/status', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { if (data && data.success) setGoogleCalendarConnected(!!data.connected) })
+      .catch(() => { })
+  }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const google = params.get('google')
+    if (google === 'connected') {
+      setGoogleCalendarConnected(true)
+      showToast('Google Calendar connected. You can sync events to Google.', 'success')
+      window.history.replaceState({}, '', window.location.pathname)
+    } else if (google === 'error') {
+      const msg = params.get('msg') || 'Connection failed'
+      showToast('Google Calendar: ' + msg, 'error')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [showToast])
+
+  const openExternalUrl = async (url) => {
+    const isTauriApp = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window)
+    if (isTauriApp) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        await invoke('open_receipt_file', { path: url })
+      } catch (err) {
+        window.location.href = url
+      }
+    } else {
+      window.open(url, '_blank')
+    }
+  }
+
+  const openGoogleCalendarConnect = async () => {
+    console.log('Google Calendar sync button clicked!')
+    const token = localStorage.getItem('sessionToken')
+    const isTauriApp = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window)
+    const w = !isTauriApp ? window.open('about:blank', '_blank') : null
+
+    if (!token) {
+      console.log('No token found')
+      showToast('Please log in first', 'error')
+      if (w && !w.closed) w.close()
+      return
+    }
+    try {
+      console.log('Fetching connect URL...')
+      const r = await apiFetch('/api/integrations/google-calendar/connect-url', { headers: { Authorization: `Bearer ${token}` } })
+      const data = await r.json()
+      console.log('Got response:', data)
+      if (data.success && data.url) {
+        if (isTauriApp) {
+          console.log('Tauri detected, attempting native shell open...')
+          try {
+            const { invoke } = await import('@tauri-apps/api/core')
+            await invoke('open_receipt_file', { path: data.url })
+            console.log('Tauri shell open succeeded.')
+          } catch (err) {
+            console.error('Tauri shell open failed, trying window location:', err)
+            window.location.href = data.url
+          }
+          showToast('Opened Google authorization in your browser.', 'success')
+        } else if (w && !w.closed) {
+          console.log('Using w.location.href')
+          w.location.href = data.url
+          showToast('Opened Google authorization in your browser.', 'success')
+        } else {
+          console.log('Using window.open')
+          window.open(data.url, '_blank')
+          showToast('Opened Google authorization in your browser.', 'success')
+        }
+      } else {
+        if (w && !w.closed) w.close()
+        showToast(data.message || 'Could not get connect URL', 'error')
+      }
+    } catch (e) {
+      console.error('API Fetch failed:', e)
+      if (w && !w.closed) w.close()
+      showToast('Failed to open Google Calendar connect', 'error')
+    }
+  }
+
+  const syncEventToGoogle = async (event) => {
+    const calendar_id = event.calendar_id
+    if (!calendar_id) { showToast('This event cannot be synced to Google Calendar', 'error'); return }
+    const token = localStorage.getItem('sessionToken')
+    if (!token) { showToast('Please log in first', 'error'); return }
+    if (!googleCalendarConnected) {
+      showToast('Connect Google Calendar first', 'error')
+      openGoogleCalendarConnect()
+      return
+    }
+    setGoogleSyncLoading(calendar_id)
+    try {
+      const r = await apiFetch('/api/integrations/google-calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ calendar_id })
+      })
+      const data = await r.json()
+      if (data.success) {
+        showToast('Event synced to Google Calendar', 'success')
+        setSelectedEvent(prev => prev && prev.calendar_id === calendar_id ? { ...prev, google_event_id: data.google_event_id } : prev)
+        loadCalendarData()
+      } else {
+        showToast(data.message || 'Sync failed', 'error')
+      }
+    } catch (e) {
+      showToast('Sync failed', 'error')
+    } finally {
+      setGoogleSyncLoading(null)
+    }
+  }
+
+  const copySubscriptionLink = (url) => {
+    if (!url) return
+    navigator.clipboard.writeText(url).then(() => showToast('Link copied to clipboard', 'success')).catch(() => showToast('Failed to copy', 'error'))
+  }
+
   // Convert hex to RGB for rgba usage
   const hexToRgb = (hex) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
     return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '132, 0, 255'
   }
-  
+
   const themeColorRgb = hexToRgb(themeColor)
-  
+
   // Determine if dark mode is active
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return document.documentElement.classList.contains('dark-theme')
   })
-  
+
   useEffect(() => {
     const checkDarkMode = () => {
       setIsDarkMode(document.documentElement.classList.contains('dark-theme'))
     }
-    
+
     checkDarkMode()
-    
+
     const observer = new MutationObserver(checkDarkMode)
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['class']
     })
-    
+
     return () => observer.disconnect()
   }, [themeMode])
 
@@ -407,25 +594,25 @@ function Calendar({ employee }) {
       const centerChunk = document.querySelector('.fc-header-toolbar .fc-toolbar-chunk:nth-child(2)')
       const rightChunk = document.querySelector('.fc-header-toolbar .fc-toolbar-chunk:last-child')
       const titleElement = centerChunk?.querySelector('.fc-toolbar-title')
-      
+
       if (!centerChunk || !rightChunk || !titleElement) return
-      
+
       // Check if Today button already exists
       if (rightChunk.querySelector('.custom-today-button')) return
-      
+
       // Check if arrows already exist
       if (rightChunk.querySelector('.custom-nav-arrow')) return
-      
+
       // Remove any existing prev/next buttons from center (leave title only)
       const existingButtons = centerChunk.querySelectorAll('.fc-button-group')
       existingButtons.forEach(btn => btn.remove())
-      
+
       // Create prev arrow container
       const prevArrow = document.createElement('span')
       prevArrow.className = 'custom-nav-arrow custom-prev-arrow'
       prevArrow.style.cssText = 'cursor: pointer; padding: 0 4px; color: var(--text-primary); display: inline-flex; align-items: center; user-select: none; transition: color 0.2s ease;'
       prevArrow.onclick = navigatePrev
-      
+
       // Create SVG for ChevronLeft icon
       const prevSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
       prevSvg.setAttribute('width', '20')
@@ -440,13 +627,13 @@ function Calendar({ employee }) {
       prevPath.setAttribute('d', 'm15 18-6-6 6-6')
       prevSvg.appendChild(prevPath)
       prevArrow.appendChild(prevSvg)
-      
+
       // Create next arrow container
       const nextArrow = document.createElement('span')
       nextArrow.className = 'custom-nav-arrow custom-next-arrow'
       nextArrow.style.cssText = 'cursor: pointer; padding: 0 4px; color: var(--text-primary); display: inline-flex; align-items: center; user-select: none; transition: color 0.2s ease;'
       nextArrow.onclick = navigateNext
-      
+
       // Create SVG for ChevronRight icon
       const nextSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
       nextSvg.setAttribute('width', '20')
@@ -461,7 +648,7 @@ function Calendar({ employee }) {
       nextPath.setAttribute('d', 'm9 18 6-6-6-6')
       nextSvg.appendChild(nextPath)
       nextArrow.appendChild(nextSvg)
-      
+
       // Create Today button
       const todayButton = document.createElement('button')
       todayButton.className = 'custom-today-button'
@@ -476,15 +663,15 @@ function Calendar({ employee }) {
         e.target.style.textDecoration = 'none'
       }
       todayButton.title = 'Go to Today'
-      
+
       // Insert arrows and Today button in right chunk: prev arrow, Today button, next arrow
       rightChunk.appendChild(prevArrow)
       rightChunk.appendChild(todayButton)
       rightChunk.appendChild(nextArrow)
-      
+
       // Style center chunk (title only)
       centerChunk.style.cssText = 'display: flex !important; align-items: center !important; justify-content: flex-start !important; gap: 2px !important;'
-      
+
       // Style right chunk to align to the right
       rightChunk.style.cssText = 'display: flex !important; align-items: center !important; justify-content: flex-end !important; gap: 8px !important;'
     }
@@ -493,7 +680,7 @@ function Calendar({ employee }) {
     const timer1 = setTimeout(addCustomArrows, 100)
     const timer2 = setTimeout(addCustomArrows, 300)
     const timer3 = setTimeout(addCustomArrows, 500)
-    
+
     // Observe for changes
     const observer = new MutationObserver(() => {
       setTimeout(addCustomArrows, 50)
@@ -565,13 +752,13 @@ function Calendar({ employee }) {
         const start = new Date(`${startDate}T${startTime}`)
         const end = new Date(`${startDate}T${endTime}`)
         out.push({
-          id: `event-${event.event_id || event.id}`,
+          id: `event-${event.calendar_id ?? event.event_id ?? event.id}`,
           title: event.title || event.event_type,
           start: start.toISOString(),
           end: end.toISOString(),
           backgroundColor: getEventColor(event.event_type),
           borderColor: getEventColor(event.event_type),
-          extendedProps: { ...event, type: 'event', eventType: event.event_type }
+          extendedProps: { ...event, type: 'event', eventType: event.event_type, calendar_id: event.calendar_id, google_event_id: event.google_event_id }
         })
       }
     })
@@ -718,7 +905,7 @@ function Calendar({ employee }) {
       setSelectedEvent(null)
     }
   }
-  
+
   const handleSelect = (selectInfo) => {
     if (selectInfo && calendarRef.current) {
       calendarRef.current.getApi().unselect()
@@ -768,18 +955,18 @@ function Calendar({ employee }) {
       if (showScheduleBuilder && isAdmin) setSbViewDate(str)
     }
   }
-  
+
   const handleCreateEvent = async () => {
     if (!newEvent.title.trim()) {
       alert('Please enter an event title')
       return
     }
-    
+
     if (!newEvent.forEveryone && newEvent.selectedEmployees.length === 0) {
       alert('Please select at least one employee or choose "For Everyone"')
       return
     }
-    
+
     setCreatingEvent(true)
     try {
       const token = localStorage.getItem('sessionToken')
@@ -800,9 +987,9 @@ function Calendar({ employee }) {
           employee_ids: newEvent.forEveryone ? [] : newEvent.selectedEmployees
         })
       })
-      
+
       const data = await response.json()
-      
+
       if (data.success) {
         // Reload calendar data
         await loadCalendarData()
@@ -828,7 +1015,7 @@ function Calendar({ employee }) {
       setCreatingEvent(false)
     }
   }
-  
+
   const handleEventFromDayClick = (event) => {
     // When clicking an event from the day view, show single event details
     setSelectedEvent(event)
@@ -1348,16 +1535,16 @@ function Calendar({ employee }) {
 
   const downloadEvent = async (event) => {
     if (!event.event_id) {
-      alert('This event cannot be exported. Please use the calendar subscription feature.')
+      alert('This event cannot be exported.')
       return
     }
-    
+
     try {
       const token = localStorage.getItem('sessionToken')
       const response = await fetch(`/api/calendar/events/${event.event_id}/export`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      
+
       if (response.ok) {
         const blob = await response.blob()
         const url = window.URL.createObjectURL(blob)
@@ -1378,23 +1565,23 @@ function Calendar({ employee }) {
   const addToCalendar = (event) => {
     const eventDate = event.event_date || event.start_datetime
     const startTime = event.start_time || '09:00:00'
-    
+
     try {
       const start = new Date(`${eventDate}T${startTime}`)
-      const end = new Date(start.getTime() + (event.end_time ? 
-        (new Date(`${eventDate}T${event.end_time}`).getTime() - start.getTime()) : 
+      const end = new Date(start.getTime() + (event.end_time ?
+        (new Date(`${eventDate}T${event.end_time}`).getTime() - start.getTime()) :
         3600000))
-      
+
       const formatDate = (date) => {
         return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
       }
-      
+
       const title = encodeURIComponent(event.title || 'Event')
       const description = encodeURIComponent(event.description || '')
       const location = encodeURIComponent(event.location || '')
-      
+
       const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${formatDate(start)}/${formatDate(end)}&details=${description}&location=${location}`
-      
+
       window.open(googleUrl, '_blank')
     } catch (err) {
       console.error('Error adding to calendar:', err)
@@ -1404,12 +1591,12 @@ function Calendar({ employee }) {
 
   // Full UI shell (header, nav, sidebar, filters) always renders; only calendar grid shows loading state
   return (
-    <div style={{ 
+    <div style={{
       position: 'relative',
-      padding: 0, 
-      backgroundColor: '#ffffff', 
+      padding: 0,
+      backgroundColor: '#ffffff',
       height: 'calc(100vh - 56px)',
-      maxWidth: '100%', 
+      maxWidth: '100%',
       margin: 0,
       display: 'flex',
       flexDirection: 'column',
@@ -1454,7 +1641,7 @@ function Calendar({ employee }) {
             }}>
               {calendarTitle}
             </div>
-            
+
             {/* Right: Navigation Arrows and Today Button */}
             <div style={{
               display: 'flex',
@@ -1485,7 +1672,7 @@ function Calendar({ employee }) {
                   <path d="m15 18-6-6 6-6" />
                 </svg>
               </span>
-              
+
               {/* Today Button */}
               <button
                 type="button"
@@ -1512,7 +1699,7 @@ function Calendar({ employee }) {
               >
                 Today
               </button>
-              
+
               {/* Next Arrow */}
               <span
                 onClick={navigateNext}
@@ -1539,7 +1726,7 @@ function Calendar({ employee }) {
               </span>
             </div>
           </div>
-          
+
           {/* FullCalendar always visible; fade overlay when loading (like Profile weekly schedule) */}
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }} aria-busy={loading} aria-label={loading ? 'Loading calendar events' : 'Calendar'}>
             {loading && (
@@ -1626,7 +1813,7 @@ function Calendar({ employee }) {
         >
           {/* Overlay for mobile when panel is open */}
           {isMobile && (selectedEvent || selectedDate) && (
-            <div 
+            <div
               onClick={() => {
                 setSelectedEvent(null)
                 setSelectedDate(null)
@@ -1816,167 +2003,167 @@ function Calendar({ employee }) {
                     setShowFilterDropdown(false)
                     setShowScheduleDropdown(!showScheduleDropdown)
                   }}
+                  style={{
+                    padding: '8px 12px',
+                    margin: 0,
+                    background: showScheduleDropdown ? '#e0e0e0' : '#f5f5f5',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.2s ease',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#e0e0e0'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = showScheduleDropdown ? '#e0e0e0' : '#f5f5f5'
+                  }}
+                  title="Schedule"
+                >
+                  <CalendarClock size={16} style={{ flexShrink: 0 }} />
+                  Schedule
+                </button>
+                {showScheduleDropdown && (
+                  <div
                     style={{
-                      padding: '8px 12px',
-                      margin: 0,
-                      background: showScheduleDropdown ? '#e0e0e0' : '#f5f5f5',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '14px',
-                      fontWeight: 500,
-                      color: 'var(--text-primary)',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.2s ease',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px'
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: '4px',
+                      padding: '6px 0',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                      zIndex: 1000,
+                      minWidth: 'max-content',
+                      whiteSpace: 'nowrap'
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#e0e0e0'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = showScheduleDropdown ? '#e0e0e0' : '#f5f5f5'
-                    }}
-                    title="Schedule"
                   >
-                    <CalendarClock size={16} style={{ flexShrink: 0 }} />
-                    Schedule
-                  </button>
-                  {showScheduleDropdown && (
-                    <div
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftSchedule(null)
+                        setDraftPeriodId(null)
+                        setDraftScheduleVersion(0)
+                        setPendingShiftEdits({})
+                        setPendingShiftDeletes([])
+                        setPendingShiftAdds([])
+                        setAddingShiftForDate(null)
+                        setEditingDraftShift(null)
+                        setIsEditingPublished(false)
+                        const m = getNextMonday()
+                        const end = new Date(m)
+                        end.setDate(end.getDate() + 6)
+                        setSbStartDate(m.toISOString().split('T')[0])
+                        setSbEndDate(end.toISOString().split('T')[0])
+                        setSbRangeClickStep('start')
+                        setSbSelectedEmployees([])
+                        setShowScheduleBuilder(true)
+                        setShowEventModal(false)
+                        setShowScheduleDropdown(false)
+                        setShowDraftsList(false)
+                        setShowEditList(false)
+                        setSelectedEvent(null)
+                        setSelectedDate(null)
+                        setSelectedDateEvents([])
+                      }}
                       style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        marginTop: '4px',
-                        padding: '6px 0',
-                        backgroundColor: 'var(--bg-primary)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '8px',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                        zIndex: 1000,
-                        minWidth: 'max-content',
-                        whiteSpace: 'nowrap'
+                        width: '100%',
+                        padding: '10px 14px',
+                        margin: 0,
+                        background: 'none',
+                        border: 'none',
+                        borderRadius: 0,
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'background-color 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent'
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDraftSchedule(null)
-                          setDraftPeriodId(null)
-                          setDraftScheduleVersion(0)
-                          setPendingShiftEdits({})
-                          setPendingShiftDeletes([])
-                          setPendingShiftAdds([])
-                          setAddingShiftForDate(null)
-                          setEditingDraftShift(null)
-                          setIsEditingPublished(false)
-                          const m = getNextMonday()
-                          const end = new Date(m)
-                          end.setDate(end.getDate() + 6)
-                          setSbStartDate(m.toISOString().split('T')[0])
-                          setSbEndDate(end.toISOString().split('T')[0])
-                          setSbRangeClickStep('start')
-                          setSbSelectedEmployees([])
-                          setShowScheduleBuilder(true)
-                          setShowEventModal(false)
-                          setShowScheduleDropdown(false)
-                          setShowDraftsList(false)
-                          setShowEditList(false)
-                          setSelectedEvent(null)
-                          setSelectedDate(null)
-                          setSelectedDateEvents([])
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          margin: 0,
-                          background: 'none',
-                          border: 'none',
-                          borderRadius: 0,
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                          transition: 'background-color 0.2s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent'
-                        }}
-                      >
-                        <Plus size={16} style={{ flexShrink: 0 }} />
-                        Create
-                      </button>
-                      <button
-                        type="button"
-                        onClick={fetchDraftsAndShowList}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          margin: 0,
-                          background: 'none',
-                          border: 'none',
-                          borderRadius: 0,
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                          transition: 'background-color 0.2s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent'
-                        }}
-                      >
-                        <FileText size={16} style={{ flexShrink: 0 }} />
-                        Drafts
-                      </button>
-                      <button
-                        type="button"
-                        onClick={fetchEditListAndShow}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          margin: 0,
-                          background: 'none',
-                          border: 'none',
-                          borderRadius: 0,
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          color: 'var(--text-primary)',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                          transition: 'background-color 0.2s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent'
-                        }}
-                      >
-                        <Pencil size={16} style={{ flexShrink: 0 }} />
-                        Edit
-                      </button>
-                    </div>
-                  )}
-                </div>
+                      <Plus size={16} style={{ flexShrink: 0 }} />
+                      Create
+                    </button>
+                    <button
+                      type="button"
+                      onClick={fetchDraftsAndShowList}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        margin: 0,
+                        background: 'none',
+                        border: 'none',
+                        borderRadius: 0,
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'background-color 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent'
+                      }}
+                    >
+                      <FileText size={16} style={{ flexShrink: 0 }} />
+                      Drafts
+                    </button>
+                    <button
+                      type="button"
+                      onClick={fetchEditListAndShow}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        margin: 0,
+                        background: 'none',
+                        border: 'none',
+                        borderRadius: 0,
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'background-color 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent'
+                      }}
+                    >
+                      <Pencil size={16} style={{ flexShrink: 0 }} />
+                      Edit
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => changeView('dayGridMonth')}
@@ -2081,7 +2268,7 @@ function Calendar({ employee }) {
                   onMouseLeave={(e) => {
                     e.currentTarget.style.backgroundColor = showLinkDropdown ? '#e0e0e0' : '#f5f5f5'
                   }}
-                  title="Link to calendar apps"
+                  title="Sync to Google, Outlook, Apple, or other calendars"
                 >
                   <Link2 size={16} style={{ flexShrink: 0 }} />
                 </button>
@@ -2090,149 +2277,146 @@ function Calendar({ employee }) {
                     style={{
                       position: 'absolute',
                       top: '100%',
-                      right: 0,
+                      left: 0,
                       marginTop: '4px',
-                      padding: '6px 0',
+                      padding: '8px 0',
                       backgroundColor: 'var(--bg-primary)',
                       border: '1px solid var(--border-color)',
                       borderRadius: '8px',
                       boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                       zIndex: 1000,
-                      minWidth: 'max-content',
-                      whiteSpace: 'nowrap'
+                      minWidth: '260px',
+                      maxWidth: '320px',
+                      whiteSpace: 'normal'
                     }}
                   >
-                    <Link
-                      to="/calendar-subscription"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 14px',
-                        margin: 0,
-                        background: 'none',
-                        border: 'none',
-                        borderRadius: 0,
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        color: 'var(--text-primary)',
-                        cursor: 'pointer',
-                        textDecoration: 'none',
-                        transition: 'background-color 0.2s ease',
-                        width: '100%'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent'
-                      }}
-                      onClick={() => setShowLinkDropdown(false)}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }} aria-hidden>
-                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                      </svg>
-                      Google
-                    </Link>
-                    <Link
-                      to="/calendar-subscription"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 14px',
-                        margin: 0,
-                        background: 'none',
-                        border: 'none',
-                        borderRadius: 0,
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        color: 'var(--text-primary)',
-                        cursor: 'pointer',
-                        textDecoration: 'none',
-                        transition: 'background-color 0.2s ease',
-                        width: '100%'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent'
-                      }}
-                      onClick={() => setShowLinkDropdown(false)}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }} aria-hidden>
-                        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" fill="currentColor"/>
-                      </svg>
-                      Outlook
-                    </Link>
-                    <Link
-                      to="/calendar-subscription"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 14px',
-                        margin: 0,
-                        background: 'none',
-                        border: 'none',
-                        borderRadius: 0,
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        color: 'var(--text-primary)',
-                        cursor: 'pointer',
-                        textDecoration: 'none',
-                        transition: 'background-color 0.2s ease',
-                        width: '100%'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent'
-                      }}
-                      onClick={() => setShowLinkDropdown(false)}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }} aria-hidden>
-                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-                      </svg>
-                      Apple
-                    </Link>
-                    <Link
-                      to="/calendar-subscription"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 14px',
-                        margin: 0,
-                        background: 'none',
-                        border: 'none',
-                        borderRadius: 0,
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        color: 'var(--text-primary)',
-                        cursor: 'pointer',
-                        textDecoration: 'none',
-                        transition: 'background-color 0.2s ease',
-                        width: '100%'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent'
-                      }}
-                      onClick={() => setShowLinkDropdown(false)}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }} aria-hidden>
-                        <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11zM7 11h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z"/>
-                      </svg>
-                      Calendly
-                    </Link>
+                    {loadingSubscriptionUrls ? (
+                      <div style={{ padding: '12px 14px', fontSize: '14px', color: 'var(--text-secondary)' }}>Loading...</div>
+                    ) : subscriptionUrls ? (
+                      <>
+                        <div style={{ padding: '6px 14px 8px', fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Sync to calendar</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowLinkDropdown(false)
+                            if (!googleCalendarConnected) {
+                              openGoogleCalendarConnect()
+                            } else {
+                              openExternalUrl(subscriptionUrls.google_url)
+                            }
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            width: '100%',
+                            padding: '10px 14px',
+                            margin: 0,
+                            background: 'none',
+                            border: 'none',
+                            borderRadius: 0,
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            color: 'var(--text-primary)',
+                            cursor: 'pointer',
+                            textAlign: 'left'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+                          </svg>
+                          {googleCalendarConnected ? 'Google Calendar' : 'Google Calendar'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { copySubscriptionLink(subscriptionUrls.ical_url); showToast('Paste this link in Outlook: Add calendar → Subscribe from web', 'success'); setShowLinkDropdown(false) }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            width: '100%',
+                            padding: '10px 14px',
+                            margin: 0,
+                            background: 'none',
+                            border: 'none',
+                            borderRadius: 0,
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            color: 'var(--text-primary)',
+                            cursor: 'pointer',
+                            textAlign: 'left'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+                            <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" fill="currentColor" />
+                          </svg>
+                          Outlook
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { openExternalUrl(subscriptionUrls.webcal_url || subscriptionUrls.ical_url); setShowLinkDropdown(false) }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            width: '100%',
+                            padding: '10px 14px',
+                            margin: 0,
+                            background: 'none',
+                            border: 'none',
+                            borderRadius: 0,
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            color: 'var(--text-primary)',
+                            cursor: 'pointer',
+                            textAlign: 'left'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+                            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+                          </svg>
+                          Apple Calendar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { copySubscriptionLink(subscriptionUrls.ical_url); showToast('Link copied. Add it in Calendly or any app that supports calendar subscription URL.', 'success'); setShowLinkDropdown(false) }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            width: '100%',
+                            padding: '10px 14px',
+                            margin: 0,
+                            background: 'none',
+                            border: 'none',
+                            borderRadius: 0,
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            color: 'var(--text-primary)',
+                            cursor: 'pointer',
+                            textAlign: 'left'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+                            <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11zM7 11h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z" />
+                          </svg>
+                          Calendly / Copy link
+                        </button>
+                      </>
+                    ) : (
+                      <div style={{ padding: '12px 14px', fontSize: '14px', color: 'var(--text-secondary)' }}>Could not load subscription link. Try again.</div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2263,7 +2447,7 @@ function Calendar({ employee }) {
 
             {/* Add Event Form - Inline */}
             {showEventModal && isAdmin && (
-              <div style={{ 
+              <div style={{
                 flex: 1,
                 padding: '0',
                 paddingBottom: '0',
@@ -2402,7 +2586,7 @@ function Calendar({ employee }) {
                           />
                           <span>Everyone</span>
                         </label>
-                        
+
                         {!newEvent.forEveryone && (
                           <div style={{
                             marginTop: '12px',
@@ -2470,7 +2654,7 @@ function Calendar({ employee }) {
                             )}
                           </div>
                         )}
-                        
+
                         <label style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -2575,558 +2759,532 @@ function Calendar({ employee }) {
                     }}
                   >
                     {!draftSchedule ? (
-                    <>
-                      <FormField style={{ marginBottom: '16px' }}>
-                        <FormLabel isDarkMode={isDarkMode}>Start date</FormLabel>
-                        <input
-                          type="date"
-                          value={sbStartDate || ''}
-                          onChange={(e) => { setSbStartDate(e.target.value); setSbRangeClickStep('start'); }}
-                          style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                          {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                        />
-                      </FormField>
-                      <FormField style={{ marginBottom: '16px' }}>
-                        <FormLabel isDarkMode={isDarkMode}>End date</FormLabel>
-                        <input
-                          type="date"
-                          value={sbEndDate || ''}
-                          onChange={(e) => setSbEndDate(e.target.value)}
-                          style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                          {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                        />
-                        <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          Or click the <strong>first date</strong> on the calendar, then the <strong>last date</strong>. The range becomes highlighted.
-                        </p>
-                      </FormField>
-                      <FormField style={{ marginBottom: '16px' }}>
-                        <FormLabel isDarkMode={isDarkMode}>Employees</FormLabel>
-                        <div
-                          className="calendar-scrollable-hide-bar"
-                          style={{
-                            maxHeight: '180px',
-                            overflowY: 'auto',
-                            border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                            borderRadius: '8px',
-                            padding: '8px',
-                            backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff'
-                          }}
-                        >
-                          {loadingEmployees ? (
-                            <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
-                          ) : employees.length === 0 ? (
-                            <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>No employees</div>
-                          ) : (
-                            employees.map(emp => (
-                              <label
-                                key={emp.employee_id}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '6px 8px',
-                                  cursor: 'pointer',
-                                  fontSize: '14px',
-                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                                  borderRadius: '4px'
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={sbSelectedEmployees.includes(emp.employee_id)}
-                                  onChange={() => {
-                                    setSbSelectedEmployees(prev =>
-                                      prev.includes(emp.employee_id)
-                                        ? prev.filter(id => id !== emp.employee_id)
-                                        : [...prev, emp.employee_id]
-                                    )
+                      <>
+                        <FormField style={{ marginBottom: '16px' }}>
+                          <FormLabel isDarkMode={isDarkMode}>Start date</FormLabel>
+                          <input
+                            type="date"
+                            value={sbStartDate || ''}
+                            onChange={(e) => { setSbStartDate(e.target.value); setSbRangeClickStep('start'); }}
+                            style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                            {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                          />
+                        </FormField>
+                        <FormField style={{ marginBottom: '16px' }}>
+                          <FormLabel isDarkMode={isDarkMode}>End date</FormLabel>
+                          <input
+                            type="date"
+                            value={sbEndDate || ''}
+                            onChange={(e) => setSbEndDate(e.target.value)}
+                            style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                            {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                          />
+                          <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                            Or click the <strong>first date</strong> on the calendar, then the <strong>last date</strong>. The range becomes highlighted.
+                          </p>
+                        </FormField>
+                        <FormField style={{ marginBottom: '16px' }}>
+                          <FormLabel isDarkMode={isDarkMode}>Employees</FormLabel>
+                          <div
+                            className="calendar-scrollable-hide-bar"
+                            style={{
+                              maxHeight: '180px',
+                              overflowY: 'auto',
+                              border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                              borderRadius: '8px',
+                              padding: '8px',
+                              backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff'
+                            }}
+                          >
+                            {loadingEmployees ? (
+                              <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
+                            ) : employees.length === 0 ? (
+                              <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>No employees</div>
+                            ) : (
+                              employees.map(emp => (
+                                <label
+                                  key={emp.employee_id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '6px 8px',
+                                    cursor: 'pointer',
+                                    fontSize: '14px',
+                                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                    borderRadius: '4px'
                                   }}
-                                  style={{ cursor: 'pointer', accentColor: themeColor }}
-                                />
-                                <span>{emp.first_name} {emp.last_name}</span>
-                              </label>
-                            ))
-                          )}
-                        </div>
-                      </FormField>
-                      {/* Advanced settings */}
-                      <div style={{
-                        flexShrink: 0,
-                        border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
-                        borderRadius: '8px',
-                        backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
-                        overflow: 'hidden'
-                      }}>
-                        <button
-                          type="button"
-                          onClick={() => setSbShowAdvanced(!sbShowAdvanced)}
-                          style={{
-                            width: '100%',
-                            padding: '10px 14px',
-                            backgroundColor: sbShowAdvanced ? `rgba(${themeColorRgb}, 0.15)` : 'transparent',
-                            border: 'none',
-                            borderRadius: 0,
-                            fontSize: '14px',
-                            fontWeight: 600,
-                            color: 'var(--text-primary)',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            transition: 'background-color 0.2s ease',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '6px'
-                          }}
-                        >
-                          Advanced settings
-                          {sbShowAdvanced ? (
-                            <ChevronDown size={16} style={{ flexShrink: 0 }} />
-                          ) : (
-                            <ChevronRight size={16} style={{ flexShrink: 0 }} />
-                          )}
-                        </button>
-                        {sbShowAdvanced && (
-                          <div style={{
-                            padding: '14px',
-                            paddingTop: 0,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '12px',
-                            borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'
-                          }}>
-                            <FormField style={{ marginTop: '8px', marginBottom: '8px' }}>
-                              <FormLabel isDarkMode={isDarkMode}>Algorithm</FormLabel>
-                              <CustomDropdown
-                                value={sbSettings.algorithm}
-                                onChange={(e) => setSbSettings(s => ({ ...s, algorithm: e.target.value }))}
-                                options={[
-                                  { value: 'balanced', label: 'Balanced' },
-                                  { value: 'cost_optimized', label: 'Cost optimized' },
-                                  { value: 'preference_prioritized', label: 'Preference priority' }
-                                ]}
-                                placeholder="Select algorithm"
-                                isDarkMode={isDarkMode}
-                                themeColorRgb={themeColorRgb}
-                              />
-                            </FormField>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                              <FormField style={{ marginBottom: '8px' }}>
-                                <FormLabel isDarkMode={isDarkMode}>Max consecutive days</FormLabel>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={7}
-                                  value={sbSettings.max_consecutive_days}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, max_consecutive_days: parseInt(e.target.value, 10) || 6 }))}
-                                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                                />
-                              </FormField>
-                              <FormField style={{ marginBottom: '8px' }}>
-                                <FormLabel isDarkMode={isDarkMode}>Min hours between shifts</FormLabel>
-                                <input
-                                  type="number"
-                                  min={8}
-                                  max={24}
-                                  value={sbSettings.min_time_between_shifts}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, min_time_between_shifts: parseInt(e.target.value, 10) || 10 }))}
-                                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                                />
-                              </FormField>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                              <FormField style={{ marginBottom: '8px' }}>
-                                <FormLabel isDarkMode={isDarkMode}>Min employees per shift</FormLabel>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={10}
-                                  value={sbSettings.min_employees_per_shift}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, min_employees_per_shift: parseInt(e.target.value, 10) || 1 }))}
-                                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                                />
-                              </FormField>
-                              <FormField style={{ marginBottom: '8px' }}>
-                                <FormLabel isDarkMode={isDarkMode}>Max employees per shift</FormLabel>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={20}
-                                  value={sbSettings.max_employees_per_shift}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, max_employees_per_shift: parseInt(e.target.value, 10) || 5 }))}
-                                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                                />
-                              </FormField>
-                            </div>
-                            <FormField style={{ marginBottom: '8px' }}>
-                              <FormLabel isDarkMode={isDarkMode}>Default shift length (hours)</FormLabel>
-                              <input
-                                type="number"
-                                min={4}
-                                max={12}
-                                value={sbSettings.default_shift_length}
-                                onChange={(e) => setSbSettings(s => ({ ...s, default_shift_length: parseInt(e.target.value, 10) || 8 }))}
-                                style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                                {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
-                              />
-                            </FormField>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={sbSettings.distribute_hours_evenly}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, distribute_hours_evenly: e.target.checked }))}
-                                  style={{ cursor: 'pointer', accentColor: themeColor }}
-                                />
-                                <span>Distribute hours evenly</span>
-                              </label>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={sbSettings.avoid_clopening}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, avoid_clopening: e.target.checked }))}
-                                  style={{ cursor: 'pointer', accentColor: themeColor }}
-                                />
-                                <span>Avoid clopening (close then open)</span>
-                              </label>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={sbSettings.prioritize_seniority}
-                                  onChange={(e) => setSbSettings(s => ({ ...s, prioritize_seniority: e.target.checked }))}
-                                  style={{ cursor: 'pointer', accentColor: themeColor }}
-                                />
-                                <span>Prioritize seniority</span>
-                              </label>
-                            </div>
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={sbSelectedEmployees.includes(emp.employee_id)}
+                                    onChange={() => {
+                                      setSbSelectedEmployees(prev =>
+                                        prev.includes(emp.employee_id)
+                                          ? prev.filter(id => id !== emp.employee_id)
+                                          : [...prev, emp.employee_id]
+                                      )
+                                    }}
+                                    style={{ cursor: 'pointer', accentColor: themeColor }}
+                                  />
+                                  <span>{emp.first_name} {emp.last_name}</span>
+                                </label>
+                              ))
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', gap: '12px', flexShrink: 0, marginBottom: '12px', marginTop: '12px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setShowScheduleBuilder(false)}
-                          style={{
-                            padding: '4px 16px',
-                            height: '28px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            whiteSpace: 'nowrap',
-                            backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
-                            border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                            borderRadius: '8px',
-                            fontSize: '14px',
-                            fontWeight: 500,
-                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                            cursor: 'pointer',
-                            transition: 'all 0.3s ease',
-                            boxShadow: 'none'
-                          }}
-                        >
-                          Close
-                        </button>
-                        <button
-                          type="button"
-                          onClick={generateSchedule}
-                          disabled={sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate || new Date(sbStartDate) > new Date(sbEndDate)}
-                          style={{
-                            flex: 1,
-                            padding: '4px 16px',
-                            height: '28px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            whiteSpace: 'nowrap',
-                            backgroundColor: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'var(--bg-tertiary)' : `rgba(${themeColorRgb}, 0.7)`,
-                            border: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}` : `1px solid rgba(${themeColorRgb}, 0.5)`,
-                            borderRadius: '8px',
-                            fontSize: '14px',
-                            fontWeight: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 500 : 600,
-                            color: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'var(--text-secondary)' : '#fff',
-                            cursor: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'not-allowed' : 'pointer',
-                            transition: 'all 0.3s ease',
-                            boxShadow: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`
-                          }}
-                        >
-                          {sbGenerating ? 'Generating…' : 'Generate Schedule'}
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {draftListData.days.length > 0 && (
-                        <div key={`draft-list-${draftScheduleVersion}`} style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0, marginBottom: '12px' }}>
-                          {draftListData.days.length <= 7 ? (
-                            draftListData.days.map((dateStr) => {
-                              const isOpen = draftExpandedDays.includes(dateStr)
-                              const dayLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
-                              const dayShifts = (draftListData.shiftsByDate[dateStr] || [])
-                              const canEdit = draftSchedule?.period?.status === 'draft' || isEditingPublished
-                              return (
-                                <div key={dateStr} style={{ border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDraftExpandedDays((prev) => (prev.includes(dateStr) ? prev.filter((x) => x !== dateStr) : [...prev, dateStr]))}
-                                    style={{
-                                      width: '100%',
-                                      padding: '10px 12px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      gap: '8px',
-                                      backgroundColor: isOpen ? `rgba(${themeColorRgb}, 0.12)` : 'transparent',
-                                      border: 'none',
-                                      borderRadius: 0,
-                                      fontSize: '14px',
-                                      fontWeight: 600,
-                                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                                      cursor: 'pointer',
-                                      textAlign: 'left'
-                                    }}
-                                  >
-                                    {dayLabel}
-                                    {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                  </button>
-                                  {isOpen && (
-                                    <div style={{ padding: '10px 12px', borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', backgroundColor: isDarkMode ? 'var(--bg-secondary, #1a1a1a)' : '#f9f9f9' }}>
-                                      {dayShifts.length === 0 ? (
-                                        <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No shifts</span>
-                                      ) : (
-                                        dayShifts.map((s) => {
-                                          const name = [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Employee'
-                                          const key = s.tempId ?? s.scheduled_shift_id
-                                          const isPendingAdd = !!s.__pendingAdd
-                                          return (
-                                            <div
-                                              key={key}
-                                              role={canEdit && !isPendingAdd ? 'button' : undefined}
-                                              onClick={canEdit && !isPendingAdd ? () => setEditingDraftShift({ ...s, type: 'draft_shift', eventType: 'draft_shift' }) : undefined}
-                                              style={{
-                                                padding: '6px 0',
-                                                fontSize: '13px',
-                                                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                                                cursor: canEdit && !isPendingAdd ? 'pointer' : 'default',
-                                                borderBottom: isDarkMode ? '1px solid var(--border-color, #333)' : '1px solid #eee'
-                                              }}
-                                            >
-                                              {name} — {formatTime(s.start_time)}–{formatTime(s.end_time)}
-                                            </div>
-                                          )
-                                        })
-                                      )}
-                                      {canEdit && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setAddingShiftForDate(dateStr)}
-                                          style={{
-                                            marginTop: '8px',
-                                            padding: '6px 10px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            gap: '6px',
-                                            fontSize: '13px',
-                                            fontWeight: 500,
-                                            color: `rgb(${themeColorRgb})`,
-                                            backgroundColor: 'transparent',
-                                            border: `1px dashed rgba(${themeColorRgb}, 0.5)`,
-                                            borderRadius: '6px',
-                                            cursor: 'pointer',
-                                            width: '100%'
-                                          }}
-                                        >
-                                          <Plus size={14} />
-                                          Add shift
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })
-                          ) : (
-                            draftListData.weeks.map((weekDays, wi) => {
-                              const isWeekOpen = draftExpandedWeeks.includes(wi)
-                              return (
-                                <div key={wi} style={{ border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDraftExpandedWeeks((prev) => (prev.includes(wi) ? prev.filter((x) => x !== wi) : [...prev, wi]))}
-                                    style={{
-                                      width: '100%',
-                                      padding: '10px 12px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      gap: '8px',
-                                      backgroundColor: isWeekOpen ? `rgba(${themeColorRgb}, 0.12)` : 'transparent',
-                                      border: 'none',
-                                      borderRadius: 0,
-                                      fontSize: '14px',
-                                      fontWeight: 600,
-                                      color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                                      cursor: 'pointer',
-                                      textAlign: 'left'
-                                    }}
-                                  >
-                                    Week {wi + 1}
-                                    {isWeekOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                  </button>
-                                  {isWeekOpen && (
-                                    <div style={{ padding: '8px', borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', backgroundColor: isDarkMode ? 'var(--bg-secondary, #1a1a1a)' : '#f9f9f9', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                      {weekDays.map((dateStr) => {
-                                        const isDayOpen = draftExpandedDays.includes(dateStr)
-                                        const dayLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
-                                        const dayShifts = (draftListData.shiftsByDate[dateStr] || [])
-                                        const canEdit = draftSchedule?.period?.status === 'draft' || isEditingPublished
-                                        return (
-                                          <div key={dateStr} style={{ border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '6px', overflow: 'hidden' }}>
-                                            <button
-                                              type="button"
-                                              onClick={() => setDraftExpandedDays((prev) => (prev.includes(dateStr) ? prev.filter((x) => x !== dateStr) : [...prev, dateStr]))}
-                                              style={{
-                                                width: '100%',
-                                                padding: '8px 10px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'space-between',
-                                                gap: '6px',
-                                                backgroundColor: isDayOpen ? `rgba(${themeColorRgb}, 0.1)` : 'transparent',
-                                                border: 'none',
-                                                borderRadius: 0,
-                                                fontSize: '13px',
-                                                fontWeight: 500,
-                                                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                                                cursor: 'pointer',
-                                                textAlign: 'left'
-                                              }}
-                                            >
-                                              {dayLabel}
-                                              {isDayOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                            </button>
-                                            {isDayOpen && (
-                                              <div style={{ padding: '8px 10px', borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', backgroundColor: isDarkMode ? 'var(--bg-primary, #0d0d0d)' : '#fff' }}>
-                                                {dayShifts.length === 0 ? (
-                                                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>No shifts</span>
-                                                ) : (
-                                                  dayShifts.map((s) => {
-                                                    const name = [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Employee'
-                                                    const key = s.tempId ?? s.scheduled_shift_id
-                                                    const isPendingAdd = !!s.__pendingAdd
-                                                    return (
-                                                      <div
-                                                        key={key}
-                                                        role={canEdit && !isPendingAdd ? 'button' : undefined}
-                                                        onClick={canEdit && !isPendingAdd ? () => setEditingDraftShift({ ...s, type: 'draft_shift', eventType: 'draft_shift' }) : undefined}
-                                                        style={{
-                                                          padding: '4px 0',
-                                                          fontSize: '12px',
-                                                          color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
-                                                          cursor: canEdit && !isPendingAdd ? 'pointer' : 'default',
-                                                          borderBottom: isDarkMode ? '1px solid var(--border-color, #333)' : '1px solid #eee'
-                                                        }}
-                                                      >
-                                                        {name} — {formatTime(s.start_time)}–{formatTime(s.end_time)}
-                                                      </div>
-                                                    )
-                                                  })
-                                                )}
-                                                {canEdit && (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => setAddingShiftForDate(dateStr)}
-                                                    style={{
-                                                      marginTop: '6px',
-                                                      padding: '4px 8px',
-                                                      display: 'flex',
-                                                      alignItems: 'center',
-                                                      justifyContent: 'center',
-                                                      gap: '4px',
-                                                      fontSize: '12px',
-                                                      fontWeight: 500,
-                                                      color: `rgb(${themeColorRgb})`,
-                                                      backgroundColor: 'transparent',
-                                                      border: `1px dashed rgba(${themeColorRgb}, 0.5)`,
-                                                      borderRadius: '6px',
-                                                      cursor: 'pointer',
-                                                      width: '100%'
-                                                    }}
-                                                  >
-                                                    <Plus size={12} />
-                                                    Add shift
-                                                  </button>
-                                                )}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })
-                          )}
-                        </div>
-                      )}
-                      {(draftSchedule.period?.status === 'draft' || isEditingPublished) && (
-                        <div style={{ display: 'flex', gap: '12px', flexShrink: 0, marginBottom: '12px' }}>
+                        </FormField>
+                        {/* Advanced settings */}
+                        <div style={{
+                          flexShrink: 0,
+                          border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd',
+                          borderRadius: '8px',
+                          backgroundColor: isDarkMode ? 'var(--bg-secondary, #2d2d2d)' : '#fff',
+                          overflow: 'hidden'
+                        }}>
                           <button
                             type="button"
-                            onClick={cancelDraftAndClose}
-                            title="Cancel"
+                            onClick={() => setSbShowAdvanced(!sbShowAdvanced)}
                             style={{
-                              width: '28px',
-                              height: '28px',
-                              padding: 0,
-                              flexShrink: 0,
+                              width: '100%',
+                              padding: '10px 14px',
+                              backgroundColor: sbShowAdvanced ? `rgba(${themeColorRgb}, 0.15)` : 'transparent',
+                              border: 'none',
+                              borderRadius: 0,
+                              fontSize: '14px',
+                              fontWeight: 600,
+                              color: 'var(--text-primary)',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              transition: 'background-color 0.2s ease',
                               display: 'flex',
                               alignItems: 'center',
-                              justifyContent: 'center',
+                              justifyContent: 'space-between',
+                              gap: '6px'
+                            }}
+                          >
+                            Advanced settings
+                            {sbShowAdvanced ? (
+                              <ChevronDown size={16} style={{ flexShrink: 0 }} />
+                            ) : (
+                              <ChevronRight size={16} style={{ flexShrink: 0 }} />
+                            )}
+                          </button>
+                          {sbShowAdvanced && (
+                            <div style={{
+                              padding: '14px',
+                              paddingTop: 0,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '12px',
+                              borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'
+                            }}>
+                              <FormField style={{ marginTop: '8px', marginBottom: '8px' }}>
+                                <FormLabel isDarkMode={isDarkMode}>Algorithm</FormLabel>
+                                <CustomDropdown
+                                  value={sbSettings.algorithm}
+                                  onChange={(e) => setSbSettings(s => ({ ...s, algorithm: e.target.value }))}
+                                  options={[
+                                    { value: 'balanced', label: 'Balanced' },
+                                    { value: 'cost_optimized', label: 'Cost optimized' },
+                                    { value: 'preference_prioritized', label: 'Preference priority' }
+                                  ]}
+                                  placeholder="Select algorithm"
+                                  isDarkMode={isDarkMode}
+                                  themeColorRgb={themeColorRgb}
+                                />
+                              </FormField>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                <FormField style={{ marginBottom: '8px' }}>
+                                  <FormLabel isDarkMode={isDarkMode}>Max consecutive days</FormLabel>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={7}
+                                    value={sbSettings.max_consecutive_days}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, max_consecutive_days: parseInt(e.target.value, 10) || 6 }))}
+                                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                  />
+                                </FormField>
+                                <FormField style={{ marginBottom: '8px' }}>
+                                  <FormLabel isDarkMode={isDarkMode}>Min hours between shifts</FormLabel>
+                                  <input
+                                    type="number"
+                                    min={8}
+                                    max={24}
+                                    value={sbSettings.min_time_between_shifts}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, min_time_between_shifts: parseInt(e.target.value, 10) || 10 }))}
+                                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                  />
+                                </FormField>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                <FormField style={{ marginBottom: '8px' }}>
+                                  <FormLabel isDarkMode={isDarkMode}>Min employees per shift</FormLabel>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={10}
+                                    value={sbSettings.min_employees_per_shift}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, min_employees_per_shift: parseInt(e.target.value, 10) || 1 }))}
+                                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                  />
+                                </FormField>
+                                <FormField style={{ marginBottom: '8px' }}>
+                                  <FormLabel isDarkMode={isDarkMode}>Max employees per shift</FormLabel>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={20}
+                                    value={sbSettings.max_employees_per_shift}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, max_employees_per_shift: parseInt(e.target.value, 10) || 5 }))}
+                                    style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                                    {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                  />
+                                </FormField>
+                              </div>
+                              <FormField style={{ marginBottom: '8px' }}>
+                                <FormLabel isDarkMode={isDarkMode}>Default shift length (hours)</FormLabel>
+                                <input
+                                  type="number"
+                                  min={4}
+                                  max={12}
+                                  value={sbSettings.default_shift_length}
+                                  onChange={(e) => setSbSettings(s => ({ ...s, default_shift_length: parseInt(e.target.value, 10) || 8 }))}
+                                  style={inputBaseStyle(isDarkMode, themeColorRgb)}
+                                  {...getInputFocusHandlers(themeColorRgb, isDarkMode)}
+                                />
+                              </FormField>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={sbSettings.distribute_hours_evenly}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, distribute_hours_evenly: e.target.checked }))}
+                                    style={{ cursor: 'pointer', accentColor: themeColor }}
+                                  />
+                                  <span>Distribute hours evenly</span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={sbSettings.avoid_clopening}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, avoid_clopening: e.target.checked }))}
+                                    style={{ cursor: 'pointer', accentColor: themeColor }}
+                                  />
+                                  <span>Avoid clopening (close then open)</span>
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: isDarkMode ? 'var(--text-primary, #fff)' : '#333' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={sbSettings.prioritize_seniority}
+                                    onChange={(e) => setSbSettings(s => ({ ...s, prioritize_seniority: e.target.checked }))}
+                                    style={{ cursor: 'pointer', accentColor: themeColor }}
+                                  />
+                                  <span>Prioritize seniority</span>
+                                </label>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px', flexShrink: 0, marginBottom: '12px', marginTop: '12px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setShowScheduleBuilder(false)}
+                            style={{
+                              padding: '4px 16px',
+                              height: '28px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              whiteSpace: 'nowrap',
                               backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
                               border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
-                              borderRadius: '6px',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              fontWeight: 500,
                               color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                               cursor: 'pointer',
                               transition: 'all 0.3s ease',
                               boxShadow: 'none'
                             }}
                           >
-                            <X size={16} strokeWidth={2.5} />
+                            Close
                           </button>
-                          {isEditingPublished ? (
+                          <button
+                            type="button"
+                            onClick={generateSchedule}
+                            disabled={sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate || new Date(sbStartDate) > new Date(sbEndDate)}
+                            style={{
+                              flex: 1,
+                              padding: '4px 16px',
+                              height: '28px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              whiteSpace: 'nowrap',
+                              backgroundColor: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'var(--bg-tertiary)' : `rgba(${themeColorRgb}, 0.7)`,
+                              border: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}` : `1px solid rgba(${themeColorRgb}, 0.5)`,
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              fontWeight: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 500 : 600,
+                              color: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'var(--text-secondary)' : '#fff',
+                              cursor: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'not-allowed' : 'pointer',
+                              transition: 'all 0.3s ease',
+                              boxShadow: (sbGenerating || !sbSelectedEmployees.length || !sbStartDate || !sbEndDate) ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`
+                            }}
+                          >
+                            {sbGenerating ? 'Generating…' : 'Generate Schedule'}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {draftListData.days.length > 0 && (
+                          <div key={`draft-list-${draftScheduleVersion}`} style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0, marginBottom: '12px' }}>
+                            {draftListData.days.length <= 7 ? (
+                              draftListData.days.map((dateStr) => {
+                                const isOpen = draftExpandedDays.includes(dateStr)
+                                const dayLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+                                const dayShifts = (draftListData.shiftsByDate[dateStr] || [])
+                                const canEdit = draftSchedule?.period?.status === 'draft' || isEditingPublished
+                                return (
+                                  <div key={dateStr} style={{ border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDraftExpandedDays((prev) => (prev.includes(dateStr) ? prev.filter((x) => x !== dateStr) : [...prev, dateStr]))}
+                                      style={{
+                                        width: '100%',
+                                        padding: '10px 12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: '8px',
+                                        backgroundColor: isOpen ? `rgba(${themeColorRgb}, 0.12)` : 'transparent',
+                                        border: 'none',
+                                        borderRadius: 0,
+                                        fontSize: '14px',
+                                        fontWeight: 600,
+                                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                        cursor: 'pointer',
+                                        textAlign: 'left'
+                                      }}
+                                    >
+                                      {dayLabel}
+                                      {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                    </button>
+                                    {isOpen && (
+                                      <div style={{ padding: '10px 12px', borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', backgroundColor: isDarkMode ? 'var(--bg-secondary, #1a1a1a)' : '#f9f9f9' }}>
+                                        {dayShifts.length === 0 ? (
+                                          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No shifts</span>
+                                        ) : (
+                                          dayShifts.map((s) => {
+                                            const name = [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Employee'
+                                            const key = s.tempId ?? s.scheduled_shift_id
+                                            const isPendingAdd = !!s.__pendingAdd
+                                            return (
+                                              <div
+                                                key={key}
+                                                role={canEdit && !isPendingAdd ? 'button' : undefined}
+                                                onClick={canEdit && !isPendingAdd ? () => setEditingDraftShift({ ...s, type: 'draft_shift', eventType: 'draft_shift' }) : undefined}
+                                                style={{
+                                                  padding: '6px 0',
+                                                  fontSize: '13px',
+                                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                                  cursor: canEdit && !isPendingAdd ? 'pointer' : 'default',
+                                                  borderBottom: isDarkMode ? '1px solid var(--border-color, #333)' : '1px solid #eee'
+                                                }}
+                                              >
+                                                {name} — {formatTime(s.start_time)}–{formatTime(s.end_time)}
+                                              </div>
+                                            )
+                                          })
+                                        )}
+                                        {canEdit && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setAddingShiftForDate(dateStr)}
+                                            style={{
+                                              marginTop: '8px',
+                                              padding: '6px 10px',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              gap: '6px',
+                                              fontSize: '13px',
+                                              fontWeight: 500,
+                                              color: `rgb(${themeColorRgb})`,
+                                              backgroundColor: 'transparent',
+                                              border: `1px dashed rgba(${themeColorRgb}, 0.5)`,
+                                              borderRadius: '6px',
+                                              cursor: 'pointer',
+                                              width: '100%'
+                                            }}
+                                          >
+                                            <Plus size={14} />
+                                            Add shift
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })
+                            ) : (
+                              draftListData.weeks.map((weekDays, wi) => {
+                                const isWeekOpen = draftExpandedWeeks.includes(wi)
+                                return (
+                                  <div key={wi} style={{ border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDraftExpandedWeeks((prev) => (prev.includes(wi) ? prev.filter((x) => x !== wi) : [...prev, wi]))}
+                                      style={{
+                                        width: '100%',
+                                        padding: '10px 12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: '8px',
+                                        backgroundColor: isWeekOpen ? `rgba(${themeColorRgb}, 0.12)` : 'transparent',
+                                        border: 'none',
+                                        borderRadius: 0,
+                                        fontSize: '14px',
+                                        fontWeight: 600,
+                                        color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                        cursor: 'pointer',
+                                        textAlign: 'left'
+                                      }}
+                                    >
+                                      Week {wi + 1}
+                                      {isWeekOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                    </button>
+                                    {isWeekOpen && (
+                                      <div style={{ padding: '8px', borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', backgroundColor: isDarkMode ? 'var(--bg-secondary, #1a1a1a)' : '#f9f9f9', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        {weekDays.map((dateStr) => {
+                                          const isDayOpen = draftExpandedDays.includes(dateStr)
+                                          const dayLabel = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+                                          const dayShifts = (draftListData.shiftsByDate[dateStr] || [])
+                                          const canEdit = draftSchedule?.period?.status === 'draft' || isEditingPublished
+                                          return (
+                                            <div key={dateStr} style={{ border: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', borderRadius: '6px', overflow: 'hidden' }}>
+                                              <button
+                                                type="button"
+                                                onClick={() => setDraftExpandedDays((prev) => (prev.includes(dateStr) ? prev.filter((x) => x !== dateStr) : [...prev, dateStr]))}
+                                                style={{
+                                                  width: '100%',
+                                                  padding: '8px 10px',
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'space-between',
+                                                  gap: '6px',
+                                                  backgroundColor: isDayOpen ? `rgba(${themeColorRgb}, 0.1)` : 'transparent',
+                                                  border: 'none',
+                                                  borderRadius: 0,
+                                                  fontSize: '13px',
+                                                  fontWeight: 500,
+                                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                                  cursor: 'pointer',
+                                                  textAlign: 'left'
+                                                }}
+                                              >
+                                                {dayLabel}
+                                                {isDayOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                              </button>
+                                              {isDayOpen && (
+                                                <div style={{ padding: '8px 10px', borderTop: isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd', backgroundColor: isDarkMode ? 'var(--bg-primary, #0d0d0d)' : '#fff' }}>
+                                                  {dayShifts.length === 0 ? (
+                                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>No shifts</span>
+                                                  ) : (
+                                                    dayShifts.map((s) => {
+                                                      const name = [s.first_name, s.last_name].filter(Boolean).join(' ') || 'Employee'
+                                                      const key = s.tempId ?? s.scheduled_shift_id
+                                                      const isPendingAdd = !!s.__pendingAdd
+                                                      return (
+                                                        <div
+                                                          key={key}
+                                                          role={canEdit && !isPendingAdd ? 'button' : undefined}
+                                                          onClick={canEdit && !isPendingAdd ? () => setEditingDraftShift({ ...s, type: 'draft_shift', eventType: 'draft_shift' }) : undefined}
+                                                          style={{
+                                                            padding: '4px 0',
+                                                            fontSize: '12px',
+                                                            color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                                            cursor: canEdit && !isPendingAdd ? 'pointer' : 'default',
+                                                            borderBottom: isDarkMode ? '1px solid var(--border-color, #333)' : '1px solid #eee'
+                                                          }}
+                                                        >
+                                                          {name} — {formatTime(s.start_time)}–{formatTime(s.end_time)}
+                                                        </div>
+                                                      )
+                                                    })
+                                                  )}
+                                                  {canEdit && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setAddingShiftForDate(dateStr)}
+                                                      style={{
+                                                        marginTop: '6px',
+                                                        padding: '4px 8px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '4px',
+                                                        fontSize: '12px',
+                                                        fontWeight: 500,
+                                                        color: `rgb(${themeColorRgb})`,
+                                                        backgroundColor: 'transparent',
+                                                        border: `1px dashed rgba(${themeColorRgb}, 0.5)`,
+                                                        borderRadius: '6px',
+                                                        cursor: 'pointer',
+                                                        width: '100%'
+                                                      }}
+                                                    >
+                                                      <Plus size={12} />
+                                                      Add shift
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })
+                            )}
+                          </div>
+                        )}
+                        {(draftSchedule.period?.status === 'draft' || isEditingPublished) && (
+                          <div style={{ display: 'flex', gap: '12px', flexShrink: 0, marginBottom: '12px' }}>
                             <button
                               type="button"
-                              onClick={pushChangesAndClose}
+                              onClick={cancelDraftAndClose}
+                              title="Cancel"
                               style={{
-                                flex: 1,
-                                padding: '4px 16px',
+                                width: '28px',
                                 height: '28px',
+                                padding: 0,
+                                flexShrink: 0,
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                whiteSpace: 'nowrap',
-                                backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
-                                border: `1px solid rgba(${themeColorRgb}, 0.5)`,
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                fontWeight: 600,
-                                color: '#fff',
+                                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                                border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                                borderRadius: '6px',
+                                color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
                                 cursor: 'pointer',
                                 transition: 'all 0.3s ease',
-                                boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3)`
+                                boxShadow: 'none'
                               }}
                             >
-                              Push changes
+                              <X size={16} strokeWidth={2.5} />
                             </button>
-                          ) : (
-                            <>
+                            {isEditingPublished ? (
                               <button
                                 type="button"
-                                onClick={saveDraftAndClose}
+                                onClick={pushChangesAndClose}
                                 style={{
                                   flex: 1,
                                   padding: '4px 16px',
@@ -3135,50 +3293,76 @@ function Calendar({ employee }) {
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   whiteSpace: 'nowrap',
-                                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
-                                  border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                                  backgroundColor: `rgba(${themeColorRgb}, 0.7)`,
+                                  border: `1px solid rgba(${themeColorRgb}, 0.5)`,
                                   borderRadius: '8px',
                                   fontSize: '14px',
-                                  fontWeight: 500,
-                                  color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                  fontWeight: 600,
+                                  color: '#fff',
                                   cursor: 'pointer',
                                   transition: 'all 0.3s ease',
-                                  boxShadow: 'none'
+                                  boxShadow: `0 4px 15px rgba(${themeColorRgb}, 0.3)`
                                 }}
                               >
-                                Save Draft
+                                Push changes
                               </button>
-                              <button
-                                type="button"
-                                onClick={publishSchedule}
-                                disabled={sbPublishing}
-                                style={{
-                                  flex: 1,
-                                  padding: '4px 16px',
-                                  height: '28px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  whiteSpace: 'nowrap',
-                                  backgroundColor: sbPublishing ? 'var(--bg-tertiary)' : `rgba(${themeColorRgb}, 0.7)`,
-                                  border: sbPublishing ? `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}` : `1px solid rgba(${themeColorRgb}, 0.5)`,
-                                  borderRadius: '8px',
-                                  fontSize: '14px',
-                                  fontWeight: sbPublishing ? 500 : 600,
-                                  color: sbPublishing ? 'var(--text-secondary)' : '#fff',
-                                  cursor: sbPublishing ? 'not-allowed' : 'pointer',
-                                  transition: 'all 0.3s ease',
-                                  boxShadow: sbPublishing ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`
-                                }}
-                              >
-                                {sbPublishing ? 'Publishing…' : 'Publish'}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={saveDraftAndClose}
+                                  style={{
+                                    flex: 1,
+                                    padding: '4px 16px',
+                                    height: '28px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    whiteSpace: 'nowrap',
+                                    backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                                    border: `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}`,
+                                    borderRadius: '8px',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    color: isDarkMode ? 'var(--text-primary, #fff)' : '#333',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.3s ease',
+                                    boxShadow: 'none'
+                                  }}
+                                >
+                                  Save Draft
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={publishSchedule}
+                                  disabled={sbPublishing}
+                                  style={{
+                                    flex: 1,
+                                    padding: '4px 16px',
+                                    height: '28px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    whiteSpace: 'nowrap',
+                                    backgroundColor: sbPublishing ? 'var(--bg-tertiary)' : `rgba(${themeColorRgb}, 0.7)`,
+                                    border: sbPublishing ? `1px solid ${isDarkMode ? 'var(--border-light, #333)' : '#ddd'}` : `1px solid rgba(${themeColorRgb}, 0.5)`,
+                                    borderRadius: '8px',
+                                    fontSize: '14px',
+                                    fontWeight: sbPublishing ? 500 : 600,
+                                    color: sbPublishing ? 'var(--text-secondary)' : '#fff',
+                                    cursor: sbPublishing ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.3s ease',
+                                    boxShadow: sbPublishing ? 'none' : `0 4px 15px rgba(${themeColorRgb}, 0.3)`
+                                  }}
+                                >
+                                  {sbPublishing ? 'Publishing…' : 'Publish'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                   <div
                     style={{
@@ -3464,7 +3648,7 @@ function Calendar({ employee }) {
                     fontSize: '14px',
                     color: 'var(--text-secondary)'
                   }}>
-                    {selectedDateEvents.length > 0 
+                    {selectedDateEvents.length > 0
                       ? `${selectedDateEvents.length} event${selectedDateEvents.length !== 1 ? 's' : ''} scheduled`
                       : 'No events scheduled'}
                   </div>
@@ -3579,16 +3763,16 @@ function Calendar({ employee }) {
                 borderLeft: `4px solid ${getEventColor(selectedEvent.event_type || selectedEvent.eventType)}`,
                 paddingLeft: '16px'
               }}>
-                <div style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
                   alignItems: 'start',
                   marginBottom: '16px'
                 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ 
-                      fontSize: '20px', 
-                      fontWeight: 600, 
+                    <div style={{
+                      fontSize: '20px',
+                      fontWeight: 600,
                       marginBottom: '8px',
                       textTransform: 'capitalize',
                       color: 'var(--text-primary)'
@@ -3617,23 +3801,23 @@ function Calendar({ employee }) {
                   borderBottom: `1px solid var(--border-light)`
                 }}>
                   {selectedEvent.event_date && (
-                    <div style={{ 
-                      fontSize: '16px', 
+                    <div style={{
+                      fontSize: '16px',
                       fontWeight: 500,
                       color: 'var(--text-primary)',
                       marginBottom: '8px'
                     }}>
-                      {new Date(selectedEvent.event_date).toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
+                      {new Date(selectedEvent.event_date).toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
                       })}
                     </div>
                   )}
                   {(selectedEvent.start_time || selectedEvent.end_time) && (
-                    <div style={{ 
-                      fontSize: '14px', 
+                    <div style={{
+                      fontSize: '14px',
                       color: 'var(--text-secondary)'
                     }}>
                       {selectedEvent.start_time && formatTime(selectedEvent.start_time)}
@@ -3641,12 +3825,12 @@ function Calendar({ employee }) {
                     </div>
                   )}
                 </div>
-                
+
                 {/* Description */}
                 {selectedEvent.description && (
-                  <div style={{ 
-                    fontSize: '14px', 
-                    color: 'var(--text-secondary)', 
+                  <div style={{
+                    fontSize: '14px',
+                    color: 'var(--text-secondary)',
                     marginBottom: '16px',
                     paddingBottom: '16px',
                     borderBottom: `1px solid var(--border-light)`,
@@ -3655,19 +3839,19 @@ function Calendar({ employee }) {
                     {selectedEvent.description}
                   </div>
                 )}
-                
+
                 {/* Additional Info */}
                 {(selectedEvent.employee_name || selectedEvent.location) && (
-                  <div style={{ 
-                    display: 'flex', 
-                    flexDirection: 'column', 
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
                     gap: '12px',
                     marginBottom: '16px',
                     paddingBottom: '16px',
                     borderBottom: `1px solid var(--border-light)`
                   }}>
                     {selectedEvent.employee_name && (
-                      <div style={{ 
+                      <div style={{
                         fontSize: '14px',
                         display: 'flex',
                         flexDirection: 'column',
@@ -3678,7 +3862,7 @@ function Calendar({ employee }) {
                       </div>
                     )}
                     {selectedEvent.location && (
-                      <div style={{ 
+                      <div style={{
                         fontSize: '14px',
                         display: 'flex',
                         flexDirection: 'column',
@@ -3690,74 +3874,120 @@ function Calendar({ employee }) {
                     )}
                   </div>
                 )}
-                
+
                 {/* Action Buttons */}
-                {selectedEvent.event_id && (
-                  <div style={{ 
-                    display: 'flex', 
+                {(selectedEvent.event_id || selectedEvent.calendar_id) && (
+                  <div style={{
+                    display: 'flex',
                     flexDirection: 'column',
                     gap: '10px'
                   }}>
-                    <button
-                      onClick={() => downloadEvent(selectedEvent)}
-                      style={{
-                        padding: '10px 16px',
-                        backgroundColor: 'var(--bg-tertiary)',
-                        border: `1px solid var(--border-color)`,
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        color: 'var(--text-primary)',
-                        transition: 'all 0.2s ease',
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.1)`
-                        e.target.style.borderColor = themeColor
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.backgroundColor = 'var(--bg-tertiary)'
-                        e.target.style.borderColor = 'var(--border-color)'
-                      }}
-                    >
-                      <Download size={16} style={{ marginRight: '8px' }} />
-                      Download .ics
-                    </button>
-                    <button
-                      onClick={() => addToCalendar(selectedEvent)}
-                      style={{
-                        padding: '10px 16px',
-                        backgroundColor: 'var(--bg-tertiary)',
-                        border: `1px solid var(--border-color)`,
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        color: 'var(--text-primary)',
-                        transition: 'all 0.2s ease',
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.1)`
-                        e.target.style.borderColor = themeColor
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.backgroundColor = 'var(--bg-tertiary)'
-                        e.target.style.borderColor = 'var(--border-color)'
-                      }}
-                    >
-                      <CalendarIcon size={16} />
-                      Add to Google
-                    </button>
+                    {selectedEvent.event_id && (
+                      <button
+                        onClick={() => downloadEvent(selectedEvent)}
+                        style={{
+                          padding: '10px 16px',
+                          backgroundColor: 'var(--bg-tertiary)',
+                          border: `1px solid var(--border-color)`,
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          color: 'var(--text-primary)',
+                          transition: 'all 0.2s ease',
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.backgroundColor = `rgba(${themeColorRgb}, 0.1)`
+                          e.target.style.borderColor = themeColor
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.backgroundColor = 'var(--bg-tertiary)'
+                          e.target.style.borderColor = 'var(--border-color)'
+                        }}
+                      >
+                        <Download size={16} style={{ marginRight: '8px' }} />
+                        Download .ics
+                      </button>
+                    )}
+                    {selectedEvent.calendar_id && (
+                      <>
+                        {selectedEvent.google_event_id ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '6px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)', fontSize: '14px' }}>
+                            <CheckCircle size={18} color="var(--success, #22c55e)" />
+                            Synced to Google Calendar
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => syncEventToGoogle(selectedEvent)}
+                            disabled={googleSyncLoading === selectedEvent.calendar_id}
+                            style={{
+                              padding: '10px 16px',
+                              backgroundColor: googleCalendarConnected ? `rgba(${themeColorRgb}, 0.2)` : 'var(--bg-tertiary)',
+                              border: `1px solid ${googleCalendarConnected ? themeColor : 'var(--border-color)'}`,
+                              borderRadius: '6px',
+                              cursor: googleSyncLoading === selectedEvent.calendar_id ? 'wait' : 'pointer',
+                              fontSize: '14px',
+                              fontWeight: 500,
+                              color: 'var(--text-primary)',
+                              transition: 'all 0.2s ease',
+                              width: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '8px'
+                            }}
+                          >
+                            {googleSyncLoading === selectedEvent.calendar_id ? 'Syncing…' : (googleCalendarConnected ? 'Sync to Google Calendar' : 'Connect Google Calendar')}
+                            <CalendarIcon size={16} />
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {selectedEvent.calendar_id && !selectedEvent.google_event_id && !googleCalendarConnected && (
+                      <button
+                        onClick={openGoogleCalendarConnect}
+                        style={{
+                          padding: '8px 12px',
+                          background: 'none',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '13px',
+                          color: 'var(--text-tertiary)'
+                        }}
+                      >
+                        Connect Google Calendar to sync events
+                      </button>
+                    )}
+                    {!selectedEvent.calendar_id && selectedEvent.event_id && (
+                      <button
+                        onClick={() => addToCalendar(selectedEvent)}
+                        style={{
+                          padding: '10px 16px',
+                          backgroundColor: 'var(--bg-tertiary)',
+                          border: `1px solid var(--border-color)`,
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          color: 'var(--text-primary)',
+                          transition: 'all 0.2s ease',
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px'
+                        }}
+                      >
+                        <CalendarIcon size={16} />
+                        Add to Google (link)
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
