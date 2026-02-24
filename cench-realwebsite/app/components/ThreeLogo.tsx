@@ -214,15 +214,15 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                                 <mesh key={index} castShadow receiveShadow>
                                     <extrudeGeometry args={[item.shape, extrudeSettings]} />
                                     <meshPhysicalMaterial
-                                        color="#ffffff"
-                                        metalness={1}
-                                        roughness={0.1}
-                                        envMapIntensity={3.5}
+                                        color={isStatic ? "#ffffff" : "#2c19fc"}
+                                        metalness={isStatic ? 1 : 0.1}
+                                        roughness={isStatic ? 0.1 : 0.05}
+                                        envMapIntensity={isStatic ? 3.5 : 2.5}
                                         clearcoat={1}
                                         clearcoatRoughness={0}
-                                        reflectivity={1}
-                                        ior={2.5}
-                                        specularIntensity={1.5}
+                                        reflectivity={isStatic ? 1 : 0.9}
+                                        ior={isStatic ? 2.5 : 1.5}
+                                        specularIntensity={isStatic ? 1.5 : 1.2}
                                     />
                                 </mesh>
                             ))}
