@@ -512,12 +512,13 @@ export default function Home() {
 
   useEffect(() => {
     const ctx = gsap.context(() => {
+      const isMobile = window.innerWidth < 768;
       const tl = gsap.timeline({
         scrollTrigger: {
           trigger: "#final-cta",
           start: "top bottom",
-          end: "top 10%",
-          scrub: 0.5,
+          end: isMobile ? "top 10%" : "center center",
+          scrub: isMobile ? 0.5 : 1,
         }
       });
 

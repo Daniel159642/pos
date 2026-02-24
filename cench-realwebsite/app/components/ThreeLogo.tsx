@@ -111,7 +111,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
                 }
             });
 
-            // Final transition: Move to center of '#final-cta'
+            // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.4 : 1.8;
             const finalX = isMobile ? 0 : -30;
@@ -121,8 +121,8 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
                 scrollTrigger: {
                     trigger: "#final-cta",
                     start: "top bottom",
-                    end: "top 10%",
-                    scrub: 0.5,
+                    end: isMobile ? "top 10%" : "center center",
+                    scrub: isMobile ? 0.5 : 1
                 }
             });
 
@@ -140,7 +140,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
             }, 0);
 
             finalTl.to(groupRef.current!.rotation, {
-                y: Math.PI * 8,
+                y: Math.PI * 8, // Finish with another elegant rotation
                 ease: "power3.out"
             }, 0);
         });
