@@ -112,55 +112,71 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.4 : 1.8;
 
-            const finalTl = gsap.timeline({
-                scrollTrigger: {
-                    trigger: "#final-cta",
-                    start: "top bottom",
-                    end: "top 20%",
-                    scrub: 0.5,
-                    onRefresh: () => {
-                        // Re-calculate goal position whenever Safari UI shifts or screen resizes
-                        const anchor = document.getElementById('logo-final-anchor');
-                        if (anchor && isMobile) {
-                            const rect = anchor.getBoundingClientRect();
-                            const centerX = (rect.left + rect.width / 2);
-                            const centerY = (rect.top + rect.height / 2);
+            ScrollTrigger.create({
+                trigger: "#final-cta",
+                start: "top bottom",
+                end: "top 10%",
+                scrub: 0.5,
+                onUpdate: (self) => {
+                    const anchor = document.getElementById('logo-final-anchor');
+                    if (anchor && isMobile) {
+                        const rect = anchor.getBoundingClientRect();
+                        const centerX = (rect.left + rect.width / 2);
+                        const centerY = (rect.top + rect.height / 2);
 
-                            // Map screen pixels to Three.js units
-                            const targetXFinal = (centerX / size.width) * viewport.width - viewport.width / 2;
-                            const targetYFinal = -(centerY / size.height) * viewport.height + viewport.height / 2;
+                        // Map screen pixels to Three.js units
+                        const targetXFinal = (centerX / size.width) * viewport.width - viewport.width / 2;
+                        const targetYFinal = -(centerY / size.height) * viewport.height + viewport.height / 2;
 
+                        // Smoothly interpolate between navbar position and anchor position based on scroll
+                        // But once we've reached the 'end', we lock it to the anchor.
+                        if (self.progress > 0) {
                             gsap.to(groupRef.current!.position, {
                                 x: targetXFinal,
                                 y: targetYFinal,
                                 overwrite: 'auto',
-                                duration: 0.5
+                                duration: 0.1, // Near-instant but smooth tracking
+                                ease: "none"
                             });
+
+                            // Also sync scale and rotation progress
+                            const scaleVal = THREE.MathUtils.lerp(targetScale, finalScale, self.progress);
+                            groupRef.current!.scale.set(scaleVal, scaleVal, scaleVal);
+                            groupRef.current!.rotation.y = THREE.MathUtils.lerp(Math.PI * 6, Math.PI * 8, self.progress);
                         }
                     }
                 }
             });
 
-            const finalX = isMobile ? 0 : -30;
-            const finalY = isMobile ? 15 : 0;   // In Three.js units, +15 moves it UP above the center
+            // Desktop-only timeline (or fallback)
+            if (!isMobile) {
+                const finalTl = gsap.timeline({
+                    scrollTrigger: {
+                        trigger: "#final-cta",
+                        start: "top bottom",
+                        end: "top 10%",
+                        scrub: 0.5,
+                    }
+                });
 
-            finalTl.to(groupRef.current!.position, {
-                x: finalX,
-                y: finalY,
-                ease: "power3.out"
-            }, 0);
+                finalTl.to(groupRef.current!.position, {
+                    x: -30,
+                    y: 0,
+                    ease: "power3.out"
+                }, 0);
 
-            finalTl.to(groupRef.current!.scale, {
-                x: finalScale,
-                y: finalScale,
-                z: finalScale,
-                ease: "power3.out"
-            }, 0);
+                finalTl.to(groupRef.current!.scale, {
+                    x: finalScale,
+                    y: finalScale,
+                    z: finalScale,
+                    ease: "power3.out"
+                }, 0);
 
-            finalTl.to(groupRef.current!.rotation, {
-                y: Math.PI * 8, // Finish with another elegant rotation
-                ease: "power3.out"
-            }, 0);
+                finalTl.to(groupRef.current!.rotation, {
+                    y: Math.PI * 8,
+                    ease: "power3.out"
+                }, 0);
+            }
         });
 
         return () => ctx.revert();
