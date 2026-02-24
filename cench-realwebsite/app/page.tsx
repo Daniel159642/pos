@@ -1287,8 +1287,14 @@ export default function Home() {
             >
               Get
             </h2>
-            {/* Central space reserved for the 3D logo via ThreeLogo override */}
-            <div className="w-12 md:w-[220px]" />
+            {/* Static logo for mobile, 3D logo docks to nav on desktop */}
+            <div className="w-16 h-16 md:w-[220px] flex items-center justify-center">
+              <img
+                src="/Swftly.svg"
+                alt="Swftly Logo"
+                className="w-14 h-14 md:hidden object-contain"
+              />
+            </div>
             <h2
               ref={finalSwftlyRef}
               className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight"

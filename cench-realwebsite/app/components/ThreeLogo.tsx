@@ -114,6 +114,8 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
             const finalX = isMobile ? -7 : -30; // Better balance between -2 and -12
             const finalY = isMobile ? 12 : 0;   // Lift slightly for mobile viewport alignment
 
+            if (isMobile) return;
+
             const finalTl = gsap.timeline({
                 scrollTrigger: {
                     trigger: "#final-cta",
