@@ -1279,10 +1279,10 @@ export default function Home() {
       {/* Final CTA Section */}
       <section id="final-cta" className="relative w-full h-screen flex flex-col bg-white overflow-hidden">
         <div className="flex-1 flex items-center justify-center">
-          <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-8 md:gap-16 mt-20">
+          <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-8 md:gap-32 mt-20">
             <h2
               ref={finalGetRef}
-              className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight md:-translate-x-40"
+              className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight md:-translate-x-72"
               style={{ fontFamily: 'Zodiak, serif' }}
             >
               Get
