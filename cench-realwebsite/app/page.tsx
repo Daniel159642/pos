@@ -1012,7 +1012,7 @@ export default function Home() {
         <div className="w-full aspect-video relative rounded-3xl overflow-hidden shadow-2xl border border-gray-100 mb-8">
           <video
             ref={mobileVideoRef}
-            src="/pt2DASH.mp4#t=4"
+            src="/pt2DASH.mp4"
             className="w-full h-full object-cover"
             muted
             playsInline
