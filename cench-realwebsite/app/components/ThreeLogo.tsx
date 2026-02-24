@@ -203,8 +203,8 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
     return (
         <group
             ref={groupRef}
-            position={isStatic ? [7, 5, 0] : (forceDock ? [targetX, targetY, 0] : [0, 40, 0])}
-            scale={isStatic ? [0.75, 0.75, 0.75] : (forceDock ? [targetScale, targetScale, targetScale] : [1.4, 1.4, 1.4])}
+            position={isStatic ? [7, -2, 0] : (forceDock ? [targetX, targetY, 0] : [0, 40, 0])}
+            scale={isStatic ? [0.85, 0.85, 0.85] : (forceDock ? [targetScale, targetScale, targetScale] : [1.4, 1.4, 1.4])}
         >
             <group ref={entryRef} position={(forceDock || isStatic) ? [0, 0, 0] : [-1500, 0, 0]} rotation={(forceDock || isStatic) ? [0, 0, 0] : [0, -Math.PI * 6, 0]}>
                 <group ref={innerRef}>
@@ -311,7 +311,7 @@ export function StaticLogo({ className }: { className?: string }) {
             <Canvas
                 shadows
                 dpr={typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 2) : 1}
-                camera={{ position: [0, 0, 100], fov: 45 }}
+                camera={{ position: [0, 0, 80], fov: 45 }}
                 gl={{
                     antialias: true,
                     alpha: true,

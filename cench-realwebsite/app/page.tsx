@@ -1282,14 +1282,14 @@ export default function Home() {
           <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-8 md:gap-16 mt-20">
             <h2
               ref={finalGetRef}
-              className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight"
+              className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight md:-translate-x-12"
               style={{ fontFamily: 'Zodiak, serif' }}
             >
               Get
             </h2>
             {/* Static logo for mobile, 3D logo docks to nav on desktop */}
-            <div className="w-40 h-80 md:w-[220px] flex items-center justify-center -mx-10">
-              <StaticLogo className="w-64 h-[400px] md:hidden" />
+            <div className="w-32 h-32 md:w-[220px] flex items-center justify-center -mx-6">
+              <StaticLogo className="w-48 h-48 md:hidden" />
             </div>
             <h2
               ref={finalSwftlyRef}
