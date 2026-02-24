@@ -112,13 +112,13 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.45 : 1.8;
             const finalX = isMobile ? 0 : -30;
-            const finalY = isMobile ? -3 : 0;   // Three.js viewport units are larger, -3 moves it up considerably
+            const finalY = 0;   // Perfectly dead-center with flexbox
 
             const finalTl = gsap.timeline({
                 scrollTrigger: {
                     trigger: "#final-cta",
-                    start: isMobile ? "top top" : "top 30%",
-                    end: isMobile ? "+=100%" : "center center",
+                    start: "top top",
+                    end: "+=200%",
                     scrub: 1
                 }
             });

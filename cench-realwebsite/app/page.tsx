@@ -492,16 +492,15 @@ export default function Home() {
 
   useEffect(() => {
     const ctx = gsap.context(() => {
-      const isMobile = window.innerWidth < 768;
-
       const tl = gsap.timeline({
         scrollTrigger: {
           trigger: "#final-cta",
-          start: isMobile ? "top top" : "top 30%",
-          end: isMobile ? "+=100%" : "center center",
+          start: "top top",
+          end: "+=200%",
           scrub: 1,
-          pin: isMobile,
-          pinSpacing: isMobile
+          pin: true,
+          pinSpacing: true,
+          anticipatePin: 1
         }
       });
 
@@ -1281,9 +1280,18 @@ export default function Home() {
       </section>
 
       {/* Final CTA Section */}
-      <section id="final-cta" className="relative w-full h-screen flex flex-col bg-white overflow-hidden">
-        <div className="flex-1 flex items-center justify-center">
-          <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-6 md:gap-16 md:mt-20 pb-40">
+      <section id="final-cta" className="relative w-full h-[300vh] bg-white">
+        <div className="sticky top-0 w-full h-screen flex flex-col items-center justify-center overflow-hidden">
+          {/* Debug/Target Container - Semi-transparent ring to show intended landing zone */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="w-[80vw] h-[20vh] border-2 border-dashed border-[#2c19fc]/10 rounded-[40px] flex items-center justify-center gap-6">
+              <div className="w-1/3 h-1 bg-[#2c19fc]/5 rounded-full" />
+              <div className="w-24 h-24 border-2 border-[#2c19fc]/10 rounded-full" />
+              <div className="w-1/3 h-1 bg-[#2c19fc]/5 rounded-full" />
+            </div>
+          </div>
+
+          <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-6 md:gap-16">
             <h2
               ref={finalGetRef}
               className="text-[9vw] md:text-[120px] font-bold text-black tracking-tight"
@@ -1303,8 +1311,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Integrated Footer */}
-        <div className="w-full pt-8 pb-16 px-4 relative z-10 bg-white">
+        {/* Integrated Footer - Absolute at the very bottom of the 300vh stretch */}
+        <div className="absolute bottom-0 w-full pt-8 pb-16 px-4 z-10 bg-white">
           <div className="max-w-7xl mx-auto flex flex-row items-center justify-between gap-2 border-t border-gray-50 pt-8">
             <div className="flex items-center">
               <span className="text-[10px] md:text-sm text-gray-400 font-medium whitespace-nowrap">© 2024 Swftly.</span>
