@@ -1,0 +1,40 @@
+{
+  "name": "inshallah",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@types/three": "^0.183.1",
+    "canvas": "^3.2.1",
+    "framer-motion": "^12.34.3",
+    "gsap": "^3.14.1",
+    "lucide-react": "^0.575.0",
+    "maath": "^0.10.8",
+    "mathjs": "^15.1.1",
+    "motion": "^12.23.26",
+    "next": "16.0.8",
+    "ogl": "^1.0.11",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "sharp": "^0.34.5",
+    "three": "^0.183.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
