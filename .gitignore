@@ -80,6 +80,7 @@ barcode_images/*.png
 *.png
 !frontend/src/**/*.png
 !frontend/public/**/*.png
+!cench-realwebsite/public/**/*.png
 
 # Test files
 test_*.pdf
