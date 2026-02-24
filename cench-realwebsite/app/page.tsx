@@ -1279,7 +1279,7 @@ export default function Home() {
       {/* Final CTA Section */}
       <section id="final-cta" className="relative w-full h-screen flex flex-col bg-white overflow-hidden">
         <div className="flex-1 flex items-center justify-center">
-          <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-8 md:gap-16 mt-20">
+          <div className="max-w-7xl mx-auto px-4 flex items-center justify-center gap-3 md:gap-16 mt-20">
             <h2
               ref={finalGetRef}
               className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight"
@@ -1288,7 +1288,7 @@ export default function Home() {
               Get
             </h2>
             {/* Central space reserved for the 3D logo via ThreeLogo override */}
-            <div className="w-12 md:w-[220px]" />
+            <div className="w-14 md:w-[220px]" />
             <h2
               ref={finalSwftlyRef}
               className="text-[10vw] md:text-[120px] font-bold text-black tracking-tight"

@@ -111,34 +111,34 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
             // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.35 : 1.8;
-            const finalX = isMobile ? -7 : -30; // Better balance between -2 and -12
+            const finalX = isMobile ? -5 : -30; // Centered for tighter mobile gap
             const finalY = isMobile ? 12 : 0;   // Lift slightly for mobile viewport alignment
 
             const finalTl = gsap.timeline({
                 scrollTrigger: {
                     trigger: "#final-cta",
-                    start: "top bottom",
-                    end: "top 40%", // Complete the move earlier for a 'locked' feel
-                    scrub: 0.5
+                    start: "top 30%",
+                    end: "center center",
+                    scrub: 1
                 }
             });
 
             finalTl.to(groupRef.current!.position, {
                 x: finalX,
                 y: finalY,
-                ease: "expo.out" // Snappier landing
+                ease: "power3.out"
             }, 0);
 
             finalTl.to(groupRef.current!.scale, {
                 x: finalScale,
                 y: finalScale,
                 z: finalScale,
-                ease: "expo.out"
+                ease: "power3.out"
             }, 0);
 
             finalTl.to(groupRef.current!.rotation, {
                 y: Math.PI * 8, // Finish with another elegant rotation
-                ease: "power2.inOut"
+                ease: "power3.out"
             }, 0);
         });
 
