@@ -690,7 +690,7 @@ export default function Home() {
         </div>
 
         {/* Animated Grainient Background Container - Starts lower to show white section first */}
-        <div className="absolute top-[40vh] left-0 w-full min-h-[260vh] z-0 flex flex-col items-center">
+        <div className="absolute top-[65vh] left-0 w-full min-h-[235vh] z-0 flex flex-col items-center">
           <div className="absolute inset-0 z-0">
             {showHeavyAssets && (
               <Grainient
@@ -722,12 +722,12 @@ export default function Home() {
 
           {/* Floating Bags Scattered Across the Entire Background */}
           {[
-            { top: '-2%', left: '5%', rotate: -15, scale: 0.4, delay: 0 },
-            { top: '15%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5 },
-            { top: '35%', left: '10%', rotate: 10, scale: 0.3, delay: 1 },
-            { top: '55%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5 },
-            { top: '75%', left: '20%', rotate: -5, scale: 0.45, delay: 2 },
-            { top: '5%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5 },
+            { top: '5%', left: '5%', rotate: -15, scale: 0.4, delay: 0 },
+            { top: '25%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5 },
+            { top: '45%', left: '10%', rotate: 10, scale: 0.3, delay: 1 },
+            { top: '65%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5 },
+            { top: '85%', left: '20%', rotate: -5, scale: 0.45, delay: 2 },
+            { top: '15%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5 },
             { top: '35%', left: '5%', rotate: -20, scale: 0.32, delay: 3 },
             { top: '55%', left: '80%', rotate: 25, scale: 0.42, delay: 3.5 },
             { top: '75%', left: '15%', rotate: -12, scale: 0.28, delay: 4 },
