@@ -110,9 +110,9 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false }: { url: strin
 
             // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
-            const finalScale = isMobile ? 0.35 : 1.8;
-            const finalX = isMobile ? -5 : -30; // Centered for tighter mobile gap
-            const finalY = isMobile ? 12 : 0;   // Lift slightly for mobile viewport alignment
+            const finalScale = isMobile ? 0.3 : 1.8;
+            const finalX = isMobile ? 0 : -30;
+            const finalY = 0;   // Keep it perfectly centered vertically with the text
 
             const finalTl = gsap.timeline({
                 scrollTrigger: {
