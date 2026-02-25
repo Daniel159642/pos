@@ -722,12 +722,12 @@ export default function Home() {
 
           {/* Floating Bags Scattered Across the Entire Background */}
           {[
-            { top: '-45%', left: '5%', rotate: -15, scale: 0.4, delay: 0 },
-            { top: '-25%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5 },
-            { top: '-5%', left: '10%', rotate: 10, scale: 0.3, delay: 1 },
-            { top: '15%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5 },
-            { top: '35%', left: '20%', rotate: -5, scale: 0.45, delay: 2 },
-            { top: '-15%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5 },
+            { top: '-30%', left: '5%', rotate: -15, scale: 0.4, delay: 0 },
+            { top: '-10%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5 },
+            { top: '10%', left: '10%', rotate: 10, scale: 0.3, delay: 1 },
+            { top: '30%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5 },
+            { top: '50%', left: '20%', rotate: -5, scale: 0.45, delay: 2 },
+            { top: '0%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5 },
             { top: '35%', left: '5%', rotate: -20, scale: 0.32, delay: 3 },
             { top: '55%', left: '80%', rotate: 25, scale: 0.42, delay: 3.5 },
             { top: '75%', left: '15%', rotate: -12, scale: 0.28, delay: 4 },
@@ -773,7 +773,7 @@ export default function Home() {
               className="relative flex items-center justify-center whitespace-nowrap tracking-[0.05em] uppercase w-full mb-32"
               style={{
                 lineHeight: 0.8,
-                fontSize: 'min(18vw, 320px)'
+                fontSize: 'min(22vw, 320px)'
               }}
             >
               <span className="text-white relative z-10" style={{ fontFamily: 'Zodiak, serif', fontWeight: 700 }}>SWFTLY</span>
