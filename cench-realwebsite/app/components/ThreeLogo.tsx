@@ -55,99 +55,44 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
         if (!groupRef.current || forceDock || isStatic) return;
 
         const ctx = gsap.context(() => {
-            // First transition: Dock into navbar
-            const tl = gsap.timeline({
+            // Unified rotation logic for the entire scroll height
+            gsap.to(groupRef.current!.rotation, {
+                y: Math.PI * 18, // 9 full spins across the entire site
+                ease: "none",
+                scrollTrigger: {
+                    trigger: "body",
+                    start: "top top",
+                    end: "bottom bottom",
+                    scrub: size.width < 768 ? 0.05 : 0.1 // Ultra responsive logic for mobile
+                }
+            });
+
+            // Position and scale transitions (Docking into navbar)
+            const dockTl = gsap.timeline({
                 scrollTrigger: {
                     trigger: "body",
                     start: "top top",
                     end: () => window.innerHeight,
-                    scrub: 0.4, // Slightly smoother scrub for better performance
+                    scrub: 0.4,
                     onUpdate: (self) => {
                         onScrollProgress(self.progress);
                     }
                 }
             });
 
-            tl.to(groupRef.current!.position, {
+            dockTl.to(groupRef.current!.position, {
                 x: targetX,
                 y: targetY,
                 z: 0,
                 ease: "power2.inOut"
             }, 0);
 
-            tl.to(groupRef.current!.scale, {
+            dockTl.to(groupRef.current!.scale, {
                 x: targetScale,
                 y: targetScale,
                 z: targetScale,
                 ease: "power2.inOut"
             }, 0);
-
-            tl.to(groupRef.current!.rotation, {
-                x: 0,
-                y: Math.PI * 2, // 1 full spin during dock, lands completely flat
-                z: 0,
-                ease: "power2.inOut"
-            }, 0);
-
-            // Second transition: Extra spin when scrolling down the next section
-            gsap.to(groupRef.current!.rotation, {
-                y: Math.PI * 4, // 1 more full spin, landing flat again
-                ease: "power2.inOut",
-                scrollTrigger: {
-                    trigger: "body",
-                    start: () => window.innerHeight,
-                    end: () => window.innerHeight * 2,
-                    scrub: 0.2
-                }
-            });
-
-            // Third transition: Extra spin when scrolling past that
-            gsap.to(groupRef.current!.rotation, {
-                y: Math.PI * 6, // 1 more full spin, landing flat again
-                ease: "power2.inOut",
-                scrollTrigger: {
-                    trigger: "body",
-                    start: () => window.innerHeight * 2,
-                    end: () => window.innerHeight * 3,
-                    scrub: 0.2
-                }
-            });
-
-            // Fourth transition: Continue spinning for mobile/long scrolls
-            gsap.to(groupRef.current!.rotation, {
-                y: Math.PI * 8,
-                ease: "power2.inOut",
-                scrollTrigger: {
-                    trigger: "body",
-                    start: () => window.innerHeight * 3,
-                    end: () => window.innerHeight * 4,
-                    scrub: 0.2
-                }
-            });
-
-            // Fifth transition: Continue spinning
-            gsap.to(groupRef.current!.rotation, {
-                y: Math.PI * 10,
-                ease: "power2.inOut",
-                scrollTrigger: {
-                    trigger: "body",
-                    start: () => window.innerHeight * 4,
-                    end: () => window.innerHeight * 5,
-                    scrub: 0.2
-                }
-            });
-
-            // Sixth transition: Final nav spin
-            gsap.to(groupRef.current!.rotation, {
-                y: Math.PI * 12,
-                ease: "power2.inOut",
-                scrollTrigger: {
-                    trigger: "body",
-                    start: () => window.innerHeight * 5,
-                    end: () => window.innerHeight * 6,
-                    scrub: 0.2
-                }
-            });
 
             // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
