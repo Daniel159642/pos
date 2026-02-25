@@ -642,7 +642,7 @@ export default function Home() {
                 </div>
               );
             })}
-            <NavButton isBold onClick={() => navigate('/book-a-demo')}>
+            <NavButton isBold onClick={() => navigate('/waitlist')}>
               Get Started
               <ArrowUpRight className="w-4 h-4 relative z-10" />
             </NavButton>
@@ -1220,7 +1220,7 @@ export default function Home() {
                 </div>
 
                 <button
-                  onClick={() => navigate('/book-a-demo')}
+                  onClick={() => navigate('/waitlist')}
                   className="button-7 button-7--blue !mt-6 w-full !mx-0 !mb-0 flex justify-center items-center"
                 >
                   <span className="text">Switch to Swftly</span>

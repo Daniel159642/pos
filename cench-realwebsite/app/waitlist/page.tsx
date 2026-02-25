@@ -2,13 +2,12 @@
 
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Check, ChevronRight, Loader2, ArrowUpRight } from 'lucide-react';
-import Link from 'next/link';
+import { ArrowLeft, Check, ChevronRight, Loader2, ArrowUpRight, Sparkles } from 'lucide-react';
 import ThreeLogo from '../components/ThreeLogo';
 import Grainient from '../components/Grainient';
 import { useTransition } from '../TransitionContext';
 
-export default function BookADemo() {
+export default function WaitlistPage() {
     const { navigate } = useTransition();
     const [isSubmitted, setIsSubmitted] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -48,11 +47,9 @@ export default function BookADemo() {
     };
 
     const [formData, setFormData] = useState({
-        firstName: '',
-        lastName: '',
+        name: '',
         email: '',
         businessType: '',
-        message: ''
     });
     const [error, setError] = useState<string | null>(null);
 
@@ -67,11 +64,16 @@ export default function BookADemo() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(formData),
+                body: JSON.stringify({
+                    firstName: formData.name,
+                    email: formData.email,
+                    businessType: formData.businessType,
+                    message: 'WAILIST SIGNUP'
+                }),
             });
 
             if (!response.ok) {
-                throw new Error('Failed to send request');
+                throw new Error('Failed to join waitlist');
             }
 
             setIsSubmitted(true);
@@ -85,7 +87,7 @@ export default function BookADemo() {
 
     return (
         <div className="min-h-screen bg-white font-sans overflow-hidden">
-            {/* Header - Matching main page */}
+            {/* Header */}
             <motion.header
                 className="fixed top-2 left-4 right-4 z-[1001]"
                 initial={false}
@@ -102,22 +104,21 @@ export default function BookADemo() {
                     <div className="flex items-center gap-4 md:gap-10">
                         <NavButton onClick={() => navigate('/#software-section')}>Software</NavButton>
                         <NavButton onClick={() => navigate('/#pricing-section')}>Pricing</NavButton>
-                        <NavButton className="text-[#2c19fc]">
+                        <NavButton onClick={() => navigate('/book-a-demo')}>
                             <span className="md:hidden">Demo</span>
                             <span className="hidden md:inline">Book A Demo</span>
                         </NavButton>
-                        <NavButton isBold onClick={() => navigate('/waitlist')}>
-                            Get Started
+                        <NavButton isBold className="text-[#2c19fc]">
+                            Join Waitlist
                             <ArrowUpRight className="w-4 h-4 relative z-10" />
                         </NavButton>
                     </div>
                 </div>
             </motion.header>
 
-            {/* Reuse the 3D Logo - It will naturally stay in the header if we don't scroll */}
             <ThreeLogo forceDock={true} />
 
-            <main className="relative pt-40 pb-20 px-4 min-h-screen flex flex-col items-center">
+            <main className="relative pt-40 pb-20 px-4 min-h-screen flex flex-col items-center justify-center">
                 {/* Background Grainient */}
                 <div className="absolute inset-0 z-0">
                     <Grainient
@@ -131,111 +132,82 @@ export default function BookADemo() {
                     />
                 </div>
 
-                <div className="relative z-10 w-full max-w-2xl">
+                <div className="relative z-10 w-full max-w-xl">
                     <motion.div
-                        initial={false}
+                        initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="text-center mb-12"
+                        transition={{ duration: 0.6 }}
+                        className="text-center mb-10"
                     >
                         <h1 className="text-5xl md:text-6xl font-black text-black tracking-tighter mb-4" style={{ fontFamily: 'Zodiak, serif' }}>
-                            Experience Swftly.
+                            Get Early Access.
                         </h1>
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#2c19fc]/10 border border-[#2c19fc]/20 mb-6">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#2c19fc] animate-pulse" />
-                            <span className="text-[#2c19fc] text-xs font-bold uppercase tracking-widest">We're in beta currently</span>
+                            <Sparkles className="w-4 h-4 text-[#2c19fc]" />
+                            <span className="text-[#2c19fc] text-xs font-bold uppercase tracking-widest">Join the exclusive waitlist</span>
                         </div>
-                        <p className="text-gray-500 text-lg md:text-xl font-medium max-w-lg mx-auto leading-relaxed">
-                            Complete the form below and our team will be in touch within 24 hours to schedule your personalized walkthrough.
+                        <p className="text-gray-500 text-lg md:text-xl font-medium max-w-md mx-auto leading-relaxed">
+                            We're rolling out access to a limited number of businesses each week. Secure your spot in line today.
                         </p>
                     </motion.div>
 
                     <motion.div
-                        initial={false}
+                        initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.6, delay: 0.1 }}
                         className="relative"
                     >
-                        {/* Form Container with Premium Styling */}
                         <div className="absolute inset-0 bg-white/60 rounded-[40px] blur-xl" />
 
-                        <div className="relative pos-card-glass-inhouse rounded-[40px] p-8 md:p-12 shadow-[0_40px_100px_rgba(44,25,252,0.15)] overflow-hidden">
+                        <div className="relative pos-card-glass-inhouse rounded-[40px] p-8 md:p-12 shadow-[0_40px_100px_rgba(44,25,252,0.15)] overflow-hidden border border-white/50">
                             <div className="absolute inset-0 bg-gradient-to-br from-[#2c19fc]/5 via-transparent to-transparent pointer-events-none" />
 
                             {!isSubmitted ? (
                                 <form onSubmit={handleSubmit} className="space-y-6">
                                     {error && (
-                                        <div className="p-4 bg-red-50 border border-red-100 text-red-600 rounded-2xl text-sm font-medium animate-shake">
+                                        <div className="p-4 bg-red-50 border border-red-100 text-red-600 rounded-2xl text-sm font-medium">
                                             {error}
                                         </div>
                                     )}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <div className="space-y-2">
-                                            <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">First Name</label>
-                                            <input
-                                                required
-                                                type="text"
-                                                value={formData.firstName}
-                                                onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
-                                                placeholder="First"
-                                            />
-                                        </div>
-                                        <div className="space-y-2">
-                                            <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Last Name</label>
-                                            <input
-                                                required
-                                                type="text"
-                                                value={formData.lastName}
-                                                onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
-                                                placeholder="Last"
-                                            />
-                                        </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Full Name</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            value={formData.name}
+                                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                            placeholder="Enter your name"
+                                        />
                                     </div>
 
                                     <div className="space-y-2">
-                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Work Email</label>
+                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Email</label>
                                         <input
                                             required
                                             type="email"
                                             value={formData.email}
                                             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                                             className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
-                                            placeholder="Email"
+                                            placeholder="you@company.com"
                                         />
                                     </div>
 
                                     <div className="space-y-2">
                                         <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Type</label>
-                                        <input
+                                        <select
                                             required
-                                            type="text"
                                             value={formData.businessType}
                                             onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
-                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
-                                            placeholder="Retail, Restaurant, etc."
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Message (Optional)</label>
-                                        <textarea
-                                            value={formData.message}
-                                            onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium min-h-[120px]"
-                                            placeholder="Tell us about your needs..."
-                                        ></textarea>
-                                    </div>
-
-                                    {/* Honeypot field for bot protection */}
-                                    <div className="hidden" aria-hidden="true">
-                                        <input
-                                            type="text"
-                                            name="website"
-                                            tabIndex={-1}
-                                            autoComplete="off"
-                                            value={(formData as any).website || ''}
-                                            onChange={(e) => setFormData({ ...formData, [e.target.name]: e.target.value })}
-                                        />
+                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium appearance-none"
+                                        >
+                                            <option value="" disabled>Select business type</option>
+                                            <option value="retail">Retail Store</option>
+                                            <option value="restaurant">Restaurant / Cafe</option>
+                                            <option value="service">Service Business</option>
+                                            <option value="other">Other</option>
+                                        </select>
                                     </div>
 
                                     <button
@@ -252,7 +224,7 @@ export default function BookADemo() {
                                             </motion.div>
                                         ) : (
                                             <>
-                                                <span className="text">Request Demo Now</span>
+                                                <span className="text">Secure My Spot</span>
                                                 <ChevronRight className="w-5 h-5 text-white group-hover:translate-x-1 transition-transform" />
                                             </>
                                         )}
@@ -267,9 +239,9 @@ export default function BookADemo() {
                                     <div className="w-20 h-20 bg-[#2c19fc] rounded-full flex items-center justify-center mb-6 shadow-lg shadow-[#2c19fc]/20">
                                         <Check className="w-10 h-10 text-white" />
                                     </div>
-                                    <h2 className="text-3xl font-bold text-black mb-4 tracking-tight">Request Received!</h2>
-                                    <p className="text-gray-500 font-medium mb-8 max-w-xs">
-                                        We've sent a confirmation to your email. One of our specialists will be in touch shortly.
+                                    <h2 className="text-3xl font-bold text-black mb-4 tracking-tight">You're on the list!</h2>
+                                    <p className="text-gray-500 font-medium mb-8 max-w-xs mx-auto">
+                                        Thank you for your interest in Swftly. We'll reach out as soon as a spot opens up for your business.
                                     </p>
                                     <button
                                         onClick={() => navigate('/')}
@@ -290,11 +262,6 @@ export default function BookADemo() {
                 <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-500">© 2024 Swftly. All rights reserved.</span>
-                    </div>
-                    <div className="flex items-center gap-6">
-                        <a href="https://instagram.com/getswftly" target="_blank" rel="noopener noreferrer" className="text-sm text-gray-500 hover:text-[#2c19fc] transition-colors">Instagram</a>
-                        <a href="#" className="text-sm text-gray-500 hover:text-[#2c19fc] transition-colors">X</a>
-                        <a href="#" className="text-sm text-gray-500 hover:text-[#2c19fc] transition-colors">Contact</a>
                     </div>
                 </div>
             </footer>
