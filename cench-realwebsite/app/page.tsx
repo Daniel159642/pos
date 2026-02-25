@@ -737,7 +737,7 @@ export default function Home() {
           ].map((bag, i) => (
             <motion.div
               key={i}
-              className="absolute pointer-events-none will-change-transform"
+              className={`absolute pointer-events-none will-change-transform ${bag.top.startsWith('-') ? 'md:hidden' : ''}`}
               style={{ top: bag.top, left: bag.left, zIndex: 10 }}
               initial={{ opacity: 0.4, y: 0, rotate: bag.rotate, scale: bag.scale }}
               animate={{
