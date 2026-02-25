@@ -730,18 +730,18 @@ export default function Home() {
 
           {/* Floating Bags Scattered Across the Entire Background */}
           {[
-            { top: '15%', left: '5%', rotate: -15, scale: 0.4, delay: 0, mobile: true },
-            { top: '25%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5, mobile: true },
-            { top: '35%', left: '10%', rotate: 10, scale: 0.3, delay: 1, mobile: false },
-            { top: '55%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5, mobile: true },
-            { top: '75%', left: '20%', rotate: -5, scale: 0.45, delay: 2, mobile: true },
-            { top: '20%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5, mobile: false },
-            { top: '35%', left: '5%', rotate: -20, scale: 0.32, delay: 3, mobile: true },
-            { top: '55%', left: '80%', rotate: 25, scale: 0.42, delay: 3.5, mobile: false },
-            { top: '75%', left: '15%', rotate: -12, scale: 0.28, delay: 4, mobile: false },
-            { top: '95%', left: '85%', rotate: 18, scale: 0.36, delay: 4.5, mobile: true },
-            { top: '40%', left: '92%', rotate: -8, scale: 0.22, delay: 1.2, mobile: false },
-            { top: '60%', left: '4%', rotate: 30, scale: 0.34, delay: 2.2, mobile: true },
+            { top: '10%', left: '8%', rotate: -15, scale: 0.4, delay: 0, mobile: true },
+            { top: '18%', left: '78%', rotate: 20, scale: 0.35, delay: 0.5, mobile: true },
+            { top: '30%', left: '15%', rotate: 10, scale: 0.3, delay: 1, mobile: false },
+            { top: '48%', left: '82%', rotate: -10, scale: 0.25, delay: 1.5, mobile: true },
+            { top: '65%', left: '20%', rotate: -5, scale: 0.45, delay: 2, mobile: true },
+            { top: '25%', left: '92%', rotate: 15, scale: 0.38, delay: 2.5, mobile: false },
+            { top: '40%', left: '5%', rotate: -20, scale: 0.32, delay: 3, mobile: true },
+            { top: '58%', left: '68%', rotate: 25, scale: 0.42, delay: 3.5, mobile: false },
+            { top: '82%', left: '12%', rotate: -12, scale: 0.28, delay: 4, mobile: false },
+            { top: '92%', left: '88%', rotate: 18, scale: 0.36, delay: 4.5, mobile: true },
+            { top: '5%', left: '90%', rotate: -8, scale: 0.22, delay: 1.2, mobile: false },
+            { top: '75%', left: '4%', rotate: 30, scale: 0.34, delay: 2.2, mobile: true },
           ].map((bag, i) => (
             <motion.div
               key={i}
