@@ -63,7 +63,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                     trigger: "body",
                     start: "top top",
                     end: "bottom bottom",
-                    scrub: size.width < 768 ? 0.8 : 1.8 // Ultra-smooth momentum for rotation
+                    scrub: size.width < 768 ? 0.4 : 1.2 // Smoother momentum for both mobile and desktop
                 }
             });
 
