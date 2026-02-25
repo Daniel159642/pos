@@ -1309,8 +1309,8 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2 md:gap-10">
               <NavButton className="text-[10px] md:text-sm" onClick={() => window.open('https://instagram.com/getswftly', '_blank')}>Instagram</NavButton>
-              <NavButton className="text-[10px] md:text-sm" onClick={() => window.open('https://x.com', '_blank')}>X</NavButton>
-              <NavButton className="text-[10px] md:text-sm" onClick={() => window.open('mailto:contact@swftly.com')}>Contact</NavButton>
+              <NavButton className="text-[10px] md:text-sm" onClick={() => window.open('https://instagram.com/getswftly', '_blank')}>X</NavButton>
+              <NavButton className="text-[10px] md:text-sm" onClick={() => navigate('/book-a-demo')}>Contact</NavButton>
             </div>
           </div>
         </div>
