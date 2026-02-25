@@ -97,7 +97,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
             // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.7 : 1.8;
-            const finalX = isMobile ? -5 : -45;
+            const finalX = isMobile ? -5 : -35;
             const finalY = isMobile ? 8 : 10;
 
             const finalTl = gsap.timeline({
