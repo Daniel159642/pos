@@ -722,12 +722,12 @@ export default function Home() {
 
           {/* Floating Bags Scattered Across the Entire Background */}
           {[
-            { top: '-30%', left: '5%', rotate: -15, scale: 0.4, delay: 0 },
-            { top: '-10%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5 },
-            { top: '10%', left: '10%', rotate: 10, scale: 0.3, delay: 1 },
-            { top: '30%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5 },
-            { top: '50%', left: '20%', rotate: -5, scale: 0.45, delay: 2 },
-            { top: '0%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5 },
+            { top: '15%', left: '5%', rotate: -15, scale: 0.4, delay: 0 },
+            { top: '25%', left: '85%', rotate: 20, scale: 0.35, delay: 0.5 },
+            { top: '35%', left: '10%', rotate: 10, scale: 0.3, delay: 1 },
+            { top: '55%', left: '75%', rotate: -10, scale: 0.25, delay: 1.5 },
+            { top: '75%', left: '20%', rotate: -5, scale: 0.45, delay: 2 },
+            { top: '20%', left: '90%', rotate: 15, scale: 0.38, delay: 2.5 },
             { top: '35%', left: '5%', rotate: -20, scale: 0.32, delay: 3 },
             { top: '55%', left: '80%', rotate: 25, scale: 0.42, delay: 3.5 },
             { top: '75%', left: '15%', rotate: -12, scale: 0.28, delay: 4 },
@@ -767,7 +767,7 @@ export default function Home() {
           {/* Bottom Fade to White */}
           <div className="absolute bottom-0 left-0 w-full h-[30vh] bg-gradient-to-t from-white to-transparent z-[5] md:h-[40vh] pointer-events-none" />
 
-          <div className="relative w-full flex flex-col items-center pt-12 pb-24 z-10 pointer-events-none">
+          <div className="relative w-full flex flex-col items-center pt-0 pb-24 -mt-8 md:-mt-12 z-10 pointer-events-none">
             {/* SWFTLY Title - Pushed down to appear after logo section */}
             <div
               className="relative flex items-center justify-center whitespace-nowrap tracking-[0.05em] uppercase w-full mb-32"
