@@ -149,7 +149,7 @@ export default function WaitlistPage() {
                             <span className="text-[#2c19fc] text-xs font-bold uppercase tracking-widest">Join the exclusive waitlist</span>
                         </div>
                         <p className="text-gray-500 text-lg md:text-xl font-medium max-w-md mx-auto leading-relaxed">
-                            We're rolling out access to a limited number of businesses each week. Secure your spot in line today.
+                            We're rolling out access to a limited number of businesses. Secure your spot in line.
                         </p>
                     </motion.div>
 
