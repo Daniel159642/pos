@@ -97,8 +97,8 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
             // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.7 : 1.8;
-            const finalX = isMobile ? 0 : -30; // Centered on mobile
-            const finalY = isMobile ? 0 : 0;   // Centered vertically
+            const finalX = isMobile ? -5 : -35;
+            const finalY = isMobile ? 0 : 0;
 
             const finalTl = gsap.timeline({
                 scrollTrigger: {
@@ -122,23 +122,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                 ease: "none"
             }, 0);
 
-            // Animate color to white/silver on landing
-            const materialColor = { value: "#2c19fc" };
-            const shapesGroup = groupRef.current!.getObjectByName("shapes-wrapper");
 
-            finalTl.to(materialColor, {
-                value: "#ffffff",
-                onUpdate: () => {
-                    if (shapesGroup) {
-                        shapesGroup.traverse((child) => {
-                            if ((child as THREE.Mesh).isMesh) {
-                                ((child as THREE.Mesh).material as THREE.MeshPhysicalMaterial).color.set(materialColor.value);
-                            }
-                        });
-                    }
-                },
-                ease: "none"
-            }, 0);
 
             finalTl.to(groupRef.current!.rotation, {
                 y: isMobile ? Math.PI * 4 : Math.PI * 8,
