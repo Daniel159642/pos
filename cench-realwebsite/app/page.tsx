@@ -952,7 +952,7 @@ export default function Home() {
 
                 {/* Profile Block */}
                 <div className="story-item opacity-0 flex flex-col gap-6">
-                  <h2 className="text-black text-6xl md:text-7xl font-bold leading-[1.1]">
+                  <h2 className="text-black text-6xl md:text-7xl font-bold font-tanker leading-[0.9] tracking-tight uppercase">
                     Personalized Access.
                   </h2>
                   <ul className="space-y-4">
