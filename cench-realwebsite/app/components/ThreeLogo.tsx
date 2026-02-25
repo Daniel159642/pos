@@ -63,7 +63,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                     trigger: "body",
                     start: "top top",
                     end: "bottom bottom",
-                    scrub: size.width < 768 ? 0.05 : 0.8 // Smoother momentum for desktop
+                    scrub: size.width < 768 ? 0.4 : 1.2 // Smoother momentum for both mobile and desktop
                 }
             });
 
@@ -73,7 +73,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                     trigger: "body",
                     start: "top top",
                     end: () => window.innerHeight,
-                    scrub: 0.8,
+                    scrub: 1.2,
                     onUpdate: (self) => {
                         onScrollProgress(self.progress);
                     }
@@ -84,14 +84,14 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                 x: targetX,
                 y: targetY,
                 z: 0,
-                ease: "power2.inOut"
+                ease: "none"
             }, 0);
 
             dockTl.to(groupRef.current!.scale, {
                 x: targetScale,
                 y: targetScale,
                 z: targetScale,
-                ease: "power2.inOut"
+                ease: "none"
             }, 0);
 
             // Final transition: Move from navbar to center of '#final-cta'
