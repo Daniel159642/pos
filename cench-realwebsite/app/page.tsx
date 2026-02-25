@@ -767,7 +767,7 @@ export default function Home() {
           {/* Bottom Fade to White */}
           <div className="absolute bottom-0 left-0 w-full h-[30vh] bg-gradient-to-t from-white to-transparent z-[5] md:h-[40vh] pointer-events-none" />
 
-          <div className="relative w-full flex flex-col items-center pt-0 pb-24 -mt-8 md:-mt-12 z-10 pointer-events-none">
+          <div className="relative w-full flex flex-col items-center pt-6 md:pt-12 pb-24 z-10 pointer-events-none">
             {/* SWFTLY Title - Pushed down to appear after logo section */}
             <div
               className="relative flex items-center justify-center whitespace-nowrap tracking-[0.05em] uppercase w-full mb-32"
