@@ -259,7 +259,7 @@ export default function ThreeLogo({ forceDock = false }: { forceDock?: boolean }
 
     return (
         <motion.div
-            className="fixed inset-0 w-full h-full pointer-events-none z-[1005]"
+            className="fixed inset-0 w-full h-dvh pointer-events-none z-[1005]"
             initial={forceDock ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={forceDock ? { duration: 0 } : { duration: 0.8, ease: "easeOut" }}
