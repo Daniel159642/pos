@@ -49,6 +49,7 @@ export default function WaitlistPage() {
     const [formData, setFormData] = useState({
         name: '',
         email: '',
+        businessName: '',
         businessType: '',
     });
     const [error, setError] = useState<string | null>(null);
@@ -67,8 +68,9 @@ export default function WaitlistPage() {
                 body: JSON.stringify({
                     firstName: formData.name,
                     email: formData.email,
+                    businessName: formData.businessName,
                     businessType: formData.businessType,
-                    message: 'WAILIST SIGNUP'
+                    message: 'WAITLIST SIGNUP'
                 }),
             });
 
@@ -194,20 +196,29 @@ export default function WaitlistPage() {
                                         />
                                     </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Type</label>
-                                        <select
-                                            required
-                                            value={formData.businessType}
-                                            onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
-                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium appearance-none"
-                                        >
-                                            <option value="" disabled>Select business type</option>
-                                            <option value="retail">Retail Store</option>
-                                            <option value="restaurant">Restaurant / Cafe</option>
-                                            <option value="service">Service Business</option>
-                                            <option value="other">Other</option>
-                                        </select>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Name</label>
+                                            <input
+                                                required
+                                                type="text"
+                                                value={formData.businessName}
+                                                onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
+                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                                placeholder="Company Name"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Type</label>
+                                            <input
+                                                required
+                                                type="text"
+                                                value={formData.businessType}
+                                                onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
+                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                                placeholder="Retail, Cafe, etc."
+                                            />
+                                        </div>
                                     </div>
 
                                     <button

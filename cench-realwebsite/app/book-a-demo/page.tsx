@@ -51,6 +51,7 @@ export default function BookADemo() {
         firstName: '',
         lastName: '',
         email: '',
+        businessName: '',
         businessType: '',
         message: ''
     });
@@ -204,16 +205,29 @@ export default function BookADemo() {
                                         />
                                     </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Type</label>
-                                        <input
-                                            required
-                                            type="text"
-                                            value={formData.businessType}
-                                            onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
-                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
-                                            placeholder="Retail, Restaurant, etc."
-                                        />
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Name</label>
+                                            <input
+                                                required
+                                                type="text"
+                                                value={formData.businessName}
+                                                onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
+                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                                placeholder="Company Name"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Business Type</label>
+                                            <input
+                                                required
+                                                type="text"
+                                                value={formData.businessType}
+                                                onChange={(e) => setFormData({ ...formData, businessType: e.target.value })}
+                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                                placeholder="Retail, Restaurant, etc."
+                                            />
+                                        </div>
                                     </div>
 
                                     <div className="space-y-2">
