@@ -653,7 +653,8 @@ export default function Home() {
       <ThreeLogo />
 
       {/* Hero Section */}
-      <section className="relative w-full min-h-[300dvh] bg-white overflow-hidden pb-32">
+      <section className="relative w-full min-h-[300dvh] bg-[#2c19fc] overflow-hidden pb-32">
+        <div className="absolute top-0 left-0 w-full h-[120dvh] bg-gradient-to-b from-[#2c19fc] to-[#1a0fb3] z-0" />
         {/* Main Hero White Content Area */}
         <div className="relative w-full z-20 pointer-events-none">
           <div ref={heroTextRef} className="w-full max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center pt-[15dvh] px-2 md:px-12 relative z-10 md:mt-4">
@@ -665,7 +666,7 @@ export default function Home() {
                 animateBy="words"
                 direction="top"
                 once={true}
-                className="text-2xl md:text-3xl font-bold text-black text-right font-zodiak"
+                className="text-2xl md:text-3xl font-bold text-white text-right font-zodiak"
               />
             </div>
 
@@ -680,7 +681,7 @@ export default function Home() {
                 animateBy="words"
                 direction="top"
                 once={true}
-                className="text-[15px] font-bold text-black text-center font-zodiak whitespace-nowrap"
+                className="text-[15px] font-bold text-white text-center font-zodiak whitespace-nowrap"
               />
             </div>
 
@@ -691,14 +692,14 @@ export default function Home() {
                 animateBy="words"
                 direction="top"
                 once={true}
-                className="text-2xl md:text-3xl font-bold text-black text-left font-zodiak"
+                className="text-2xl md:text-3xl font-bold text-white text-left font-zodiak"
               />
             </div>
           </div>
         </div>
 
-        {/* Animated Grainient Background Container - Starts lower to show white section first */}
-        <div className="absolute top-[65dvh] left-0 w-full min-h-[235dvh] z-0 flex flex-col items-center">
+        {/* Animated Grainient Background Container - Starts lower to show blue intro section first */}
+        <div className="absolute top-[65dvh] left-0 w-full min-h-[235dvh] z-0 flex flex-col items-center bg-[#371a94]">
           <div className="absolute inset-0 z-0">
             {showHeavyAssets && (
               <Grainient
