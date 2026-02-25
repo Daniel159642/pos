@@ -108,7 +108,7 @@ export default function Home() {
   const hasMobileVideoPlayed = useRef(false);
   const hasHitTargetTime = useRef(false);
   const [showVideoInfo, setShowVideoInfo] = useState(false);
-  const [videoInfoStep, setVideoInfoStep] = useState(0);
+  const [videoInfoStep, setVideoInfoStep] = useState(4);
   const [videoTime, setVideoTime] = useState(0);
   const [hasDismissedCTA, setHasDismissedCTA] = useState(false);
   const [stickyStep, setStickyStep] = useState(0);
@@ -534,9 +534,13 @@ export default function Home() {
             const hasPlayed = isMobile ? hasMobileVideoPlayed.current : hasVideoPlayed.current;
 
             if (!hasPlayed) {
-              video.play().catch(e => console.log("Video play failed:", e));
-              if (isMobile) hasMobileVideoPlayed.current = true;
-              else hasVideoPlayed.current = true;
+              if (isMobile) {
+                // Keep mobile video frozen
+                hasMobileVideoPlayed.current = true;
+              } else {
+                video.play().catch(e => console.log("Video play failed:", e));
+                hasVideoPlayed.current = true;
+              }
             }
           }
         });
@@ -1016,7 +1020,7 @@ export default function Home() {
         <div className="w-full aspect-video relative rounded-3xl overflow-hidden shadow-2xl border border-gray-100 mb-8">
           <video
             ref={mobileVideoRef}
-            src="/pt2DASH.mp4"
+            src="/pt2DASH.mp4#t=5"
             className="w-full h-full object-cover"
             muted
             playsInline
@@ -1073,30 +1077,27 @@ export default function Home() {
                 }}
               >
                 <h2 className="text-black text-3xl font-bold font-tanker leading-[0.9] tracking-tight uppercase mb-4 min-h-[4rem] px-2 flex items-center">
-                  {mobileStep === 0 ? "Automate the boring stuff." :
-                    mobileStep === 1 ? "AI-driven insights." :
-                      mobileStep === 2 ? "Checkout in seconds." :
-                        mobileStep === 3 ? "Universal Fulfillment." :
-                          mobileStep === 4 ? "Know your regulars." :
-                            mobileStep === 5 ? "Smarter scheduling." :
-                              mobileStep === 6 ? "Ledger on autopilot." :
-                                mobileStep === 7 ? "Seamless Logistics." :
-                                  mobileStep === 8 ? "Real-time stock." :
-                                    mobileStep === 9 ? "Raw Data Control." :
-                                      mobileStep === 10 ? "Customized Control." : "Personalized Access."}
+                  {mobileStep === 0 ? "AI-driven insights." :
+                    mobileStep === 1 ? "Checkout in seconds." :
+                      mobileStep === 2 ? "Universal Fulfillment." :
+                        mobileStep === 3 ? "Know your regulars." :
+                          mobileStep === 4 ? "Smarter scheduling." :
+                            mobileStep === 5 ? "Ledger on autopilot." :
+                              mobileStep === 6 ? "Seamless Logistics." :
+                                mobileStep === 7 ? "Real-time stock." :
+                                  mobileStep === 8 ? "Raw Data Control." :
+                                    mobileStep === 9 ? "Customized Control." : "Personalized Access."}
                 </h2>
 
                 <div className="flex-1 overflow-y-auto pr-2 scrollbar-hide py-2">
-                  {mobileStep !== 0 && (
-                    <ul className="space-y-3 px-2">
-                      {videoHotspots[videoInfoStep].points?.map((point, i) => (
-                        <li key={i} className="text-gray-500 text-sm font-medium leading-relaxed flex items-start gap-4">
-                          <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[#2c19fc]/30 shrink-0" />
-                          <span><PointText text={point} /></span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <ul className="space-y-3 px-2">
+                    {videoHotspots[videoInfoStep].points?.map((point, i) => (
+                      <li key={i} className="text-gray-500 text-sm font-medium leading-relaxed flex items-start gap-4">
+                        <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[#2c19fc]/30 shrink-0" />
+                        <span><PointText text={point} /></span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </motion.div>
             </AnimatePresence>
@@ -1106,12 +1107,8 @@ export default function Home() {
               onClick={() => {
                 const newStep = Math.max(0, mobileStep - 1);
                 setMobileStep(newStep);
-                const hotspotIndices = [4, 4, 6, 7, 8, 5, 10, 9, 11, 12, 1, 2];
+                const hotspotIndices = [4, 6, 7, 8, 5, 10, 9, 11, 12, 1, 2];
                 setVideoInfoStep(hotspotIndices[newStep]);
-                if (mobileVideoRef.current) {
-                  mobileVideoRef.current.currentTime = newStep === 0 ? 0 : 4;
-                  mobileVideoRef.current.pause();
-                }
               }}
               disabled={mobileStep === 0}
               className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 w-10 h-10 rounded-full border border-gray-100 flex items-center justify-center bg-white/80 backdrop-blur-sm shadow-sm disabled:opacity-0 active:scale-95 transition-all z-10"
@@ -1120,16 +1117,12 @@ export default function Home() {
             </button>
             <button
               onClick={() => {
-                const newStep = Math.min(11, mobileStep + 1);
+                const newStep = Math.min(10, mobileStep + 1);
                 setMobileStep(newStep);
-                const hotspotIndices = [4, 4, 6, 7, 8, 5, 10, 9, 11, 12, 1, 2];
+                const hotspotIndices = [4, 6, 7, 8, 5, 10, 9, 11, 12, 1, 2];
                 setVideoInfoStep(hotspotIndices[newStep]);
-                if (mobileVideoRef.current) {
-                  mobileVideoRef.current.currentTime = 4;
-                  mobileVideoRef.current.pause();
-                }
               }}
-              disabled={mobileStep === 11}
+              disabled={mobileStep === 10}
               className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 w-10 h-10 rounded-full bg-black/80 backdrop-blur-sm flex items-center justify-center shadow-lg disabled:opacity-0 active:scale-95 transition-all z-10"
             >
               <ChevronRight className="w-5 h-5 text-white" />
@@ -1139,7 +1132,7 @@ export default function Home() {
           {/* Mobile Progress Indicator */}
           <div className="flex items-center justify-center pt-8">
             <div className="flex gap-1.5">
-              {Array.from({ length: 12 }).map((_, i) => (
+              {Array.from({ length: 11 }).map((_, i) => (
                 <div
                   key={i}
                   className={`h-1 rounded-full transition-all duration-300 ${mobileStep === i ? 'w-6 bg-[#2c19fc]' : 'w-2 bg-gray-200'}`}
