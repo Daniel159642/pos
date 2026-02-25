@@ -97,15 +97,15 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
             // Final transition: Move from navbar to center of '#final-cta'
             const isMobile = size.width < 768;
             const finalScale = isMobile ? 0.7 : 1.8;
-            const finalX = isMobile ? -5 : -35;
-            const finalY = isMobile ? 0 : 0;
+            const finalX = isMobile ? -14 : -45;
+            const finalY = isMobile ? 18 : 10;
 
             const finalTl = gsap.timeline({
                 scrollTrigger: {
                     trigger: "#final-cta",
-                    start: isMobile ? "top 90%" : "top 110%", // Adjust start for mobile viewport
-                    end: "top 20%",
-                    scrub: isMobile ? 0.8 : 1.5
+                    start: isMobile ? "top 95%" : "top 110%",
+                    end: "bottom bottom", // Finish at the absolute bottom of the section/page
+                    scrub: isMobile ? 0.6 : 1.5
                 }
             });
 
@@ -249,10 +249,23 @@ export default function ThreeLogo({ forceDock = false }: { forceDock?: boolean }
             return;
         }
         // Longer delay to let the initial text animations start smoothly
-        const timer = setTimeout(() => setMounted(true), 100);
+        const timer = setTimeout(() => {
+            setMounted(true);
+            ScrollTrigger.refresh();
+        }, 100);
+
+        // Handle Safari mobile bar resizing
+        const handleResize = () => {
+            ScrollTrigger.refresh();
+        };
+        window.addEventListener('resize', handleResize);
+
         // Force scroll trigger refresh
         setTimeout(() => ScrollTrigger.refresh(), 500);
-        return () => clearTimeout(timer);
+        return () => {
+            clearTimeout(timer);
+            window.removeEventListener('resize', handleResize);
+        };
     }, [forceDock]);
 
     if (!mounted) return null;
