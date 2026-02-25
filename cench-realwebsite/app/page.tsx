@@ -1026,18 +1026,21 @@ export default function Home() {
             playsInline
             preload="auto"
           />
-          {/* Hotspot Highlight on Mobile */}
           <motion.div
             className="absolute border-2 border-[#2c19fc] rounded-xl shadow-[0_0_30px_rgba(44,25,252,0.3)] bg-[#2c19fc]/5 z-50 pointer-events-none"
             initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true, amount: 0.3 }}
             animate={{
               top: videoHotspots[videoInfoStep].top,
               left: videoHotspots[videoInfoStep].left,
               width: videoHotspots[videoInfoStep].width,
               height: videoHotspots[videoInfoStep].height,
-              opacity: mobileStep === 0 ? 0 : 1,
             }}
-            transition={{ type: "spring", damping: 25, stiffness: 120 }}
+            transition={{
+              opacity: { duration: 1.2, delay: 0.8 },
+              default: { type: "spring", damping: 25, stiffness: 120 }
+            }}
           />
         </div>
 
