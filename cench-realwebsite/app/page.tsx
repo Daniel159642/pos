@@ -534,11 +534,9 @@ export default function Home() {
             const hasPlayed = isMobile ? hasMobileVideoPlayed.current : hasVideoPlayed.current;
 
             if (!hasPlayed) {
-              setTimeout(() => {
-                video.play().catch(e => console.log("Video play failed:", e));
-                if (isMobile) hasMobileVideoPlayed.current = true;
-                else hasVideoPlayed.current = true;
-              }, 1000);
+              video.play().catch(e => console.log("Video play failed:", e));
+              if (isMobile) hasMobileVideoPlayed.current = true;
+              else hasVideoPlayed.current = true;
             }
           }
         });
@@ -546,8 +544,14 @@ export default function Home() {
       { threshold: 0.1 }
     );
 
-    if (videoRef.current) observer.observe(videoRef.current);
-    if (mobileVideoRef.current) observer.observe(mobileVideoRef.current);
+    if (videoRef.current) {
+      videoRef.current.load();
+      observer.observe(videoRef.current);
+    }
+    if (mobileVideoRef.current) {
+      mobileVideoRef.current.load();
+      observer.observe(mobileVideoRef.current);
+    }
 
     return () => observer.disconnect();
   }, []);
