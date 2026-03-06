@@ -19,7 +19,7 @@ class CustomerDisplaySystem:
         conn = get_connection()
         return conn, conn.cursor(cursor_factory=RealDictCursor)
     
-    def start_transaction(self, employee_id, items, customer_id=None, discount=0.0, discount_type=None):
+    def start_transaction(self, employee_id, items, customer_id=None, discount=0.0, discount_type=None, scheduled_time=None):
         """Start a new transaction. discount is order-level discount amount; discount_type e.g. 'student', 'employee'."""
         from database_postgres import get_current_establishment
         conn, cursor = self.get_connection()
@@ -78,42 +78,38 @@ class CustomerDisplaySystem:
             has_tax_rate = 'tax_rate' in order_columns
             has_discount_col = 'discount' in order_columns
             has_discount_type_col = 'discount_type' in order_columns
+            has_scheduled_time = 'scheduled_time' in order_columns
             
-            if has_tip and has_order_type and has_tax_rate and has_discount_col and has_discount_type_col:
-                cursor.execute("""
-                    INSERT INTO orders
-                    (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, tax_amount, discount, discount_type, total, payment_method, payment_status, order_status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'cash', 'pending', 'completed')
-                    RETURNING order_id, order_number
-                """, (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, total_tax, order_discount, (discount_type or None), order_total))
-            elif has_tip and has_order_type and has_tax_rate and has_discount_col:
-                cursor.execute("""
-                    INSERT INTO orders
-                    (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, tax_amount, discount, total, payment_method, payment_status, order_status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'cash', 'pending', 'completed')
-                    RETURNING order_id, order_number
-                """, (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, total_tax, order_discount, order_total))
-            elif has_tip and has_order_type and has_tax_rate:
-                cursor.execute("""
-                    INSERT INTO orders
-                    (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, tax_amount, total, payment_method, payment_status, order_status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'cash', 'pending', 'completed')
-                    RETURNING order_id, order_number
-                """, (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, total_tax, order_total))
-            elif has_tax_rate:
-                cursor.execute("""
-                    INSERT INTO orders
-                    (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, tax_amount, total, payment_method, payment_status, order_status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'cash', 'pending', 'completed')
-                    RETURNING order_id, order_number
-                """, (establishment_id, order_number, employee_id, customer_id, subtotal, tax_rate, total_tax, order_total))
-            else:
-                cursor.execute("""
-                    INSERT INTO orders
-                    (establishment_id, order_number, employee_id, customer_id, subtotal, tax_amount, total, payment_method, payment_status, order_status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'cash', 'pending', 'completed')
-                    RETURNING order_id, order_number
-                """, (establishment_id, order_number, employee_id, customer_id, subtotal, total_tax, order_total))
+            # Prepare dynamic INSERT
+            insert_cols = ["establishment_id", "order_number", "employee_id", "customer_id", "subtotal", "tax_amount", "total", "payment_method", "payment_status", "order_status"]
+            insert_placeholders = ["%s"] * len(insert_cols)
+            insert_values = [establishment_id, order_number, employee_id, customer_id, subtotal, total_tax, order_total, 'cash', 'pending', 'completed']
+            
+            if has_tax_rate:
+                insert_cols.append("tax_rate")
+                insert_placeholders.append("%s")
+                insert_values.append(tax_rate)
+            
+            if has_discount_col:
+                insert_cols.append("discount")
+                insert_placeholders.append("%s")
+                insert_values.append(order_discount)
+                
+            if has_discount_type_col:
+                insert_cols.append("discount_type")
+                insert_placeholders.append("%s")
+                insert_values.append(discount_type or None)
+                
+            if has_scheduled_time:
+                insert_cols.append("scheduled_time")
+                insert_placeholders.append("%s")
+                insert_values.append(scheduled_time)
+
+            cursor.execute(f"""
+                INSERT INTO orders ({', '.join(insert_cols)})
+                VALUES ({', '.join(insert_placeholders)})
+                RETURNING order_id, order_number
+            """, tuple(insert_values))
             order_result = cursor.fetchone()
             if isinstance(order_result, dict):
                 order_id = order_result['order_id']

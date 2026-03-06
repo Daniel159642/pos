@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useTheme } from '../contexts/ThemeContext'
 import { cachedFetch } from '../services/offlineSync'
 import BarcodeScanner from '../components/BarcodeScanner'
@@ -28,8 +28,17 @@ function getNewOrderToastOptions() {
 
 function RecentOrders() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { themeColor, themeMode } = useTheme()
   const [ordersPage, setOrdersPage] = useState(0)
+
+  useEffect(() => {
+    if (location.state?.searchQuery) {
+      setSearchQuery(location.state.searchQuery)
+      // Clear the state so it doesn't persist on refresh/re-navigation
+      window.history.replaceState({}, document.title)
+    }
+  }, [location.state])
   const ORDERS_PAGE_SIZE = 50
   const queryClient = useQueryClient()
   const [expandedRow, setExpandedRow] = useState(null)

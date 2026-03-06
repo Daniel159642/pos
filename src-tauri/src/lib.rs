@@ -1,3 +1,4 @@
+// Force icon update rebuild
 /// Open a file path with the system default application (e.g. Preview on macOS).
 #[tauri::command]
 fn open_receipt_file(path: String) -> Result<(), String> {

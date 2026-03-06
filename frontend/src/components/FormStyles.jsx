@@ -29,7 +29,7 @@ export const inputBaseStyle = (isDarkMode, themeColorRgb, isFocused = false) => 
   width: '100%',
   padding: '5px 14px',
   minHeight: '32px',
-  border: isFocused 
+  border: isFocused
     ? `1px solid rgba(${themeColorRgb}, 0.5)`
     : (isDarkMode ? '1px solid var(--border-color, #404040)' : '1px solid #ddd'),
   borderRadius: '8px',
@@ -262,6 +262,7 @@ export const CompactFormActions = ({
   onCancel,
   onPrimary,
   primaryLabel,
+  cancelLabel = 'Cancel',
   primaryDisabled = false,
   primaryType = 'button',
   isDarkMode,
@@ -274,7 +275,7 @@ export const CompactFormActions = ({
       disabled={primaryDisabled}
       style={compactCancelButtonStyle(isDarkMode, primaryDisabled)}
     >
-      Cancel
+      {cancelLabel}
     </button>
     <button
       type={primaryType}

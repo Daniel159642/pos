@@ -4626,6 +4626,7 @@ def create_order(
     doordash_promo_details: Optional[Dict[str, Any]] = None,
     doordash_total_merchant_funded_discount_cents: Optional[int] = None,
     doordash_total_doordash_funded_discount_cents: Optional[int] = None,
+    scheduled_time: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new order and process payment
@@ -4866,6 +4867,7 @@ def create_order(
         has_tip = 'tip' in columns
         has_order_type = 'order_type' in columns
         has_discount_type = 'discount_type' in columns
+        has_scheduled_time = 'scheduled_time' in columns
         has_order_customer_snapshot = all(c in columns for c in ('customer_name', 'customer_phone', 'customer_email', 'customer_address'))
         
         # Get current datetime using local timezone (ensure accurate time)
@@ -4888,91 +4890,39 @@ def create_order(
             ostatus = 'completed'
         print(f"Creating order: payment_status={pstatus!r}, order_status={ostatus!r}, order_type={order_type!r}")
 
-        if has_tip and has_order_type and has_discount_type:
-            if has_order_customer_snapshot:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount,
-                        discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes, discount_type,
-                        customer_name, customer_phone, customer_email, customer_address
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, tip, total, payment_method, pstatus, ostatus, order_type, notes, (discount_type or None),
-                      order_customer_name, order_customer_phone, order_customer_email, order_customer_address))
-            else:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
-                        discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes, discount_type
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, tip, total, payment_method, pstatus, ostatus, order_type, notes, (discount_type or None)))
-        elif has_tip and has_order_type:
-            if has_order_customer_snapshot:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount,
-                        discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes,
-                        customer_name, customer_phone, customer_email, customer_address
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, tip, total, payment_method, pstatus, ostatus, order_type, notes,
-                      order_customer_name, order_customer_phone, order_customer_email, order_customer_address))
-            else:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
-                        discount, transaction_fee, tip, total, payment_method, payment_status, order_status, order_type, notes
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, tip, total, payment_method, pstatus, ostatus, order_type, notes))
-        elif has_tip:
-            if has_order_customer_snapshot:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount,
-                        discount, transaction_fee, tip, total, payment_method, payment_status, order_status, notes,
-                        customer_name, customer_phone, customer_email, customer_address
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, tip, total, payment_method, pstatus, ostatus, notes,
-                      order_customer_name, order_customer_phone, order_customer_email, order_customer_address))
-            else:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
-                        discount, transaction_fee, tip, total, payment_method, payment_status, order_status, notes
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, tip, total, payment_method, pstatus, ostatus, notes))
-        else:
-            # Fallback for older schema (no tip or order_type)
-            if has_order_customer_snapshot:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount,
-                        discount, transaction_fee, total, payment_method, payment_status, order_status, notes,
-                        customer_name, customer_phone, customer_email, customer_address
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, total, payment_method, pstatus, ostatus, notes,
-                      order_customer_name, order_customer_phone, order_customer_email, order_customer_address))
-            else:
-                cursor.execute("""
-                    INSERT INTO orders (
-                        establishment_id, order_number, order_date, employee_id, customer_id, subtotal, tax_rate, tax_amount, 
-                        discount, transaction_fee, total, payment_method, payment_status, order_status, notes
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING order_id
-                """, (establishment_id, order_number, current_datetime, employee_id, customer_id, subtotal, tax_rate, total_tax,
-                      discount, transaction_fee, total, payment_method, pstatus, ostatus, notes))
+        # Build insert query dynamically
+        insert_cols = [
+            "establishment_id", "order_number", "order_date", "employee_id", "customer_id", 
+            "subtotal", "tax_rate", "tax_amount", "discount", "transaction_fee", "total", 
+            "payment_method", "payment_status", "order_status", "notes"
+        ]
+        insert_vals = [
+            establishment_id, order_number, current_datetime, employee_id, customer_id, 
+            subtotal, tax_rate, total_tax, discount, transaction_fee, total, 
+            payment_method, pstatus, ostatus, notes
+        ]
+
+        if has_tip:
+            insert_cols.append("tip")
+            insert_vals.append(tip)
+        if has_order_type:
+            insert_cols.append("order_type")
+            insert_vals.append(order_type)
+        if has_discount_type:
+            insert_cols.append("discount_type")
+            insert_vals.append(discount_type or None)
+        if has_order_customer_snapshot:
+            insert_cols.extend(["customer_name", "customer_phone", "customer_email", "customer_address"])
+            insert_vals.extend([order_customer_name, order_customer_phone, order_customer_email, order_customer_address])
+        if has_scheduled_time:
+            insert_cols.append("scheduled_time")
+            insert_vals.append(scheduled_time)
+
+        cursor.execute(f"""
+            INSERT INTO orders ({', '.join(insert_cols)})
+            VALUES ({', '.join(['%s'] * len(insert_cols))})
+            RETURNING order_id
+        """, tuple(insert_vals))
         
         result = cursor.fetchone()
         if isinstance(result, dict):

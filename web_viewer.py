@@ -2821,6 +2821,7 @@ def api_create_order():
             discount_type=(data.get('discount_type') or '').strip() or None,
             order_source=(data.get('order_source') or '').strip() or None,
             prepare_by=data.get('prepare_by'),
+            scheduled_time=data.get('scheduled_time'),
         )
         
         # Post to accounting only when order was paid (not pay-later)
@@ -11121,9 +11122,10 @@ def start_transaction():
         customer_id = data.get('customer_id')
         discount = float(data.get('discount', 0) or 0)
         discount_type = (data.get('discount_type') or '').strip() or None
+        scheduled_time = data.get('scheduled_time')
         from customer_display_system import CustomerDisplaySystem
         cds = CustomerDisplaySystem()
-        result = cds.start_transaction(employee_id, items, customer_id, discount=discount, discount_type=discount_type)
+        result = cds.start_transaction(employee_id, items, customer_id, discount=discount, discount_type=discount_type, scheduled_time=scheduled_time)
         if SOCKETIO_AVAILABLE and socketio:
             socketio.emit('transaction_started', result, room='customer_display')
         return make_response(jsonify({'success': True, 'data': result}))
@@ -12627,6 +12629,64 @@ def api_notification_settings_post():
         return resp if ok else (resp[0], resp[1])
     except Exception as e:
         traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/scheduled-alerts')
+def api_get_scheduled_alerts():
+    """Get upcoming scheduled order alerts."""
+    try:
+        from database_postgres import get_connection
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get unviewed alerts or alerts from the last 24 hours
+        cur.execute("""
+            SELECT a.*, o.order_number, o.scheduled_time
+            FROM scheduled_order_alerts a
+            JOIN orders o ON a.order_id = o.order_id
+            WHERE a.viewed = 0 OR a.created_at > now() - interval '24 hours'
+            ORDER BY a.created_at DESC
+        """)
+        alerts = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        # Convert datetime to string for JSON serialization
+        for alert in alerts:
+            if alert.get('created_at'):
+                alert['created_at'] = alert['created_at'].isoformat()
+            if alert.get('scheduled_time'):
+                alert['scheduled_time'] = alert['scheduled_time'].isoformat()
+            if alert.get('viewed_at'):
+                alert['viewed_at'] = alert['viewed_at'].isoformat()
+                
+        return jsonify({'success': True, 'data': alerts})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/scheduled-alerts/mark-viewed', methods=['POST'])
+def api_mark_alert_viewed():
+    """Mark a scheduled order alert as viewed."""
+    try:
+        data = request.json
+        alert_id = data.get('alert_id')
+        if not alert_id:
+            return jsonify({'success': False, 'message': 'alert_id required'}), 400
+            
+        from database_postgres import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE scheduled_order_alerts 
+            SET viewed = 1, viewed_at = now() 
+            WHERE alert_id = %s
+        """, (alert_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/notifications/test-email', methods=['POST'])
@@ -14711,6 +14771,15 @@ if __name__ == '__main__':
 
     _keepalive_thread = threading.Thread(target=_db_keepalive, daemon=True)
     _keepalive_thread.start()
+
+    # Start the scheduled orders background worker
+    try:
+        from notification_service import scheduled_orders_worker
+        _scheduling_thread = threading.Thread(target=scheduled_orders_worker, daemon=True)
+        _scheduling_thread.start()
+        print("Scheduled orders worker started")
+    except ImportError:
+        print("Warning: could not start scheduled orders worker (notification_service not found)")
 
     print("Starting web viewer...")
     print("Open your browser to: http://localhost:5001")

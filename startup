@@ -10,6 +10,6 @@ the edit recipt modal should defiult when opended be opened to header sectiion a
 
 the checkout ui edit modal should also use shold us eht e modal background blur syrling.
 
-
+(.venv) daniellopez@Daniels-MBP pos % cd cench-realwebsite
 cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py
 cd "/Users/daniellopez/POS FR/pos" && source venv/bin/activate && python3 web_viewer.py

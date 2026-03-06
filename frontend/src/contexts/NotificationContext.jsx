@@ -6,28 +6,50 @@ export function NotificationProvider({ children }) {
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(false)
 
-  const fetchShipmentIssueNotifications = useCallback(async () => {
+  const refreshAllNotifications = useCallback(async () => {
     try {
       setLoading(true)
-      const res = await fetch('/api/shipment-issues?status=open&limit=50')
-      const data = await res.json()
-      if (!data.success || !Array.isArray(data.data)) {
-        setNotifications([])
-        return
+      const [shipmentRes, scheduledRes] = await Promise.all([
+        fetch('/api/shipment-issues?status=open&limit=50'),
+        fetch('/api/scheduled-alerts')
+      ])
+
+      const shipmentData = await shipmentRes.json()
+      const scheduledData = await scheduledRes.json()
+
+      let list = []
+
+      if (shipmentData.success && Array.isArray(shipmentData.data)) {
+        list = [...list, ...shipmentData.data.map((issue) => ({
+          id: `shipment_issue_${issue.issue_id}`,
+          type: 'shipment_issue',
+          title: `Shipment issue: ${issue.vendor_name || 'Vendor'}${issue.purchase_order_number ? ` (PO: ${issue.purchase_order_number})` : ''}`,
+          body: issue.description || `${String(issue.issue_type || '').replace(/_/g, ' ')}`,
+          time: issue.reported_at ? new Date(issue.reported_at).getTime() : Date.now(),
+          pending_shipment_id: issue.pending_shipment_id,
+          issue_id: issue.issue_id
+        }))]
       }
-      const list = data.data.map((issue) => ({
-        id: `shipment_issue_${issue.issue_id}`,
-        type: 'shipment_issue',
-        title: `Shipment issue: ${issue.vendor_name || 'Vendor'}${issue.purchase_order_number ? ` (PO: ${issue.purchase_order_number})` : ''}`,
-        body: issue.description || `${String(issue.issue_type || '').replace(/_/g, ' ')}`,
-        time: issue.reported_at ? new Date(issue.reported_at).getTime() : Date.now(),
-        pending_shipment_id: issue.pending_shipment_id,
-        issue_id: issue.issue_id
-      }))
+
+      if (scheduledData.success && Array.isArray(scheduledData.data)) {
+        list = [...list, ...scheduledData.data.map((alert) => ({
+          id: `scheduled_alert_${alert.alert_id}`,
+          type: 'order', // Using 'order' type so it shows the ShoppingBag icon
+          title: alert.title,
+          body: alert.body,
+          time: alert.created_at ? new Date(alert.created_at).getTime() : Date.now(),
+          alert_id: alert.alert_id,
+          order_id: alert.order_id,
+          order_number: alert.order_number,
+          scheduled_time: alert.scheduled_time
+        }))]
+      }
+
+      // Sort by time descending
+      list.sort((a, b) => b.time - a.time)
       setNotifications(list)
     } catch (e) {
-      console.error('Error fetching shipment issue notifications:', e)
-      setNotifications([])
+      console.error('Error fetching notifications:', e)
     } finally {
       setLoading(false)
     }
@@ -39,19 +61,32 @@ export function NotificationProvider({ children }) {
       setNotifications([])
       return
     }
-    fetchShipmentIssueNotifications()
-    const interval = setInterval(fetchShipmentIssueNotifications, 30000)
+    refreshAllNotifications()
+    const interval = setInterval(refreshAllNotifications, 30000)
     return () => clearInterval(interval)
-  }, [fetchShipmentIssueNotifications])
+  }, [refreshAllNotifications])
 
-  const dismissNotification = useCallback((id) => {
+  const dismissNotification = useCallback(async (id) => {
+    const notification = notifications.find(n => n.id === id)
+    if (notification && notification.alert_id) {
+      // Mark as viewed in backend
+      try {
+        await fetch('/api/scheduled-alerts/mark-viewed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ alert_id: notification.alert_id })
+        })
+      } catch (e) {
+        console.error('Error marking alert as viewed:', e)
+      }
+    }
     setNotifications((prev) => prev.filter((n) => n.id !== id))
-  }, [])
+  }, [notifications])
 
   const value = {
     notifications,
     notificationCount: notifications.length,
-    refreshNotifications: fetchShipmentIssueNotifications,
+    refreshNotifications: refreshAllNotifications,
     dismissNotification,
     loading
   }

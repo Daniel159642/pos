@@ -1,0 +1,33 @@
+{
+    "name": "product-demo-video",
+    "version": "1.0.0",
+    "description": "Premium product demo video for Swftly POS",
+    "main": "index.js",
+    "scripts": {
+        "dev": "remotion studio src/index.ts",
+        "start": "remotion studio src/index.ts",
+        "build": "remotion render src/index.ts Main out/video.mp4",
+        "upgrade": "remotion upgrade"
+    },
+    "dependencies": {
+        "@react-three/drei": "^9.88.1",
+        "@react-three/fiber": "^8.15.11",
+        "@remotion/cli": "4.0.432",
+        "@remotion/paths": "4.0.432",
+        "@remotion/sfx": "^4.0.432",
+        "@remotion/three": "^4.0.432",
+        "@remotion/transitions": "4.0.432",
+        "@types/react": "18.2.0",
+        "@types/react-dom": "18.2.0",
+        "lucide-react": "0.292.0",
+        "react": "18.2.0",
+        "react-dom": "18.2.0",
+        "remotion": "4.0.432",
+        "three": "^0.160.0",
+        "typescript": "5.2.2",
+        "zod": "^4.3.6"
+    },
+    "devDependencies": {
+        "@types/three": "^0.183.1"
+    }
+}

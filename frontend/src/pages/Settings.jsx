@@ -44,6 +44,7 @@ import {
 import BarcodeScanner from '../components/BarcodeScanner'
 import AdminDashboard from '../components/AdminDashboard'
 import { FormTitle, FormLabel, FormField, inputBaseStyle, getInputFocusHandlers, compactCancelButtonStyle, compactPrimaryButtonStyle, modalOverlayStyle, modalContentStyle } from '../components/FormStyles'
+import NotificationSettingsPanel from '../components/NotificationSettingsPanel'
 import Table from '../components/Table'
 import '../components/CustomerDisplay.css'
 import '../components/CustomerDisplayButtons.css'
@@ -8131,311 +8132,53 @@ function Settings() {
 
               {/* Notifications Tab */}
               {activeTab === 'notifications' && (
-                <div style={{ maxWidth: '560px', margin: '0 auto', width: '100%' }}>
+                <>
                   <FormTitle isDarkMode={isDarkMode} style={{ marginBottom: '8px' }}>
                     Notifications
                   </FormTitle>
-                  <p style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '24px' }}>
-                    Turn specific in-app notifications on or off. Use the Test button to see how each notification looks.
-                  </p>
-
-                  {/* Email & SMS - External Notifications */}
-                  <div style={{
-                    padding: '20px',
-                    borderRadius: '12px',
-                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                    backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa',
-                    marginBottom: '24px'
-                  }}>
-                    <div style={{ fontSize: '15px', fontWeight: 700, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '16px' }}>
-                      Email & SMS Notifications
-                    </div>
-                    <p style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666', marginBottom: '16px' }}>
-                      Email: Use Gmail to test, then switch to AWS SES for production. SMS: AWS SNS only (~$0.006/SMS). Toggle which events send notifications.
-                    </p>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div>
-                        <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>Email service</FormLabel>
-                        <select
-                          value={notificationChannelSettings.email_provider}
-                          onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, email_provider: e.target.value })}
-                          style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                        >
-                          <option value="gmail">Gmail (test email)</option>
-                          <option value="aws_ses">AWS SES (production email)</option>
-                        </select>
-                        <p style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary)' : '#999', marginTop: '4px' }}>
-                          {notificationChannelSettings.email_provider === 'gmail'
-                            ? 'Test email delivery with Gmail before switching to AWS SES.'
-                            : 'Production email via AWS SES.'}
-                        </p>
-                      </div>
-
-                      <div>
-                        <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>SMS service</FormLabel>
-                        <div style={{
-                          padding: '10px 14px',
-                          borderRadius: '8px',
-                          border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
-                          backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#f5f5f5',
-                          fontSize: '14px',
-                          color: isDarkMode ? 'var(--text-secondary)' : '#555'
-                        }}>
-                          AWS SNS (~$0.006/SMS) — separate from email
-                        </div>
-                      </div>
-
-                      {notificationChannelSettings.email_provider === 'gmail' && (
-                        <>
-                          <div>
-                            <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>SMTP Server</FormLabel>
-                            <input
-                              type="text"
-                              value={notificationChannelSettings.smtp_server}
-                              onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, smtp_server: e.target.value })}
-                              placeholder="smtp.gmail.com"
-                              style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                            />
-                          </div>
-                          <div>
-                            <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>Gmail Address</FormLabel>
-                            <input
-                              type="email"
-                              value={notificationChannelSettings.smtp_user}
-                              onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, smtp_user: e.target.value })}
-                              placeholder="your@gmail.com"
-                              style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                            />
-                            <p style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary)' : '#999', marginTop: '4px' }}>
-                              Enable 2FA and create an App Password at Google Account → Security
-                            </p>
-                          </div>
-                          <div>
-                            <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>App Password</FormLabel>
-                            <input
-                              type="password"
-                              value={notificationChannelSettings.smtp_password === '***' ? '' : (notificationChannelSettings.smtp_password || '')}
-                              onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, smtp_password: e.target.value })}
-                              placeholder={notificationChannelSettings.smtp_password === '***' ? 'Leave blank to keep current' : '16-character app password'}
-                              style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                            />
-                          </div>
-                        </>
-                      )}
-
-                      {/* AWS credentials: for AWS SES (production email) and AWS SNS (SMS) */}
-                      <>
-                        <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-tertiary)' : '#888', marginBottom: '10px' }}>
-                          Used for AWS SES (production email) and AWS SNS (SMS)
-                        </div>
-                        <div>
-                          <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>AWS Access Key ID</FormLabel>
-                          <input
-                            type="text"
-                            value={notificationChannelSettings.aws_access_key_id === '***' ? '' : (notificationChannelSettings.aws_access_key_id || '')}
-                            onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, aws_access_key_id: e.target.value })}
-                            placeholder={notificationChannelSettings.aws_access_key_id === '***' ? 'Leave blank to keep current' : 'AKIA...'}
-                            style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                          />
-                        </div>
-                        <div>
-                          <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>AWS Secret Access Key</FormLabel>
-                          <input
-                            type="password"
-                            value={notificationChannelSettings.aws_secret_access_key === '***' ? '' : (notificationChannelSettings.aws_secret_access_key || '')}
-                            onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, aws_secret_access_key: e.target.value })}
-                            placeholder={notificationChannelSettings.aws_secret_access_key === '***' ? 'Leave blank to keep current' : 'Secret key'}
-                            style={inputBaseStyle(isDarkMode, themeColorRgb)}
-                          />
-                        </div>
-                        <div>
-                          <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '6px' }}>AWS Region</FormLabel>
-                          <input
-                            type="text"
-                            value={notificationChannelSettings.aws_region}
-                            onChange={(e) => setNotificationChannelSettings({ ...notificationChannelSettings, aws_region: e.target.value })}
-                            placeholder="us-east-1"
-                            style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '140px' }}
-                          />
-                        </div>
-                      </>
-
-                      <div>
-                        <FormLabel isDarkMode={isDarkMode} style={{ marginBottom: '10px', display: 'block' }}>Notify for</FormLabel>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                          {[
-                            { id: 'orders', label: 'Orders', desc: 'New orders (integrations, POS)' },
-                            { id: 'reports', label: 'Reports', desc: 'Scheduled or manual reports' },
-                            { id: 'scheduling', label: 'Scheduling', desc: 'Schedule published / changed' },
-                            { id: 'clockins', label: 'Clock-ins', desc: 'Employee clock in / out' },
-                            { id: 'receipts', label: 'Receipts', desc: 'Email receipts to customers' }
-                          ].map(({ id, label, desc }) => (
-                            <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '13px', fontWeight: 600, minWidth: '90px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>{label}</span>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={notificationChannelSettings.notification_preferences?.[id]?.email ?? false}
-                                  onChange={(e) => setNotificationChannelSettings({
-                                    ...notificationChannelSettings,
-                                    notification_preferences: {
-                                      ...notificationChannelSettings.notification_preferences,
-                                      [id]: { ...notificationChannelSettings.notification_preferences?.[id], email: e.target.checked }
-                                    }
-                                  })}
-                                />
-                                <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>Email</span>
-                              </label>
-                              {id !== 'receipts' && (
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={notificationChannelSettings.notification_preferences?.[id]?.sms ?? false}
-                                    onChange={(e) => setNotificationChannelSettings({
-                                      ...notificationChannelSettings,
-                                      notification_preferences: {
-                                        ...notificationChannelSettings.notification_preferences,
-                                        [id]: { ...notificationChannelSettings.notification_preferences?.[id], sms: e.target.checked }
-                                      }
-                                    })}
-                                  />
-                                  <span style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>SMS</span>
-                                </label>
-                              )}
-                              <span style={{ fontSize: '11px', color: isDarkMode ? 'var(--text-tertiary)' : '#999' }}>{desc}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          disabled={notificationChannelSaving}
-                          onClick={async () => {
-                            setNotificationChannelSaving(true)
-                            try {
-                              const token = localStorage.getItem('sessionToken')
-                              const res = await cachedFetch('/api/notification-settings', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
-                                body: JSON.stringify({
-                                  session_token: token,
-                                  store_id: 1,
-                                  ...notificationChannelSettings,
-                                  smtp_port: parseInt(notificationChannelSettings.smtp_port, 10) || 587,
-                                  smtp_password: (notificationChannelSettings.smtp_password && notificationChannelSettings.smtp_password !== '') ? notificationChannelSettings.smtp_password : undefined
-                                })
-                              })
-                              const data = await res.json()
-                              if (data.success) {
-                                showToast('Settings saved', 'success')
-                              } else {
-                                showToast(data.message || 'Failed to save', 'error')
-                              }
-                            } catch (e) {
-                              showToast(e.message || 'Error saving', 'error')
-                            } finally {
-                              setNotificationChannelSaving(false)
-                            }
-                          }}
-                          style={compactPrimaryButtonStyle(themeColorRgb)}
-                        >
-                          {notificationChannelSaving ? 'Saving…' : 'Save'}
-                        </button>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          {showTestEmailInput ? (
-                            <>
-                              <input
-                                type="email"
-                                placeholder="Email to send test to"
-                                value={testEmailInput}
-                                onChange={(e) => setTestEmailInput(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Escape') setShowTestEmailInput(false) }}
-                                autoFocus
-                                style={{ ...inputBaseStyle(isDarkMode, themeColorRgb), maxWidth: '200px', padding: '6px 10px' }}
-                              />
-                              <button
-                                type="button"
-                                disabled={testEmailSending || !testEmailInput.trim()}
-                                onClick={async () => {
-                                  const email = testEmailInput.trim()
-                                  if (!email) return
-                                  if (notificationChannelSettings.email_provider === 'gmail' && (!notificationChannelSettings.smtp_user || !notificationChannelSettings.smtp_password)) {
-                                    showToast('Enter Gmail address and App Password first', 'error')
-                                    return
-                                  }
-                                  setTestEmailSending(true)
-                                  try {
-                                    const token = localStorage.getItem('sessionToken')
-                                    const body = {
-                                      to_address: email,
-                                      store_id: 1,
-                                      session_token: token,
-                                      email_provider: notificationChannelSettings.email_provider,
-                                      smtp_server: notificationChannelSettings.smtp_server,
-                                      smtp_port: notificationChannelSettings.smtp_port || 587,
-                                      smtp_user: notificationChannelSettings.smtp_user,
-                                      smtp_password: notificationChannelSettings.smtp_password,
-                                      business_name: notificationChannelSettings.business_name || 'POS'
-                                    }
-                                    const res = await cachedFetch('/api/notifications/test-email', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
-                                      body: JSON.stringify(body)
-                                    })
-                                    const data = await res.json()
-                                    showToast(data.success ? 'Test email sent!' : (data.message || 'Failed to send'), data.success ? 'success' : 'error')
-                                    if (data.success) { setShowTestEmailInput(false); setTestEmailInput('') }
-                                  } catch (e) {
-                                    showToast(e.message || 'Error sending test email', 'error')
-                                  } finally {
-                                    setTestEmailSending(false)
-                                  }
-                                }}
-                                style={compactPrimaryButtonStyle(themeColorRgb)}
-                              >
-                                {testEmailSending ? 'Sending…' : 'Send'}
-                              </button>
-                              <button type="button" onClick={() => { setShowTestEmailInput(false); setTestEmailInput('') }} style={compactCancelButtonStyle(isDarkMode)}>Cancel</button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setShowTestEmailInput(true)}
-                              style={compactCancelButtonStyle(isDarkMode)}
-                            >
-                              Test Email
-                            </button>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const phone = window.prompt('Phone number (10 digits) for test SMS:')
-                            if (!phone) return
-                            try {
-                              const token = localStorage.getItem('sessionToken')
-                              const res = await cachedFetch('/api/notifications/test-sms', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
-                                body: JSON.stringify({ phone_number: phone.replace(/\D/g, '').slice(-10), store_id: 1, session_token: token })
-                              })
-                              const data = await res.json()
-                              showToast(data.success ? 'Test SMS sent!' : (data.message || 'Failed to send'), data.success ? 'success' : 'error')
-                            } catch (e) {
-                              showToast(e.message || 'Error sending test SMS', 'error')
-                            }
-                          }}
-                          style={compactCancelButtonStyle(isDarkMode)}
-                        >
-                          Test SMS
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
+                  <div style={{ maxWidth: '560px', margin: '0 auto', width: '100%' }}>
+                  <NotificationSettingsPanel
+                    isDarkMode={isDarkMode}
+                    themeColorRgb={themeColorRgb}
+                    showToast={showToast}
+                    channelSettings={notificationChannelSettings}
+                    setChannelSettings={setNotificationChannelSettings}
+                    onSaveChannel={async () => {
+                      setNotificationChannelSaving(true)
+                      try {
+                        const token = localStorage.getItem('sessionToken')
+                        const res = await cachedFetch('/api/notification-settings', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
+                          body: JSON.stringify({
+                            session_token: token,
+                            store_id: 1,
+                            ...notificationChannelSettings,
+                            smtp_port: parseInt(notificationChannelSettings.smtp_port, 10) || 587,
+                            smtp_password: (notificationChannelSettings.smtp_password && notificationChannelSettings.smtp_password !== '') ? notificationChannelSettings.smtp_password : undefined
+                          })
+                        })
+                        const data = await res.json()
+                        if (data.success) showToast('Settings saved', 'success')
+                        else showToast(data.message || 'Failed to save', 'error')
+                      } catch (e) {
+                        showToast(e.message || 'Error saving', 'error')
+                      } finally {
+                        setNotificationChannelSaving(false)
+                      }
+                    }}
+                    channelSaving={notificationChannelSaving}
+                    showTestEmailInput={showTestEmailInput}
+                    setShowTestEmailInput={setShowTestEmailInput}
+                    testEmailInput={testEmailInput}
+                    setTestEmailInput={setTestEmailInput}
+                    testEmailSending={testEmailSending}
+                    setTestEmailSending={setTestEmailSending}
+                    notificationSettings={notificationSettings}
+                    persistNotificationSettings={persistNotificationSettings}
+                    newOrderToastOptions={newOrderToastOptions}
+                    persistNewOrderToastOptions={persistNewOrderToastOptions}
+                  />
 
                   {/* ── Clock-In / Clock-Out Notification Settings ── */}
                   <div style={{
@@ -8824,326 +8567,8 @@ function Settings() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'center' }}>
-                    {NOTIFICATION_SECTIONS.map((section) => {
-                      const optionIds = NOTIFICATION_OPTIONS_BY_SECTION[section.id] || []
-                      const opts = optionIds.map((id) => NOTIFICATION_OPTIONS_MAP[id]).filter(Boolean)
-                      if (opts.length === 0) return null
-                      return (
-                        <div key={section.id} style={{ width: '100%', maxWidth: '560px' }}>
-                          <div style={{ fontSize: '13px', fontWeight: 700, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            {section.title}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            {opts.map((opt) => (
-                              <Fragment key={opt.id}>
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '12px',
-                                    flexWrap: 'wrap',
-                                    padding: '14px 16px',
-                                    borderRadius: '12px',
-                                    border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                                    backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fafafa'
-                                  }}
-                                >
-                                  <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '2px' }}>
-                                      {opt.label}
-                                    </div>
-                                    <div style={{ fontSize: '12px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
-                                      {opt.description}
-                                    </div>
-                                  </div>
-                                  <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}>
-                                    <div className="checkbox-wrapper-2">
-                                      <input
-                                        type="checkbox"
-                                        className="sc-gJwTLC ikxBAC"
-                                        checked={notificationSettings[opt.id] !== false}
-                                        onChange={(e) => persistNotificationSettings({ ...notificationSettings, [opt.id]: e.target.checked })}
-                                      />
-                                    </div>
-                                    <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#666' }}>
-                                      {notificationSettings[opt.id] !== false ? 'On' : 'Off'}
-                                    </span>
-                                  </label>
-                                  {opt.id === 'recent_new_order' ? (
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                      {[
-                                        { id: 'doordash', label: 'DoorDash', src: '/doordash-logo.svg', alt: 'DoorDash' },
-                                        { id: 'uber_eats', label: 'Uber Eats', src: '/uber-eats-logo.svg', alt: 'Uber Eats' },
-                                        { id: 'shopify', label: 'Shopify', src: '/shopify-logo.svg', alt: 'Shopify' }
-                                      ].map((int) => (
-                                        <button
-                                          key={int.id}
-                                          type="button"
-                                          onClick={async () => {
-                                            const soundOpts = { sound_type: newOrderToastOptions.sound_type ?? 'default', volume: newOrderToastOptions.volume ?? 0.5 }
-                                            let intervalId = null;
-                                            if (newOrderToastOptions.play_sound && newOrderToastOptions.sound_type !== 'none') {
-                                              await playNewOrderSound(soundOpts)
-                                              if (newOrderToastOptions.sound_until_dismiss) {
-                                                intervalId = setInterval(() => playNewOrderSound(soundOpts), 1200)
-                                              }
-                                            }
-                                            const toastId = showToast(`Order #${Math.floor(1000 + Math.random() * 9000)} from ${int.alt}`, 'success', {
-                                              icon: { src: int.src, alt: int.alt },
-                                              variant: 'sidebar',
-                                              pulseColor: int.id === 'doordash' ? 'red' : int.id === 'shopify' ? 'shopify' : 'green',
-                                              autoDismiss: newOrderToastOptions.auto_dismiss_sec === 4 ? 4000 : false,
-                                              onDismiss: () => {
-                                                if (intervalId) clearInterval(intervalId);
-                                              }
-                                            })
-                                            if (newOrderToastOptions.auto_dismiss_sec === 4 && intervalId) {
-                                              setTimeout(() => clearInterval(intervalId), 4000);
-                                            }
-                                          }}
-                                          style={{
-                                            padding: '8px 12px',
-                                            fontSize: '12px',
-                                            fontWeight: 600,
-                                            borderRadius: '8px',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#e5e7eb',
-                                            color: isDarkMode ? 'var(--text-primary)' : '#374151',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '6px'
-                                          }}
-                                        >
-                                          <img src={int.src} alt="" style={{ height: '16px', width: 'auto', maxWidth: '48px', objectFit: 'contain' }} />
-                                          Test
-                                        </button>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => showToast(opt.sampleMessage, opt.toastType)}
-                                      style={{
-                                        padding: '8px 14px',
-                                        fontSize: '13px',
-                                        fontWeight: 600,
-                                        borderRadius: '8px',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#e5e7eb',
-                                        color: isDarkMode ? 'var(--text-primary)' : '#374151'
-                                      }}
-                                    >
-                                      Test
-                                    </button>
-                                  )}
-                                </div>
-                                {opt.id === 'recent_new_order' && notificationSettings.recent_new_order !== false && (
-                                  <div
-                                    style={{
-                                      padding: '16px',
-                                      borderRadius: '12px',
-                                      border: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee',
-                                      backgroundColor: isDarkMode ? 'var(--bg-tertiary)' : '#f5f5f5',
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      gap: '24px'
-                                    }}
-                                  >
-                                    {/* === POPUP & SOUND OPTIONS === */}
-                                    <div>
-                                      <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '12px' }}>
-                                        Popup & Sound
-                                      </div>
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
-                                          <div className="checkbox-wrapper-2">
-                                            <input
-                                              type="checkbox"
-                                              className="sc-gJwTLC ikxBAC"
-                                              checked={newOrderToastOptions.play_sound}
-                                              onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, play_sound: e.target.checked })}
-                                            />
-                                          </div>
-                                          <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Play sound when a new order arrives</span>
-                                        </label>
-
-                                        {newOrderToastOptions.play_sound && (
-                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
-                                            <select
-                                              value={newOrderToastOptions.sound_type ?? 'default'}
-                                              onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, sound_type: e.target.value })}
-                                              style={{
-                                                padding: '6px 12px',
-                                                borderRadius: '8px',
-                                                border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
-                                                backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                                                color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                                fontSize: '13px'
-                                              }}
-                                            >
-                                              {NOTIFICATION_SOUND_OPTIONS.map((o) => (
-                                                <option key={o.value} value={o.value}>{o.label}</option>
-                                              ))}
-                                            </select>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                              <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>Vol: {Math.round((newOrderToastOptions.volume ?? 0.5) * 100)}%</span>
-                                              <input
-                                                type="range"
-                                                min="0"
-                                                max="100"
-                                                value={Math.round((newOrderToastOptions.volume ?? 0.5) * 100)}
-                                                onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, volume: parseInt(e.target.value, 10) / 100 })}
-                                                style={{ width: '100px', accentColor: isDarkMode ? 'var(--theme-color)' : undefined }}
-                                              />
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>Dismiss:</span>
-                                            <select
-                                              value={newOrderToastOptions.auto_dismiss_sec === 0 ? 'manual' : 'auto'}
-                                              onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, auto_dismiss_sec: e.target.value === 'auto' ? 4 : 0, sound_until_dismiss: e.target.value === 'manual' })}
-                                              style={{
-                                                padding: '6px 12px',
-                                                borderRadius: '8px',
-                                                border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
-                                                backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                                                color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                                fontSize: '13px'
-                                              }}
-                                            >
-                                              <option value="manual">When I click</option>
-                                              <option value="auto">After 4s</option>
-                                            </select>
-                                          </div>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555' }}>Action:</span>
-                                            <select
-                                              value={newOrderToastOptions.click_action}
-                                              onChange={(e) => persistNewOrderToastOptions({ ...newOrderToastOptions, click_action: e.target.value })}
-                                              style={{
-                                                padding: '6px 12px',
-                                                borderRadius: '8px',
-                                                border: isDarkMode ? '1px solid var(--border-color)' : '1px solid #ddd',
-                                                backgroundColor: isDarkMode ? 'var(--bg-secondary)' : '#fff',
-                                                color: isDarkMode ? 'var(--text-primary)' : '#333',
-                                                fontSize: '13px'
-                                              }}
-                                            >
-                                              <option value="go_to_order">Go to order</option>
-                                              <option value="print_receipt">Print receipt</option>
-                                              <option value="dismiss_only">Just dismiss</option>
-                                            </select>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    {/* === EMAIL NOTIFICATION OPTIONS === */}
-                                    <div style={{ paddingTop: '16px', borderTop: isDarkMode ? '1px solid var(--border-light)' : '1px solid #eee' }}>
-                                      <div style={{ fontSize: '14px', fontWeight: 600, color: isDarkMode ? 'var(--text-primary)' : '#333', marginBottom: '12px' }}>Email Notification</div>
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                                        {/* Enable toggle */}
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
-                                          <div className="checkbox-wrapper-2">
-                                            <input type="checkbox" className="sc-gJwTLC ikxBAC" checked={orderEmailPrefs.email_enabled} onChange={e => setOrderEmailPrefs(p => ({ ...p, email_enabled: e.target.checked }))} />
-                                          </div>
-                                          <span style={{ fontSize: '14px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Send an email when a new order arrives</span>
-                                        </label>
-
-                                        {orderEmailPrefs.email_enabled && (
-                                          <>
-                                            {/* Source filter */}
-                                            <div>
-                                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                                {[{ id: 'all', label: 'All orders' }, { id: 'doordash', label: 'DoorDash' }, { id: 'uber_eats', label: 'Uber Eats' }, { id: 'shopify', label: 'Shopify' }, { id: 'pickup', label: 'Pickup' }, { id: 'delivery', label: 'Delivery' }].map(src => {
-                                                  const sf = Array.isArray(orderEmailPrefs.source_filter) ? orderEmailPrefs.source_filter : ['all']
-                                                  const active = sf.includes(src.id)
-                                                  return (
-                                                    <button key={src.id} type="button"
-                                                      onClick={() => {
-                                                        if (src.id === 'all') { setOrderEmailPrefs(p => ({ ...p, source_filter: ['all'] })) }
-                                                        else { setOrderEmailPrefs(p => { const cur = (Array.isArray(p.source_filter) ? p.source_filter : ['all']).filter(x => x !== 'all'); const next = cur.includes(src.id) ? cur.filter(x => x !== src.id) : [...cur, src.id]; return { ...p, source_filter: next.length ? next : ['all'] } }) }
-                                                      }}
-                                                      style={{ padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 500, border: active ? `1px solid var(--theme-color, #2196f3)` : `1px solid ${isDarkMode ? 'var(--border-color)' : '#ddd'}`, backgroundColor: active ? (isDarkMode ? 'var(--theme-color, #2196f3)' : '#2196f3') : (isDarkMode ? 'var(--bg-secondary)' : '#fff'), color: active ? '#fff' : (isDarkMode ? 'var(--text-secondary)' : '#555'), cursor: 'pointer' }}
-                                                    >{src.label}</button>
-                                                  )
-                                                })}
-                                              </div>
-                                            </div>
-
-                                            {/* Recipient employees */}
-                                            <div>
-                                              <div style={{ fontSize: '13px', fontWeight: 600, color: isDarkMode ? 'var(--text-secondary)' : '#555', marginBottom: '8px' }}>Send to</div>
-                                              {employeesWithEmail.length === 0 ? (
-                                                <div style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-secondary)' : '#888', fontStyle: 'italic' }}>No employees with email. Add in HR.</div>
-                                              ) : (
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none', padding: '4px 8px', borderRadius: '8px', border: '1px solid', borderColor: orderEmailPrefs.recipient_employee_ids.length === 0 ? 'var(--theme-color, #2196f3)' : (isDarkMode ? 'var(--border-color)' : '#ddd'), backgroundColor: orderEmailPrefs.recipient_employee_ids.length === 0 ? (isDarkMode ? 'rgba(33,150,243,0.1)' : 'rgba(33,150,243,0.05)') : 'transparent' }}>
-                                                    <input type="checkbox" style={{ accentColor: themeColorRgb }} checked={orderEmailPrefs.recipient_employee_ids.length === 0} onChange={() => setOrderEmailPrefs(p => ({ ...p, recipient_employee_ids: [] }))} />
-                                                    <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>Store email</span>
-                                                  </label>
-                                                  {employeesWithEmail.map(emp => {
-                                                    const sel = (Array.isArray(orderEmailPrefs.recipient_employee_ids) ? orderEmailPrefs.recipient_employee_ids : []).includes(emp.employee_id)
-                                                    return (
-                                                      <label key={emp.employee_id} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none', padding: '4px 8px', borderRadius: '8px', border: '1px solid', borderColor: sel ? 'var(--theme-color, #2196f3)' : (isDarkMode ? 'var(--border-color)' : '#ddd'), backgroundColor: sel ? (isDarkMode ? 'rgba(33,150,243,0.1)' : 'rgba(33,150,243,0.05)') : 'transparent' }}>
-                                                        <input type="checkbox" style={{ accentColor: themeColorRgb }} checked={sel} onChange={() => setOrderEmailPrefs(p => { const ids = Array.isArray(p.recipient_employee_ids) ? p.recipient_employee_ids : []; const next = sel ? ids.filter(id => id !== emp.employee_id) : [...ids, emp.employee_id]; return { ...p, recipient_employee_ids: next } })} />
-                                                        <span style={{ fontSize: '13px', color: isDarkMode ? 'var(--text-primary)' : '#333' }}>{emp.name}</span>
-                                                      </label>
-                                                    )
-                                                  })}
-                                                </div>
-                                              )}
-                                            </div>
-
-                                            {/* Save button */}
-                                            <div>
-                                              <button type="button"
-                                                onClick={async () => {
-                                                  try {
-                                                    const token = localStorage.getItem('sessionToken')
-                                                    const mergedPrefs = {
-                                                      ...notificationChannelSettings.notification_preferences,
-                                                      orders: {
-                                                        ...(notificationChannelSettings.notification_preferences?.orders || {}),
-                                                        email_enabled: orderEmailPrefs.email_enabled,
-                                                        email: orderEmailPrefs.email_enabled,
-                                                        source_filter: Array.isArray(orderEmailPrefs.source_filter) ? orderEmailPrefs.source_filter : ['all'],
-                                                        recipient_employee_ids: Array.isArray(orderEmailPrefs.recipient_employee_ids) ? orderEmailPrefs.recipient_employee_ids : []
-                                                      }
-                                                    }
-                                                    const res = await cachedFetch('/api/notification-settings', {
-                                                      method: 'POST',
-                                                      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
-                                                      body: JSON.stringify({ ...notificationChannelSettings, notification_preferences: mergedPrefs, store_id: 1, session_token: token })
-                                                    })
-                                                    const d = await res.json()
-                                                    if (d.success) setNotificationChannelSettings(p => ({ ...p, notification_preferences: mergedPrefs }))
-                                                    showToast(d.success ? 'Email settings saved' : (d.message || 'Failed to save'), d.success ? 'success' : 'error')
-                                                  } catch (e) { showToast(e.message || 'Error saving settings', 'error') }
-                                                }}
-                                                style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, backgroundColor: isDarkMode ? 'var(--theme-color, #2196f3)' : '#2196f3', color: '#fff', border: 'none', cursor: 'pointer' }}
-                                              >Save Settings</button>
-                                            </div>
-                                          </>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </Fragment>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
                   </div>
-                </div>
+                </>
               )}
 
               {/* Email Template Modal – top level so it opens from receipt editor (POS tab) or notifications */}
