@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, EB_Garamond } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -10,6 +10,12 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+const ebGaramond = EB_Garamond({
+  variable: "--font-eb-garamond",
+  subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 import { TransitionProvider } from "./TransitionContext";
@@ -47,7 +53,7 @@ export default function RootLayout({
         <link href="https://api.fontshare.com/v2/css?f[]=zodiak@400,600,700&f[]=tanker@400&f[]=satoshi@400,500,700&display=swap" rel="stylesheet" />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${ebGaramond.variable} antialiased`}
         suppressHydrationWarning
       >
         <TransitionProvider>

@@ -90,33 +90,45 @@ export default function WaitlistPage() {
     return (
         <div className="min-h-screen bg-white font-sans overflow-hidden">
             {/* Header */}
-            <motion.header
-                className="fixed top-2 left-4 right-4 z-[1001]"
-                initial={false}
-                animate={{ opacity: 1, y: 0 }}
-            >
-                <div className="max-w-7xl mx-auto px-4 py-1.5 flex items-center justify-between relative z-10">
-                    <button onClick={() => navigate('/')} className="flex items-center gap-4 relative w-12 h-12 group focus:outline-none">
-                        <motion.span
-                            className="absolute left-[90px] text-sm font-medium text-black px-3 py-1 drop-shadow-[0_0_8px_rgba(44,25,252,0.15)] hidden md:block"
-                        >
-                            Swftly
-                        </motion.span>
-                    </button>
+            <header className="fixed top-4 left-4 right-4 z-[1001] bg-gradient-to-b from-white/60 to-white/10 backdrop-blur-xl rounded-[24px] border border-white/40 shadow-[0_8px_32px_0_rgba(0,0,0,0.06)]">
+                <div className="w-full pl-0 pr-4 py-1.5 flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-4 relative w-12 h-12">
+                        <button onClick={() => navigate('/')} className="flex items-center gap-4 relative w-full h-full group focus:outline-none">
+                            <span className="absolute left-[140px] text-sm font-bold text-black py-1 drop-shadow-[0_0_8px_rgba(44,25,252,0.15)] hidden md:block whitespace-nowrap">
+                                Swftly
+                            </span>
+                        </button>
+                    </div>
                     <div className="flex items-center gap-4 md:gap-10">
-                        <NavButton onClick={() => navigate('/#software-section')}>Software</NavButton>
-                        <NavButton onClick={() => navigate('/#pricing-section')}>Pricing</NavButton>
-                        <NavButton onClick={() => navigate('/book-a-demo')}>
-                            <span className="md:hidden">Demo</span>
-                            <span className="hidden md:inline">Book A Demo</span>
-                        </NavButton>
+                        {['Pricing', 'Book A Demo'].map((item) => {
+                            const handleNav = () => {
+                                if (item === 'Pricing') {
+                                    navigate('/#pricing-section');
+                                } else if (item === 'Book A Demo') {
+                                    navigate('/book-a-demo');
+                                }
+                            };
+
+                            return (
+                                <div key={item} className={item === 'Book A Demo' ? '' : 'hidden md:block'}>
+                                    <NavButton onClick={handleNav}>
+                                        {item === 'Book A Demo' ? (
+                                            <>
+                                                <span className="md:hidden">Demo</span>
+                                                <span className="hidden md:inline">Book A Demo</span>
+                                            </>
+                                        ) : item}
+                                    </NavButton>
+                                </div>
+                            );
+                        })}
                         <NavButton isBold className="text-[#2c19fc]">
-                            Join Waitlist
+                            Get Started
                             <ArrowUpRight className="w-4 h-4 relative z-10" />
                         </NavButton>
                     </div>
                 </div>
-            </motion.header>
+            </header>
 
             <ThreeLogo forceDock={true} />
 
@@ -146,7 +158,7 @@ export default function WaitlistPage() {
                         </h1>
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#2c19fc]/10 border border-[#2c19fc]/20 mb-6">
                             <Sparkles className="w-4 h-4 text-[#2c19fc]" />
-                            <span className="text-[#2c19fc] text-xs font-bold uppercase tracking-widest">Join the exclusive waitlist</span>
+                            <span className="text-[#2c19fc] text-xs font-bold uppercase tracking-widest">Join the waitlist</span>
                         </div>
                         <p className="text-gray-500 text-lg md:text-xl font-medium max-w-md mx-auto leading-relaxed">
                             We're rolling out access to a limited number of businesses. Secure your spot in line.
@@ -272,7 +284,7 @@ export default function WaitlistPage() {
             <footer className="bg-white/80 backdrop-blur-md border-t border-gray-100 py-8 px-4 relative z-10 w-full mt-auto">
                 <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-500">© 2024 Swftly. All rights reserved.</span>
+                        <span className="text-sm text-gray-500">© 2026 Swftly. All rights reserved.</span>
                     </div>
                 </div>
             </footer>

@@ -214,7 +214,7 @@ body {
   color: #484c7a;
   cursor: pointer;
   display: inline-block;
-  font-family: Hind, system-ui, BlinkMacSystemFont, -apple-system, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  font-family: inherit;
   font-weight: 600;
   margin: 4px;
   padding: 16px 24px;
@@ -234,14 +234,17 @@ body {
   }
 }
 
-.button-24:after,
-.button-24:before {
-  border: 0 solid #003dff;
-  box-sizing: border-box;
+.button-24--hero {
+  padding: 22px 54px !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
 }
 
-.button-24:hover {
-  box-shadow: rgba(37, 44, 97, .15) 0 8px 22px 0, rgba(93, 100, 148, .2) 0 4px 6px 0;
+@media (max-width: 768px) {
+  .button-24--hero {
+    padding: 16px 36px !important;
+    font-size: 18px !important;
+  }
 }
 
 .button-24--blue {
@@ -255,6 +258,15 @@ body {
 }
 
 
+.button-24:after,
+.button-24:before {
+  border: 0 solid #003dff;
+  box-sizing: border-box;
+}
+
+.button-24:hover {
+  box-shadow: rgba(37, 44, 97, .15) 0 8px 22px 0, rgba(93, 100, 148, .2) 0 4px 6px 0;
+}
 
 .button-24:disabled {
   cursor: not-allowed;
@@ -400,4 +412,23 @@ body {
 
 .button-49:active {
   transform: scale(.95);
+}
+
+/* Custom Scrollbar Utility */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #d1d5db;
 }

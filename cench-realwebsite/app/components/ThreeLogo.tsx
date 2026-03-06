@@ -35,10 +35,9 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
     const [hasEntered, setHasEntered] = useState(false);
     const { viewport, size } = useThree();
     const pixelToUnit = viewport.width / size.width;
-    const paddingX = size.width > 1280 ? (size.width - 1280) / 2 + 16 : 16;
-    const targetX = -viewport.width / 2 + (paddingX + 32) * pixelToUnit;
-    const targetY = viewport.height / 2 - (16 + 12 + 33) * pixelToUnit;
-    const targetScale = 0.45;
+    const targetX = -viewport.width / 2 + (size.width < 768 ? 60 : 80) * pixelToUnit;
+    const targetY = viewport.height / 2 - (size.width < 768 ? 43 : 58) * pixelToUnit;
+    const targetScale = size.width < 768 ? 0.3 : 0.45;
 
     useEffect(() => {
         // If already scrolled, skip fly-in
@@ -51,61 +50,50 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
         return () => clearTimeout(timer);
     }, [isStatic]);
 
+    // Stable Rotation Effect - Doesn't depend on viewport shifts
     useEffect(() => {
-        if (!groupRef.current || forceDock || isStatic) return;
+        const isMobile = size.width < 768;
 
         const ctx = gsap.context(() => {
             // Unified rotation logic for the entire scroll height
             gsap.to(groupRef.current!.rotation, {
-                y: Math.PI * 18, // 9 full spins across the entire site
+                y: isMobile ? Math.PI * 16 : Math.PI * 24, // Slightly fewer spins on mobile for stability
                 ease: "none",
+                immediateRender: false,
                 scrollTrigger: {
                     trigger: "body",
                     start: "top top",
                     end: "bottom bottom",
-                    scrub: size.width < 768 ? 0.4 : 1.2 // Smoother momentum for both mobile and desktop
-                }
-            });
-
-            // Position and scale transitions (Docking into navbar)
-            const dockTl = gsap.timeline({
-                scrollTrigger: {
-                    trigger: "body",
-                    start: "top top",
-                    end: () => window.innerHeight,
-                    scrub: 1.2,
+                    scrub: isMobile ? 0.8 : 1.5, // Snappier scrub on mobile to avoid lag
                     onUpdate: (self) => {
-                        onScrollProgress(self.progress);
+                        if (onScrollProgress) onScrollProgress(self.progress);
                     }
                 }
             });
+        });
 
-            dockTl.to(groupRef.current!.position, {
-                x: targetX,
-                y: targetY,
-                z: 0,
-                ease: "none"
-            }, 0);
+        return () => ctx.revert();
+    }, [forceDock, isStatic]); // Only re-run if major state changes
 
-            dockTl.to(groupRef.current!.scale, {
-                x: targetScale,
-                y: targetScale,
-                z: targetScale,
-                ease: "none"
-            }, 0);
+    // Position & Transition Effect
+    useEffect(() => {
+        if (!groupRef.current || forceDock || isStatic) return;
 
-            // Final transition: Move from navbar to center of '#final-cta'
-            const isMobile = size.width < 768;
-            const finalScale = isMobile ? 0.7 : 1.8;
-            const finalX = isMobile ? -5 : -35;
-            const finalY = isMobile ? 8 : 10;
+        const isMobile = size.width < 768;
+        if (isMobile) return;
 
+        const targetScale = 0.45;
+        const finalScale = 1.8;
+        const finalX = -35;
+        const finalY = 10;
+
+        const ctx = gsap.context(() => {
             const finalTl = gsap.timeline({
                 scrollTrigger: {
                     trigger: "#final-cta",
-                    start: isMobile ? "top 95%" : "top 110%",
+                    start: "top 110%",
                     end: "bottom bottom",
-                    scrub: isMobile ? 0.6 : 1.5
+                    scrub: 1.5
                 }
             });
 
@@ -122,16 +110,15 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
                 ease: "none"
             }, 0);
 
-
-
             finalTl.to(groupRef.current!.rotation, {
-                y: isMobile ? Math.PI * 4 : Math.PI * 8,
+                y: "+=12.56", // Add extra relative rotations at the end
                 ease: "none"
             }, 0);
         });
 
+        ScrollTrigger.refresh();
         return () => ctx.revert();
-    }, [viewport, size, onScrollProgress, forceDock, targetX, targetY, targetScale, isStatic]);
+    }, [size.width, viewport.height, forceDock, isStatic]);
 
     useFrame((state, delta) => {
         const scrollProgress = !forceDock ? (ScrollTrigger.getAll()[0]?.progress || 0) : 0;
@@ -150,12 +137,20 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
 
         // Subtle mouse reactivity on the inner logo component - always active once entered
         if (innerRef.current && (hasEntered || forceDock || isStatic)) {
-            // Use global mouse state since R3F internal pointer is cut off by pointer-events: none
-            const targetRotX = -gMouse.y * 0.2;
-            const targetRotY = gMouse.x * 0.2;
+            const isMobile = size.width < 768;
 
-            innerRef.current.rotation.x = THREE.MathUtils.lerp(innerRef.current.rotation.x, targetRotX, delta * 8);
-            innerRef.current.rotation.y = THREE.MathUtils.lerp(innerRef.current.rotation.y, targetRotY, delta * 8);
+            if (isMobile) {
+                // Return to neutral position on mobile rather than following non-existent cursor
+                innerRef.current.rotation.x = THREE.MathUtils.lerp(innerRef.current.rotation.x, 0, delta * 4);
+                innerRef.current.rotation.y = THREE.MathUtils.lerp(innerRef.current.rotation.y, 0, delta * 4);
+            } else {
+                // Use global mouse state since R3F internal pointer is cut off by pointer-events: none
+                const targetRotX = -gMouse.y * 0.2;
+                const targetRotY = gMouse.x * 0.2;
+
+                innerRef.current.rotation.x = THREE.MathUtils.lerp(innerRef.current.rotation.x, targetRotX, delta * 8);
+                innerRef.current.rotation.y = THREE.MathUtils.lerp(innerRef.current.rotation.y, targetRotY, delta * 8);
+            }
         }
     });
 
@@ -184,10 +179,10 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
     return (
         <group
             ref={groupRef}
-            position={isStatic ? [2, 0, 0] : (forceDock ? [targetX, targetY, 0] : [0, 40, 0])}
-            scale={isStatic ? [0.75, 0.75, 0.75] : (forceDock ? [targetScale, targetScale, targetScale] : [1.4, 1.4, 1.4])}
+            position={isStatic ? [2, 0, 0] : [targetX, targetY, 0]}
+            scale={isStatic ? [0.75, 0.75, 0.75] : [targetScale, targetScale, targetScale]}
         >
-            <group ref={entryRef} position={(forceDock || isStatic) ? [0, 0, 0] : [-1500, 0, 0]} rotation={(forceDock || isStatic) ? [0, 0, 0] : [0, -Math.PI * 6, 0]}>
+            <group ref={entryRef} position={(isStatic) ? [0, 0, 0] : [0, 0, 0]} rotation={(isStatic) ? [0, 0, 0] : [0, 0, 0]}>
                 <group ref={innerRef}>
                     <Center>
                         <group name="shapes-wrapper" scale={0.8} rotation={[Math.PI, 0, 0]}>
@@ -226,8 +221,8 @@ const ThreeLogoInner = ({ forceDock }: { forceDock?: boolean }) => {
 
             <Float
                 speed={2}
-                rotationIntensity={forceDock ? 0 : 0.5 * (1 - progress)}
-                floatIntensity={forceDock ? 0 : 1 * (1 - progress)}
+                rotationIntensity={0}
+                floatIntensity={0}
             >
                 <React.Suspense fallback={null}>
                     <ExtrudedLogo url="/Swftly.svg" onScrollProgress={setProgress} forceDock={forceDock} />
@@ -272,7 +267,7 @@ export default function ThreeLogo({ forceDock = false }: { forceDock?: boolean }
 
     return (
         <motion.div
-            className={`absolute inset-0 pointer-events-none z-[1005] ${forceDock ? 'h-full' : 'fixed inset-0 h-screen'}`}
+            className="fixed inset-0 pointer-events-none z-[1005]"
             initial={forceDock ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={forceDock ? { duration: 0 } : { duration: 0.8, ease: "easeOut" }}

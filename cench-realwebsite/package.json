@@ -12,6 +12,7 @@
     "@gsap/react": "^2.1.2",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
+    "@remotion/player": "^4.0.432",
     "@types/three": "^0.183.1",
     "@vercel/analytics": "^1.6.1",
     "canvas": "^3.2.1",
@@ -25,6 +26,7 @@
     "ogl": "^1.0.11",
     "react": "19.2.1",
     "react-dom": "19.2.1",
+    "remotion": "^4.0.432",
     "resend": "^6.9.2",
     "sharp": "^0.34.5",
     "three": "^0.183.1"

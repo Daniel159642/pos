@@ -87,33 +87,45 @@ export default function BookADemo() {
     return (
         <div className="min-h-screen bg-white font-sans overflow-hidden">
             {/* Header - Matching main page */}
-            <motion.header
-                className="fixed top-2 left-4 right-4 z-[1001]"
-                initial={false}
-                animate={{ opacity: 1, y: 0 }}
-            >
-                <div className="max-w-7xl mx-auto px-4 py-1.5 flex items-center justify-between relative z-10">
-                    <button onClick={() => navigate('/')} className="flex items-center gap-4 relative w-12 h-12 group focus:outline-none">
-                        <motion.span
-                            className="absolute left-[90px] text-sm font-medium text-black px-3 py-1 drop-shadow-[0_0_8px_rgba(44,25,252,0.15)] hidden md:block"
-                        >
-                            Swftly
-                        </motion.span>
-                    </button>
+            <header className="fixed top-4 left-4 right-4 z-[1001] bg-gradient-to-b from-white/60 to-white/10 backdrop-blur-xl rounded-[24px] border border-white/40 shadow-[0_8px_32px_0_rgba(0,0,0,0.06)]">
+                <div className="w-full pl-0 pr-4 py-1.5 flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-4 relative w-12 h-12">
+                        <button onClick={() => navigate('/')} className="flex items-center gap-4 relative w-full h-full group focus:outline-none">
+                            <span className="absolute left-[140px] text-sm font-bold text-black py-1 drop-shadow-[0_0_8px_rgba(44,25,252,0.15)] hidden md:block whitespace-nowrap">
+                                Swftly
+                            </span>
+                        </button>
+                    </div>
                     <div className="flex items-center gap-4 md:gap-10">
-                        <NavButton onClick={() => navigate('/#software-section')}>Software</NavButton>
-                        <NavButton onClick={() => navigate('/#pricing-section')}>Pricing</NavButton>
-                        <NavButton className="text-[#2c19fc]">
-                            <span className="md:hidden">Demo</span>
-                            <span className="hidden md:inline">Book A Demo</span>
-                        </NavButton>
+                        {['Pricing', 'Book A Demo'].map((item) => {
+                            const handleNav = () => {
+                                if (item === 'Pricing') {
+                                    navigate('/#pricing-section');
+                                } else if (item === 'Book A Demo') {
+                                    // Already on demo page
+                                }
+                            };
+
+                            return (
+                                <div key={item} className={item === 'Book A Demo' ? '' : 'hidden md:block'}>
+                                    <NavButton onClick={handleNav} className={item === 'Book A Demo' ? 'text-[#2c19fc]' : ''}>
+                                        {item === 'Book A Demo' ? (
+                                            <>
+                                                <span className="md:hidden">Demo</span>
+                                                <span className="hidden md:inline">Book A Demo</span>
+                                            </>
+                                        ) : item}
+                                    </NavButton>
+                                </div>
+                            );
+                        })}
                         <NavButton isBold onClick={() => navigate('/waitlist')}>
                             Get Started
                             <ArrowUpRight className="w-4 h-4 relative z-10" />
                         </NavButton>
                     </div>
                 </div>
-            </motion.header>
+            </header>
 
             {/* Reuse the 3D Logo - It will naturally stay in the header if we don't scroll */}
             <ThreeLogo forceDock={true} />
