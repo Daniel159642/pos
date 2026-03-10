@@ -2,7 +2,7 @@
 
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Check, ChevronRight, Loader2, ArrowUpRight, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Loader2, ArrowUpRight, Sparkles, ChevronDown } from 'lucide-react';
 import ThreeLogo from '../components/ThreeLogo';
 import Grainient from '../components/Grainient';
 import { useTransition } from '../TransitionContext';
@@ -52,8 +52,10 @@ export default function WaitlistPage() {
         businessName: '',
         businessType: '',
         currentPos: '',
+        otherPos: '',
         painPoints: '',
     });
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -72,7 +74,7 @@ export default function WaitlistPage() {
                     email: formData.email,
                     businessName: formData.businessName,
                     businessType: formData.businessType,
-                    currentPos: formData.currentPos,
+                    currentPos: formData.currentPos === 'Other' ? formData.otherPos : formData.currentPos,
                     painPoints: formData.painPoints,
                     message: 'WAITLIST SIGNUP'
                 }),
@@ -237,23 +239,71 @@ export default function WaitlistPage() {
                                         </div>
                                     </div>
 
-                                    <div className="space-y-2">
+                                    <div className="space-y-2 relative">
                                         <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Current POS System</label>
-                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                            {['Square', 'Clover', 'Toast', 'Revel', 'Other'].map((pos) => (
-                                                <button
-                                                    key={pos}
-                                                    type="button"
-                                                    onClick={() => setFormData({ ...formData, currentPos: pos })}
-                                                    className={`px-4 py-3 rounded-2xl text-sm font-bold border transition-all ${formData.currentPos === pos
-                                                        ? 'bg-[#2c19fc] text-white border-[#2c19fc] shadow-lg shadow-[#2c19fc]/20'
-                                                        : 'bg-white/50 border-gray-200 text-gray-500 hover:border-[#2c19fc]/30 hover:bg-white'
-                                                        }`}
+                                        <div className="relative">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                                className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                            >
+                                                <span className={formData.currentPos ? 'text-black' : 'text-gray-400'}>
+                                                    {formData.currentPos || 'Select your current system'}
+                                                </span>
+                                                <motion.div
+                                                    animate={{ rotate: isDropdownOpen ? 180 : 0 }}
+                                                    transition={{ duration: 0.2 }}
                                                 >
-                                                    {pos}
-                                                </button>
-                                            ))}
+                                                    <ChevronDown className="w-5 h-5 text-gray-400" />
+                                                </motion.div>
+                                            </button>
+
+                                            {isDropdownOpen && (
+                                                <>
+                                                    <div
+                                                        className="fixed inset-0 z-[1001]"
+                                                        onClick={() => setIsDropdownOpen(false)}
+                                                    />
+                                                    <motion.div
+                                                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                                        className="absolute z-[1002] w-full mt-2 bg-white/90 backdrop-blur-xl border border-gray-100 rounded-2xl shadow-2xl overflow-hidden py-2"
+                                                    >
+                                                        {['Square', 'Clover', 'Toast', 'Revel', 'Other'].map((pos) => (
+                                                            <button
+                                                                key={pos}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setFormData({ ...formData, currentPos: pos });
+                                                                    setIsDropdownOpen(false);
+                                                                }}
+                                                                className="w-full px-5 py-3 text-left hover:bg-[#2c19fc]/5 text-black font-medium transition-colors flex items-center justify-between"
+                                                            >
+                                                                {pos}
+                                                                {formData.currentPos === pos && <Check className="w-4 h-4 text-[#2c19fc]" />}
+                                                            </button>
+                                                        ))}
+                                                    </motion.div>
+                                                </>
+                                            )}
                                         </div>
+
+                                        {formData.currentPos === 'Other' && (
+                                            <motion.div
+                                                initial={{ opacity: 0, height: 0 }}
+                                                animate={{ opacity: 1, height: 'auto' }}
+                                                className="mt-3"
+                                            >
+                                                <input
+                                                    required
+                                                    type="text"
+                                                    value={formData.otherPos}
+                                                    onChange={(e) => setFormData({ ...formData, otherPos: e.target.value })}
+                                                    className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium"
+                                                    placeholder="Enter your POS system name"
+                                                />
+                                            </motion.div>
+                                        )}
                                     </div>
 
                                     <div className="space-y-2">
