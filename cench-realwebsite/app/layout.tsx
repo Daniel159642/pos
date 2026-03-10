@@ -23,10 +23,10 @@ import { Analytics } from "@vercel/analytics/react";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://swftly.com"),
-  title: "Swftly | Advanced POS Hub",
+  title: "Swftly | The Agentic POS",
   description: "The all-in-one software suite that automates your retail or restaurant business with AI-driven insights.",
   openGraph: {
-    title: "Swftly | Advanced POS Hub",
+    title: "Swftly | The Agentic POS",
     description: "The all-in-one software suite that automates your retail or restaurant business with AI-driven insights.",
     url: "https://swftly.com",
     siteName: "Swftly",
@@ -37,13 +37,13 @@ export const metadata: Metadata = {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Swftly | Advanced POS Hub",
+        alt: "Swftly | The Agentic POS",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Swftly | Advanced POS Hub",
+    title: "Swftly | The Agentic POS",
     description: "The all-in-one software suite that automates your retail or restaurant business with AI-driven insights.",
     images: ["/og-image.png"],
   },
