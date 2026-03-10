@@ -51,6 +51,8 @@ export default function WaitlistPage() {
         email: '',
         businessName: '',
         businessType: '',
+        currentPos: '',
+        painPoints: '',
     });
     const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +72,8 @@ export default function WaitlistPage() {
                     email: formData.email,
                     businessName: formData.businessName,
                     businessType: formData.businessType,
+                    currentPos: formData.currentPos,
+                    painPoints: formData.painPoints,
                     message: 'WAITLIST SIGNUP'
                 }),
             });
@@ -231,6 +235,35 @@ export default function WaitlistPage() {
                                                 placeholder="Retail, Cafe, etc."
                                             />
                                         </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Current POS System</label>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                            {['Square', 'Clover', 'Toast', 'Revel', 'Other'].map((pos) => (
+                                                <button
+                                                    key={pos}
+                                                    type="button"
+                                                    onClick={() => setFormData({ ...formData, currentPos: pos })}
+                                                    className={`px-4 py-3 rounded-2xl text-sm font-bold border transition-all ${formData.currentPos === pos
+                                                        ? 'bg-[#2c19fc] text-white border-[#2c19fc] shadow-lg shadow-[#2c19fc]/20'
+                                                        : 'bg-white/50 border-gray-200 text-gray-500 hover:border-[#2c19fc]/30 hover:bg-white'
+                                                        }`}
+                                                >
+                                                    {pos}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Current Pain Points & Improvements</label>
+                                        <textarea
+                                            value={formData.painPoints}
+                                            onChange={(e) => setFormData({ ...formData, painPoints: e.target.value })}
+                                            className="w-full bg-white/50 border border-gray-200 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-[#2c19fc]/20 focus:border-[#2c19fc] transition-all text-black font-medium min-h-[120px] resize-none"
+                                            placeholder="What would you like to see improved in your current system?"
+                                        />
                                     </div>
 
                                     <button
