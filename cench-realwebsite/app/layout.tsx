@@ -48,13 +48,19 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
   icons: {
-    icon: "/icon.png?v=1",
-    shortcut: "/icon.png?v=1",
-    apple: "/icon.png?v=1",
+    icon: [
+      { url: "/favicon-32x32.png?v=2", sizes: "32x32", type: "image/png" },
+      { url: "/favicon-16x16.png?v=2", sizes: "16x16", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico?v=2",
+    apple: [
+      { url: "/apple-touch-icon.png?v=2", sizes: "180x180", type: "image/png" },
+    ],
     other: [
       {
-        rel: "icon",
-        url: "/favicon.ico?v=1",
+        rel: "mask-icon",
+        url: "/safari-pinned-tab.svg?v=2",
+        color: "#2c19fc",
       },
     ],
   },
