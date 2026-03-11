@@ -13,6 +13,7 @@
         "@react-three/drei": "^9.88.1",
         "@react-three/fiber": "^8.15.11",
         "@remotion/cli": "4.0.432",
+        "@remotion/google-fonts": "^4.0.434",
         "@remotion/paths": "4.0.432",
         "@remotion/sfx": "^4.0.432",
         "@remotion/three": "^4.0.432",
