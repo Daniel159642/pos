@@ -53,7 +53,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
         return () => clearTimeout(timer);
     }, [isStatic]);
 
-    // Initial positioning and scale setup - handled via ref to avoid Re-render conflicts with GSAP
+    // Initial positioning and scale setup - handled via ref and initial props
     useEffect(() => {
         if (!groupRef.current) return;
         if (isStatic) {
@@ -64,11 +64,11 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
             groupRef.current.position.set(targetX, targetY, 0);
             groupRef.current.scale.set(targetScale, targetScale, targetScale);
         }
-    }, [isStatic, targetX, targetY, targetScale, hasEntered]);
+    }, [isStatic, targetX, targetY, targetScale]);
 
     // Main Spinning Rotation Effect - isolated to scrollSpinRef
     useEffect(() => {
-        if (!scrollSpinRef.current) return;
+        if (!scrollSpinRef.current || isStatic) return;
         const isMobile = size.width < 768;
 
         const ctx = gsap.context(() => {
@@ -89,7 +89,7 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
         });
 
         return () => ctx.revert();
-    }, [isStatic, size.width]);
+    }, [isStatic, size.width, onScrollProgress]);
 
     // Final Position & Transition Effect - handled on the outer groupRef
     useEffect(() => {
@@ -185,7 +185,11 @@ const ExtrudedLogo = ({ url, onScrollProgress, forceDock = false, isStatic = fal
     };
 
     return (
-        <group ref={groupRef}>
+        <group
+            ref={groupRef}
+            position={isStatic ? [2, 0, 0] : [targetX, targetY, 0]}
+            scale={isStatic ? [0.75, 0.75, 0.75] : [targetScale, targetScale, targetScale]}
+        >
             <group ref={scrollSpinRef}>
                 <group ref={entryRef}>
                     <group ref={innerRef}>
